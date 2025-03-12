@@ -35,6 +35,7 @@ class MessagingWidget(QWidget):
         
         self.secure_messaging = secure_messaging
         self.current_peer = None
+        self.is_connecting = False
         
         self._init_ui()
         
@@ -50,6 +51,11 @@ class MessagingWidget(QWidget):
         self.peer_label.setStyleSheet("font-weight: bold;")
         layout.addWidget(self.peer_label)
         
+        # Status label
+        self.status_label = QLabel("Select a peer to chat with")
+        self.status_label.setStyleSheet("color: gray;")
+        layout.addWidget(self.status_label)
+        
         # Chat area
         self.chat_area = QTextEdit()
         self.chat_area.setReadOnly(True)
@@ -61,14 +67,17 @@ class MessagingWidget(QWidget):
         
         self.message_input = QLineEdit()
         self.message_input.setPlaceholderText("Type a message...")
+        self.message_input.setEnabled(False)  # Disabled until peer connected
         self.message_input.returnPressed.connect(self._on_send_clicked)
         input_layout.addWidget(self.message_input)
         
         self.send_button = QPushButton("Send")
+        self.send_button.setEnabled(False)  # Disabled until peer connected
         self.send_button.clicked.connect(self._on_send_clicked)
         input_layout.addWidget(self.send_button)
         
         self.file_button = QPushButton("Send File")
+        self.file_button.setEnabled(False)  # Disabled until peer connected
         self.file_button.clicked.connect(self._on_send_file_clicked)
         input_layout.addWidget(self.file_button)
         
@@ -98,12 +107,81 @@ class MessagingWidget(QWidget):
         # Add a system message
         self._add_system_message(f"Started chat with {peer_id[:8]}...")
         
-        # Enable the input area
+        # Check connection status
+        connected_peers = self.secure_messaging.node.get_peers()
+        if peer_id in connected_peers:
+            self._add_system_message("Connected to peer")
+            self._enable_messaging()
+        else:
+            self._add_system_message("Not connected to peer. Use the Connect button in the peer list.")
+            self._disable_messaging()
+        
+        logger.info(f"Set current peer to {peer_id}")
+    
+    def initiate_connection(self, peer_id: str, host: str, port: int):
+        """Initiate connection to a peer.
+        
+        Args:
+            peer_id: The ID of the peer
+            host: The host address of the peer
+            port: The port number of the peer
+        """
+        # Check if this is the currently selected peer
+        if peer_id != self.current_peer:
+            return
+            
+        # Check if already connecting
+        if self.is_connecting:
+            return
+            
+        self.is_connecting = True
+        self.status_label.setText(f"Connecting to {host}:{port}...")
+        self._add_system_message(f"Connecting to {host}:{port}...")
+        
+        # Start connection task
+        self.async_task.emit(self._connect_to_peer(host, port))
+    
+    async def _connect_to_peer(self, host: str, port: int):
+        """Connect to a peer asynchronously.
+        
+        Args:
+            host: The host address of the peer
+            port: The port number of the peer
+        """
+        try:
+            # Attempt to connect to the peer
+            success = await self.secure_messaging.node.connect_to_peer(host, port)
+            
+            if success:
+                self.status_label.setText("Connected")
+                self._add_system_message(f"Successfully connected to {host}:{port}")
+                self._enable_messaging()
+            else:
+                self.status_label.setText("Connection failed")
+                self._add_system_message(f"Failed to connect to {host}:{port}")
+                self._disable_messaging()
+                
+        except Exception as e:
+            self.status_label.setText("Connection error")
+            self._add_system_message(f"Error connecting to peer: {str(e)}")
+            self._disable_messaging()
+            logger.error(f"Error connecting to peer: {e}")
+        
+        finally:
+            self.is_connecting = False
+    
+    def _enable_messaging(self):
+        """Enable the messaging UI."""
         self.message_input.setEnabled(True)
         self.send_button.setEnabled(True)
         self.file_button.setEnabled(True)
-        
-        logger.info(f"Set current peer to {peer_id}")
+        self.message_input.setFocus()
+    
+    def _disable_messaging(self):
+        """Disable the messaging UI."""
+        self.message_input.setEnabled(False)
+        self.send_button.setEnabled(False)
+        self.file_button.setEnabled(False)
     
     def _add_message(self, message: Message, is_outgoing: bool):
         """Add a message to the chat area.
@@ -160,6 +238,11 @@ class MessagingWidget(QWidget):
             logger.warning("No peer selected, cannot send message")
             return
         
+        # Check if connected
+        if self.current_peer not in self.secure_messaging.node.get_peers():
+            self._add_system_message("Not connected to peer. Connect first.")
+            return
+        
         # Get the message
         text = self.message_input.text().strip()
         if not text:
@@ -188,6 +271,11 @@ class MessagingWidget(QWidget):
         """Handle clicking the send file button."""
         if not self.current_peer:
             logger.warning("No peer selected, cannot send file")
+            return
+        
+        # Check if connected
+        if self.current_peer not in self.secure_messaging.node.get_peers():
+            self._add_system_message("Not connected to peer. Connect first.")
             return
         
         # Open file dialog

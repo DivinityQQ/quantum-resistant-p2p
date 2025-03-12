@@ -131,6 +131,8 @@ class MainWindow(QMainWindow):
         
         # Connect signals
         self.peer_list.peer_selected.connect(self.messaging.set_current_peer)
+        self.peer_list.connection_started.connect(self.messaging.initiate_connection)
+        self.peer_list.async_task.connect(self._run_async_task)
         
         logger.info("User interface initialized")
     
@@ -238,6 +240,31 @@ class MainWindow(QMainWindow):
                 logger.error(f"Error updating peer list: {e}")
                 await asyncio.sleep(5)
     
+    async def _connect_to_peer(self, host: str, port: int):
+        """Connect to a peer.
+        
+        Args:
+            host: The peer's host address
+            port: The peer's port
+        """
+        try:
+            # Attempt to connect
+            success = await self.node.connect_to_peer(host, port)
+            
+            if success:
+                self.status_bar.showMessage(f"Connected to {host}:{port}", 3000)
+                logger.info(f"Connected to peer at {host}:{port}")
+                return True
+            else:
+                self.status_bar.showMessage(f"Failed to connect to {host}:{port}", 3000)
+                logger.error(f"Failed to connect to peer at {host}:{port}")
+                return False
+                
+        except Exception as e:
+            self.status_bar.showMessage(f"Error connecting to peer: {e}", 3000)
+            logger.error(f"Error connecting to peer at {host}:{port}: {e}")
+            return False
+    
     @pyqtSlot(object)
     def _run_async_task(self, coro):
         """Run an asynchronous task in the event loop.
@@ -249,7 +276,17 @@ class MainWindow(QMainWindow):
     
     def _show_connect_dialog(self):
         """Show the dialog to connect to a specific peer."""
-        pass  # TODO: Implement
+        host, ok = QInputDialog.getText(self, "Connect to Peer", "Enter the peer's host address:")
+        if not ok or not host:
+            return
+            
+        port, ok = QInputDialog.getInt(self, "Connect to Peer", "Enter the peer's port:", 8000, 1, 65535)
+        if not ok:
+            return
+            
+        # Connect to the peer
+        self.status_bar.showMessage(f"Connecting to {host}:{port}...", 3000)
+        self.async_task.emit(self._connect_to_peer(host, port))
     
     def _show_send_file_dialog(self):
         """Show the dialog to send a file to a peer."""

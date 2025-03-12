@@ -19,6 +19,10 @@ class PeerListWidget(QWidget):
     
     # Signal emitted when a peer is selected
     peer_selected = pyqtSignal(str)
+    # Signal for running async tasks
+    async_task = pyqtSignal(object)
+    # Signal to indicate connection started
+    connection_started = pyqtSignal(str, str, int)
     
     def __init__(self, node: P2PNode, discovery: NodeDiscovery, parent=None):
         """Initialize the peer list widget.
@@ -62,6 +66,11 @@ class PeerListWidget(QWidget):
         self.add_peer_button.clicked.connect(self._on_add_peer_clicked)
         button_layout.addWidget(self.add_peer_button)
         
+        # Connect button
+        self.connect_button = QPushButton("Connect")
+        self.connect_button.clicked.connect(self._on_connect_clicked)
+        button_layout.addWidget(self.connect_button)
+        
         layout.addLayout(button_layout)
         
         self.setLayout(layout)
@@ -84,10 +93,14 @@ class PeerListWidget(QWidget):
         for node_id, host, port in discovered:
             item = QListWidgetItem(f"{node_id[:8]}... ({host}:{port})")
             item.setData(Qt.UserRole, node_id)
+            # Store host and port as additional data
+            item.setData(Qt.UserRole + 1, host)
+            item.setData(Qt.UserRole + 2, port)
             
             # Highlight connected peers
             if node_id in connected:
                 item.setForeground(Qt.green)
+                item.setText(f"{node_id[:8]}... ({host}:{port}) [Connected]")
             
             self.peer_list.addItem(item)
         
@@ -102,10 +115,33 @@ class PeerListWidget(QWidget):
         # Get the peer ID from the item
         peer_id = item.data(Qt.UserRole)
         
-        # Emit the signal
+        # Emit the signal to select this peer
         self.peer_selected.emit(peer_id)
         
         logger.debug(f"Selected peer {peer_id}")
+    
+    def _on_connect_clicked(self):
+        """Handle clicking the connect button."""
+        # Get the selected peer
+        selected_items = self.peer_list.selectedItems()
+        if not selected_items:
+            QMessageBox.warning(self, "No Peer Selected", "Please select a peer to connect to.")
+            return
+        
+        item = selected_items[0]
+        peer_id = item.data(Qt.UserRole)
+        host = item.data(Qt.UserRole + 1)
+        port = item.data(Qt.UserRole + 2)
+        
+        # Only attempt connection if not already connected
+        if peer_id in self.node.get_peers():
+            QMessageBox.information(self, "Already Connected", f"Already connected to {peer_id[:8]}...")
+            return
+        
+        # Emit signal to start connection
+        self.connection_started.emit(peer_id, host, port)
+        
+        logger.info(f"Starting connection to peer {peer_id} at {host}:{port}")
     
     def _on_refresh_clicked(self):
         """Handle clicking the refresh button."""
@@ -145,26 +181,3 @@ class PeerListWidget(QWidget):
         self.update_peers(discovered, connected)
         
         logger.info(f"Manually added peer {host}:{port}")
-        
-        # Try to connect to the peer
-        import asyncio
-        asyncio.create_task(self._connect_to_peer(host, port))
-    
-    async def _connect_to_peer(self, host: str, port: int):
-        """Asynchronously connect to a peer.
-        
-        Args:
-            host: The peer host
-            port: The peer port
-        """
-        try:
-            # Try to connect
-            success = await self.node.connect_to_peer(host, port)
-            
-            if success:
-                logger.info(f"Connected to peer {host}:{port}")
-            else:
-                logger.error(f"Failed to connect to peer {host}:{port}")
-                
-        except Exception as e:
-            logger.error(f"Error connecting to peer {host}:{port}: {e}")
