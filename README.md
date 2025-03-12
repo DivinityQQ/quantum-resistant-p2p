@@ -130,30 +130,30 @@ Projekt je v počáteční fázi analýzy a návrhu. Byly identifikovány klíč
 
 Další postup vývoje projektu zahrnuje následující kroky:
 
-1. **Fáze I: Implementace základních komponent (2-3 týdny)**
+1. **Fáze I: Implementace základních komponent**
    - Implementace síťové vrstvy pro P2P komunikaci
    - Integrace vybraných kryptografických knihoven
    - Návrh a implementace API pro kryptografickou vrstvu
    - Vytvoření základního rozhraní pro testování
 
-2. **Fáze II: Implementace kryptografických funkcí (3-4 týdny)**
+2. **Fáze II: Implementace kryptografických funkcí**
    - Implementace mechanismů pro výměnu klíčů
    - Implementace šifrovaného přenosu dat
    - Implementace digitálních podpisů
    - Implementace bezpečného ukládání klíčů a logů
 
-3. **Fáze III: Vývoj uživatelského rozhraní (2-3 týdny)**
+3. **Fáze III: Vývoj uživatelského rozhraní**
    - Návrh a implementace grafického uživatelského rozhraní
    - Implementace interaktivních prvků pro výběr algoritmů
    - Vizualizace informací o bezpečnosti a provedených operacích
 
-4. **Fáze IV: Testování a optimalizace (2-3 týdny)**
+4. **Fáze IV: Testování a optimalizace**
    - Testování funkčnosti a bezpečnosti
    - Optimalizace výkonu a spotřeby zdrojů
    - Identifikace a oprava chyb
    - Zátěžové testování v simulovaném prostředí
 
-5. **Fáze V: Finalizace a dokumentace (1-2 týdny)**
+5. **Fáze V: Finalizace a dokumentace**
    - Dokončení implementace
    - Vytvoření uživatelské dokumentace
    - Vytvoření vývojářské dokumentace
