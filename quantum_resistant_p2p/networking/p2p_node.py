@@ -5,7 +5,6 @@ P2P Node implementation for quantum-resistant P2P communication.
 import asyncio
 import logging
 import json
-import time
 from typing import Dict, List, Optional, Callable, Any, Tuple, Set
 import uuid
 
@@ -19,27 +18,17 @@ class P2PNode:
     P2P nodes, sending and receiving messages, and handling connection events.
     """
     
-    def __init__(self, host: str = '0.0.0.0', port: int = 8000, node_id: Optional[str] = None, key_storage = None):
+    def __init__(self, host: str = '0.0.0.0', port: int = 8000, node_id: Optional[str] = None):
         """Initialize a new P2P node.
         
         Args:
             host: The host IP address to bind to
             port: The port number to listen on
-            node_id: Unique identifier for this node. If None, a persistent ID is retrieved or generated.
-            key_storage: Optional KeyStorage instance to retrieve/store node ID
+            node_id: Unique identifier for this node. If None, a random UUID is generated.
         """
         self.host = host
         self.port = port
-        
-        # Handle persistent node ID
-        if node_id:
-            self.node_id = node_id
-        elif key_storage:
-            # Try to get a stored node ID from the key storage
-            self.node_id = self._get_persistent_node_id(key_storage)
-        else:
-            self.node_id = str(uuid.uuid4())
-            
+        self.node_id = node_id or str(uuid.uuid4())
         self.peers: Dict[str, Tuple[str, int]] = {}  # node_id -> (host, port)
         self.connections: Dict[str, asyncio.StreamWriter] = {}  # node_id -> writer
         self.server = None
@@ -49,71 +38,6 @@ class P2PNode:
         self.running = False
         
         logger.info(f"P2P Node initialized with ID: {self.node_id}")
-    
-    def _get_persistent_node_id(self, key_storage) -> str:
-        """Get a persistent node ID from the key storage or generate a new one.
-        
-        Args:
-            key_storage: The key storage instance
-            
-        Returns:
-            The node ID
-        """
-        # Check if we have a stored node ID
-        node_id_key = "node_id"
-        node_id_data = key_storage.get_key(node_id_key)
-        
-        if node_id_data and "node_id" in node_id_data:
-            # Use the stored node ID
-            node_id = node_id_data["node_id"]
-            logger.info(f"Using stored node ID: {node_id}")
-            return node_id
-        
-        # Generate a new node ID
-        node_id = str(uuid.uuid4())
-        
-        # Store the node ID
-        key_data = {
-            "node_id": node_id,
-            "created_at": time.time()
-        }
-        success = key_storage.store_key(node_id_key, key_data)
-        
-        if success:
-            logger.info(f"Generated and stored new node ID: {node_id}")
-        else:
-            logger.warning(f"Failed to store new node ID, using temporary ID: {node_id}")
-        
-        return node_id
-    
-    def reset_node_id(self, key_storage) -> str:
-        """Reset the node ID and store the new one.
-        
-        Args:
-            key_storage: The key storage instance
-            
-        Returns:
-            The new node ID
-        """
-        # Delete the old node ID
-        key_storage.delete_key("node_id")
-        
-        # Generate a new node ID
-        self.node_id = str(uuid.uuid4())
-        
-        # Store the new node ID
-        key_data = {
-            "node_id": self.node_id,
-            "created_at": time.time()
-        }
-        success = key_storage.store_key("node_id", key_data)
-        
-        if success:
-            logger.info(f"Reset node ID to: {self.node_id}")
-        else:
-            logger.warning(f"Failed to store reset node ID: {self.node_id}")
-        
-        return self.node_id
     
     async def start(self) -> None:
         """Start the P2P node server."""

@@ -9,7 +9,7 @@ from pathlib import Path
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter, 
     QTabWidget, QLabel, QStatusBar, QAction, QFileDialog, QMessageBox,
-    QInputDialog, QApplication, QPushButton
+    QInputDialog
 )
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, pyqtSlot
 from PyQt5.QtGui import QIcon
@@ -89,12 +89,10 @@ class MainWindow(QMainWindow):
     
     def _init_network(self):
         """Initialize network components."""
-        # Create the P2P node with key storage for persistent node ID
-        self.node = P2PNode(key_storage=self.key_storage)
-        
+        # Create the P2P node
+        self.node = P2PNode()
         # Create node discovery
         self.node_discovery = NodeDiscovery(self.node.node_id, port=self.node.port)
-        
         # Create secure messaging
         self.secure_messaging = SecureMessaging(
             node=self.node,
@@ -129,29 +127,10 @@ class MainWindow(QMainWindow):
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
 
-        # Status indicators - all on the right side
-        self.connection_status = QLabel(f"Node ID: {self.node.node_id[:8]}...")
-        self.connection_status.setToolTip(f"Full Node ID: {self.node.node_id}")
-
-        # Add copy button next to connection status
-        self.copy_id_button = QPushButton("Copy ID")
-        self.copy_id_button.setToolTip("Copy full Node ID to clipboard")
-        self.copy_id_button.clicked.connect(self._copy_node_id)
-        self.copy_id_button.setMaximumHeight(20)  # Make button smaller
-
-        # Create a widget to hold both Node ID and copy button
-        node_id_widget = QWidget()
-        node_id_layout = QHBoxLayout(node_id_widget)
-        node_id_layout.setContentsMargins(0, 0, 0, 0)  # Remove margins
-        node_id_layout.setSpacing(2)  # Reduce spacing
-        node_id_layout.addWidget(self.connection_status)
-        node_id_layout.addWidget(self.copy_id_button)
-
-        # Add the combined widget to the status bar
-        self.status_bar.addPermanentWidget(node_id_widget)
-
-        # Add encryption status
+        # Status indicators
+        self.connection_status = QLabel("Not connected")
         self.encryption_status = QLabel("No encryption")
+        self.status_bar.addPermanentWidget(self.connection_status)
         self.status_bar.addPermanentWidget(self.encryption_status)
 
         # Initial status message
@@ -193,13 +172,6 @@ class MainWindow(QMainWindow):
         
         file_menu.addSeparator()
         
-        # Reset node ID action
-        reset_node_id_action = QAction("Reset Node ID...", self)
-        reset_node_id_action.triggered.connect(self._reset_node_id)
-        file_menu.addAction(reset_node_id_action)
-        
-        file_menu.addSeparator()
-        
         # Exit action
         exit_action = QAction("Exit", self)
         exit_action.triggered.connect(self.close)
@@ -231,101 +203,6 @@ class MainWindow(QMainWindow):
         about_action.triggered.connect(self._show_about_dialog)
         help_menu.addAction(about_action)
     
-    def _copy_node_id(self):
-        """Copy the full node ID to clipboard."""
-        clipboard = QApplication.clipboard()
-        clipboard.setText(self.node.node_id)
-        self.status_bar.showMessage("Node ID copied to clipboard", 2000)
-    
-    async def _async_reset_node_id(self):
-        """Asynchronously reset the node ID."""
-        try:
-            # Stop the network first
-            if self.node:
-                if self.node_discovery:
-                    await self.node_discovery.stop()
-                    self.node_discovery = None
-
-                await self.node.stop()
-                self.node = None
-
-                # Wait for socket to release
-                await asyncio.sleep(0.5)
-
-            # Reset the node ID
-            # Create temporary P2PNode just for resetting ID
-            temp_node = P2PNode(key_storage=self.key_storage)
-            new_node_id = temp_node.reset_node_id(self.key_storage)
-
-            # Update UI
-            self.status_bar.showMessage(f"Node ID reset to: {new_node_id[:8]}...", 5000)
-            if hasattr(self, 'connection_status'):
-                self.connection_status.setText(f"Node ID: {new_node_id[:8]}...")
-                self.connection_status.setToolTip(f"Full Node ID: {new_node_id}")
-
-            # Signal completion to initiate restart in main thread
-            # This avoids asyncio task conflicts
-            QTimer.singleShot(100, lambda: self._complete_node_id_reset(new_node_id))
-
-        except Exception as e:
-            logger.error(f"Error during node ID reset: {e}")
-            self.status_bar.showMessage(f"Error resetting node ID: {e}", 5000)
-            # Try to restart network anyway
-            QTimer.singleShot(500, self._reinitialize_network)
-
-    def _complete_node_id_reset(self, new_node_id):
-        """Complete the node ID reset process by reinitializing the network."""
-        try:
-            # Reinitialize network
-            self._reinitialize_network()
-            
-            # Show success message
-            QMessageBox.information(
-                self,
-                "Node ID Reset",
-                f"Your node ID has been reset to: {new_node_id[:8]}...\n\n"
-                "You will need to re-establish connections with your peers."
-            )
-        except Exception as e:
-            logger.error(f"Error completing node ID reset: {e}")
-            self.status_bar.showMessage(f"Error restarting network: {e}", 5000)
-    
-    def _reinitialize_network(self):
-        """Reinitialize the network components."""
-        try:
-            # Initialize network components
-            self._init_network()
-            
-            # Start network components
-            self.async_task.emit(self._async_start_network())
-            
-            self.status_bar.showMessage("Network restarted with new node ID", 3000)
-        except Exception as e:
-            logger.error(f"Error reinitializing network: {e}")
-            self.status_bar.showMessage(f"Error reinitializing network: {e}", 5000)
-
-    def _reset_node_id(self):
-        """Reset the node ID after user confirmation."""
-        # Confirm with the user
-        reply = QMessageBox.question(
-            self,
-            "Reset Node ID",
-            "Are you sure you want to reset your node ID?\n\n"
-            "This will change your identity on the network and require establishing "
-            "new connections with all peers.",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
-        )
-
-        if reply != QMessageBox.Yes:
-            return
-
-        # Show a "please wait" message
-        self.status_bar.showMessage("Resetting node ID, please wait...", 5000)
-
-        # Use the async signal to run the reset operation
-        self.async_task.emit(self._async_reset_node_id())
-    
     def _start_network(self):
         """Start the network components."""
         # Start the network components asynchronously
@@ -334,18 +211,11 @@ class MainWindow(QMainWindow):
     def _update_crypto_status(self):
         """Update the cryptography status display in the UI."""
         if hasattr(self, 'encryption_status') and self.encryption_status and hasattr(self, 'secure_messaging') and self.secure_messaging:
-            # Update encryption status display
             self.encryption_status.setText(
                 f"Crypto: {self.secure_messaging.key_exchange.name.split()[0]}, "
                 f"{self.secure_messaging.symmetric.name}, "
                 f"{self.secure_messaging.signature.name.split()[0]}"
             )
-
-            # Update node ID display if it changed
-            if hasattr(self, 'connection_status') and self.connection_status:
-                self.connection_status.setText(f"Node ID: {self.node.node_id[:8]}...")
-                self.connection_status.setToolTip(f"Full Node ID: {self.node.node_id}")
-
             self.status_bar.showMessage("Cryptography settings updated", 3000)
             logger.debug("Updated cryptography status in UI")
     
@@ -354,26 +224,25 @@ class MainWindow(QMainWindow):
         try:
             # Start node discovery
             await self.node_discovery.start()
-
+            
             # Start P2P node
             asyncio.create_task(self.node.start())
-
-            # Update UI - just update connection_status with tooltip, no text change
-            self.connection_status.setToolTip(f"Full Node ID: {self.node.node_id}")
-
+            
+            # Update UI
+            self.connection_status.setText(f"Node ID: {self.node.node_id[:8]}...")
             self.encryption_status.setText(
                 f"Crypto: {self.secure_messaging.key_exchange.name.split()[0]}, "
                 f"{self.secure_messaging.symmetric.name}, "
                 f"{self.secure_messaging.signature.name.split()[0]}"
             )
-
+            
             self.status_bar.showMessage("Network started", 3000)
-
+            
             # Start periodic update of peer list
             asyncio.create_task(self._periodic_peer_update())
-
+            
             logger.info("Network components started")
-
+            
         except Exception as e:
             logger.error(f"Failed to start network: {e}")
             self.status_bar.showMessage(f"Error starting network: {e}", 5000)
@@ -433,29 +302,6 @@ class MainWindow(QMainWindow):
             else:
                 self.status_bar.showMessage(f"New message from {sender_id}", 5000)
     
-    @pyqtSlot(object)
-    def _run_async_task(self, coro):
-        """Run an asynchronous task in the event loop.
-        
-        Args:
-            coro: The coroutine to run
-        """
-        asyncio.create_task(coro)
-    
-    def _show_connect_dialog(self):
-        """Show the dialog to connect to a specific peer."""
-        host, ok = QInputDialog.getText(self, "Connect to Peer", "Enter the peer's host address:")
-        if not ok or not host:
-            return
-            
-        port, ok = QInputDialog.getInt(self, "Connect to Peer", "Enter the peer's port:", 8000, 1, 65535)
-        if not ok:
-            return
-            
-        # Connect to the peer
-        self.status_bar.showMessage(f"Connecting to {host}:{port}...", 3000)
-        self.async_task.emit(self._connect_to_peer(host, port))
-    
     async def _connect_to_peer(self, host: str, port: int):
         """Connect to a peer.
         
@@ -480,6 +326,29 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage(f"Error connecting to peer: {e}", 3000)
             logger.error(f"Error connecting to peer at {host}:{port}: {e}")
             return False
+    
+    @pyqtSlot(object)
+    def _run_async_task(self, coro):
+        """Run an asynchronous task in the event loop.
+        
+        Args:
+            coro: The coroutine to run
+        """
+        asyncio.create_task(coro)
+    
+    def _show_connect_dialog(self):
+        """Show the dialog to connect to a specific peer."""
+        host, ok = QInputDialog.getText(self, "Connect to Peer", "Enter the peer's host address:")
+        if not ok or not host:
+            return
+            
+        port, ok = QInputDialog.getInt(self, "Connect to Peer", "Enter the peer's port:", 8000, 1, 65535)
+        if not ok:
+            return
+            
+        # Connect to the peer
+        self.status_bar.showMessage(f"Connecting to {host}:{port}...", 3000)
+        self.async_task.emit(self._connect_to_peer(host, port))
     
     def _show_send_file_dialog(self):
         """Show the dialog to send a file to a peer."""
