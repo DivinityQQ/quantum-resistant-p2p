@@ -93,6 +93,7 @@ class SecureMessaging:
         
         # Dictionary mapping peer IDs to shared symmetric keys
         self.shared_keys: Dict[str, bytes] = {}
+        self._load_peer_keys()
         
         # Dictionary mapping message IDs to callbacks for received messages
         self.message_callbacks: Dict[str, Callable[[Message], None]] = {}
@@ -154,6 +155,48 @@ class SecureMessaging:
             }
             self.key_storage.store_key(f"signature_{self.signature.name}", signature_key)
             logger.info(f"Generated new signature keypair for {self.signature.name}")
+
+    def _save_peer_key(self, peer_id: str, shared_key: bytes):
+        """Save a shared key for a peer in KeyStorage.
+
+        Args:
+            peer_id: The ID of the peer
+            shared_key: The shared key
+        """
+        # Store the key with a special format to identify it
+        key_id = f"peer_shared_key_{peer_id}"
+        key_data = {
+            "peer_id": peer_id,
+            "shared_key": shared_key,
+            "algorithm": self.key_exchange.name,
+            "created_at": time.time()
+        }
+        success = self.key_storage.store_key(key_id, key_data)
+        if success:
+            logger.info(f"Saved shared key for peer {peer_id}")
+        else:
+            logger.error(f"Failed to save shared key for peer {peer_id}")
+
+    def _load_peer_keys(self):
+        """Load all saved peer keys from KeyStorage."""
+        # List all keys and find peer shared keys
+        for key_id, key_data in self.key_storage.list_keys():
+            if key_id.startswith("peer_shared_key_"):
+                peer_id = key_data.get("peer_id")
+                shared_key = key_data.get("shared_key")
+
+                # Convert from base64 if needed
+                if isinstance(shared_key, str):
+                    import base64
+                    try:
+                        shared_key = base64.b64decode(shared_key)
+                    except:
+                        logger.error(f"Failed to decode shared key for peer {peer_id}")
+                        continue
+                    
+                if peer_id and shared_key:
+                    self.shared_keys[peer_id] = shared_key
+                    logger.info(f"Loaded shared key for peer {peer_id}")
     
     async def _handle_key_exchange_init(self, peer_id: str, message: Dict[str, Any]) -> None:
         """Handle a key exchange initiation message from a peer.
@@ -190,6 +233,7 @@ class SecureMessaging:
             
             # Store the shared secret
             self.shared_keys[peer_id] = shared_secret
+            self._save_peer_key(peer_id, shared_secret)
             
             # Log the key exchange
             self.secure_logger.log_event(
@@ -249,6 +293,7 @@ class SecureMessaging:
             
             # Store the shared secret
             self.shared_keys[peer_id] = shared_secret
+            self._save_peer_key(peer_id, shared_secret)
             
             # Log the key exchange
             self.secure_logger.log_event(

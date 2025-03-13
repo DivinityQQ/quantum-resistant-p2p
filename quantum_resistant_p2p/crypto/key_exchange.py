@@ -228,28 +228,22 @@ class KyberKeyExchange(KeyExchangeAlgorithm):
             The shared secret
         """
         global LIBOQS_AVAILABLE
-        
+
         if not LIBOQS_AVAILABLE or self.kem is None:
-            # Find the corresponding public key for this private key
-            public_key = None
-            for pub, priv in self._mock_keypairs.items():
-                if priv == private_key:
-                    public_key = pub
-                    break
-                
-            if public_key:
-                # Recreate the shared secret deterministically
-                # This matches exactly what encapsulate does
-                secret_seed = f"kyber-{self.security_level}-shared-{public_key.hex()}-{ciphertext.hex()}"
-                shared_secret = hashlib.sha256(secret_seed.encode()).digest()
-                return shared_secret
-            
-            # If we can't find the public key, log an error
-            logger.error("Could not find matching public key for decapsulation")
-            # Fall back to a deterministic but likely incorrect key
-            fallback_seed = f"kyber-{self.security_level}-fallback-{private_key.hex()[:16]}-{ciphertext.hex()[:16]}"
-            shared_secret = hashlib.sha256(fallback_seed.encode()).digest()
-            
+            # Deterministic mock implementation
+
+            # Generate a public key from the private key
+            # This is a major improvement - instead of looking up in a dictionary,
+            # we regenerate the public key from the private key deterministically
+            private_key_hex = private_key.hex()
+            pub_seed = f"kyber-{self.security_level}-public-{private_key_hex}"
+            public_key = hashlib.sha256(pub_seed.encode()).digest()
+
+            # Now we have the public key, generate the shared secret deterministically
+            secret_seed = f"kyber-{self.security_level}-shared-{public_key.hex()}-{ciphertext.hex()}"
+            shared_secret = hashlib.sha256(secret_seed.encode()).digest()
+
+            logger.debug("Performed deterministic mock Kyber decapsulation")
             return shared_secret
         
         try:
@@ -425,27 +419,18 @@ class NTRUKeyExchange(KeyExchangeAlgorithm):
         if not LIBOQS_AVAILABLE or self.kem is None:
             # Deterministic mock implementation
 
-            # Find the corresponding public key for this private key
-            public_key = None
-            for pub, priv in self._mock_keypairs.items():
-                if priv == private_key:
-                    public_key = pub
-                    break
-                
-            if public_key:
-                # Recreate the shared secret deterministically
-                # This matches exactly what encapsulate does
-                secret_seed = f"ntru-{self.security_level}-shared-{public_key.hex()}-{ciphertext.hex()}"
-                shared_secret = hashlib.sha256(secret_seed.encode()).digest()
-                return shared_secret
+            # Generate a public key from the private key
+            # This is a major improvement - instead of looking up in a dictionary,
+            # we regenerate the public key from the private key deterministically
+            private_key_hex = private_key.hex()
+            pub_seed = f"ntru-{self.security_level}-public-{private_key_hex}"
+            public_key = hashlib.sha256(pub_seed.encode()).digest()
 
-            # If we can't find the public key, log an error
-            logger.error("Could not find matching public key for NTRU decapsulation")
-            # Fall back to a deterministic but likely incorrect key
-            fallback_seed = f"ntru-{self.security_level}-fallback-{private_key.hex()[:16]}-{ciphertext.hex()[:16]}"
-            shared_secret = hashlib.sha256(fallback_seed.encode()).digest()
+            # Now we have the public key, generate the shared secret deterministically
+            secret_seed = f"ntru-{self.security_level}-shared-{public_key.hex()}-{ciphertext.hex()}"
+            shared_secret = hashlib.sha256(secret_seed.encode()).digest()
 
-            logger.debug("Performed deterministic mock NTRU decapsulation with fallback method")
+            logger.debug("Performed deterministic mock NTRU decapsulation")
             return shared_secret
 
         try:
