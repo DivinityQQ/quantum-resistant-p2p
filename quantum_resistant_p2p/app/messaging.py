@@ -7,6 +7,9 @@ import logging
 import os
 import time
 import uuid
+import hashlib
+import asyncio
+import base64
 from typing import Dict, List, Optional, Tuple, Any, Callable
 from dataclasses import dataclass, asdict, field
 
@@ -57,6 +60,15 @@ class Message:
         return cls(**data)
 
 
+class KeyExchangeState:
+    """State of a key exchange with a peer."""
+    NONE = 0
+    INITIATED = 1
+    RESPONDED = 2
+    CONFIRMED = 3
+    ESTABLISHED = 4
+
+
 class SecureMessaging:
     """Secure messaging functionality using post-quantum cryptography.
     
@@ -84,7 +96,6 @@ class SecureMessaging:
         self.node = node
         self.key_storage = key_storage
         self.secure_logger = logger  # Rename to avoid conflict with global logger
-        self.global_message_handlers = []
         
         # Use default algorithms if not specified
         self.key_exchange = key_exchange_algorithm or KyberKeyExchange()
@@ -93,18 +104,28 @@ class SecureMessaging:
         
         # Dictionary mapping peer IDs to shared symmetric keys
         self.shared_keys: Dict[str, bytes] = {}
-        self._load_peer_keys()
+        
+        # Dictionary mapping peer IDs to key exchange states
+        self.key_exchange_states: Dict[str, int] = {}
         
         # Dictionary mapping message IDs to callbacks for received messages
-        self.message_callbacks: Dict[str, Callable[[Message], None]] = {}
+        self.message_callbacks: Dict[str, Callable[[Any], None]] = {}
+        
+        # List of global message handlers
+        self.global_message_handlers: List[Callable[[Message], None]] = []
         
         # Register message handlers
         self.node.register_message_handler("key_exchange_init", self._handle_key_exchange_init)
         self.node.register_message_handler("key_exchange_response", self._handle_key_exchange_response)
+        self.node.register_message_handler("key_exchange_confirm", self._handle_key_exchange_confirm)
+        self.node.register_message_handler("key_exchange_test", self._handle_key_exchange_test)
         self.node.register_message_handler("secure_message", self._handle_secure_message)
         
         # Generate or load our keypair
         self._load_or_generate_keypair()
+        
+        # Load saved peer keys
+        self._load_peer_keys()
         
         # Log initialization
         self.secure_logger.log_event(
@@ -119,15 +140,32 @@ class SecureMessaging:
             f"{self.symmetric.name}, and {self.signature.name}"
         )
     
-    def register_global_message_handler(self, handler):
+    def register_global_message_handler(self, handler: Callable[[Message], None]) -> None:
         """Register a handler for all messages.
-
+        
         Args:
             handler: Callback function that takes a Message as parameter
         """
         self.global_message_handlers.append(handler)
         logger.debug("Registered global message handler")
-
+    
+    def _generate_key_id(self, peer_id: str) -> str:
+        """Generate a deterministic key ID for a peer.
+        
+        Both peers should generate the same key ID regardless of who initiated.
+        
+        Args:
+            peer_id: The ID of the peer
+            
+        Returns:
+            A unique key ID
+        """
+        # Sort the node IDs so both sides generate the same key ID
+        node_ids = sorted([self.node.node_id, peer_id])
+        key_material = f"{node_ids[0]}:{node_ids[1]}:{self.key_exchange.name}"
+        key_hash = hashlib.sha256(key_material.encode()).hexdigest()[:16]
+        return f"peer_shared_key_{key_hash}"
+    
     def _load_or_generate_keypair(self) -> None:
         """Load existing keypairs or generate new ones if they don't exist."""
         # Check if we have key exchange keypair
@@ -155,16 +193,17 @@ class SecureMessaging:
             }
             self.key_storage.store_key(f"signature_{self.signature.name}", signature_key)
             logger.info(f"Generated new signature keypair for {self.signature.name}")
-
-    def _save_peer_key(self, peer_id: str, shared_key: bytes):
+    
+    def _save_peer_key(self, peer_id: str, shared_key: bytes) -> None:
         """Save a shared key for a peer in KeyStorage.
-
+        
         Args:
             peer_id: The ID of the peer
             shared_key: The shared key
         """
-        # Store the key with a special format to identify it
-        key_id = f"peer_shared_key_{peer_id}"
+        # Generate a deterministic key ID based on both peer IDs
+        key_id = self._generate_key_id(peer_id)
+        
         key_data = {
             "peer_id": peer_id,
             "shared_key": shared_key,
@@ -174,17 +213,19 @@ class SecureMessaging:
         success = self.key_storage.store_key(key_id, key_data)
         if success:
             logger.info(f"Saved shared key for peer {peer_id}")
+            # Mark the key exchange as established
+            self.key_exchange_states[peer_id] = KeyExchangeState.ESTABLISHED
         else:
             logger.error(f"Failed to save shared key for peer {peer_id}")
-
-    def _load_peer_keys(self):
+    
+    def _load_peer_keys(self) -> None:
         """Load all saved peer keys from KeyStorage."""
         # List all keys and find peer shared keys
         for key_id, key_data in self.key_storage.list_keys():
             if key_id.startswith("peer_shared_key_"):
                 peer_id = key_data.get("peer_id")
                 shared_key = key_data.get("shared_key")
-
+                
                 # Convert from base64 if needed
                 if isinstance(shared_key, str):
                     import base64
@@ -193,10 +234,98 @@ class SecureMessaging:
                     except:
                         logger.error(f"Failed to decode shared key for peer {peer_id}")
                         continue
-                    
+                
                 if peer_id and shared_key:
                     self.shared_keys[peer_id] = shared_key
+                    self.key_exchange_states[peer_id] = KeyExchangeState.ESTABLISHED
                     logger.info(f"Loaded shared key for peer {peer_id}")
+    
+    async def initiate_key_exchange(self, peer_id: str) -> bool:
+        """Initiate a key exchange with a peer.
+        
+        Args:
+            peer_id: The ID of the peer to exchange keys with
+            
+        Returns:
+            True if key exchange initiated successfully, False otherwise
+        """
+        logger.debug(f"Initiating key exchange with {peer_id}")
+        
+        # If we already have a key exchange in progress, don't start another
+        if peer_id in self.key_exchange_states and self.key_exchange_states[peer_id] in [
+            KeyExchangeState.INITIATED, KeyExchangeState.RESPONDED, KeyExchangeState.CONFIRMED
+        ]:
+            logger.warning(f"Key exchange already in progress with {peer_id}")
+            return False
+        
+        try:
+            # Get our keypair
+            key_exchange_key = self.key_storage.get_key(f"key_exchange_{self.key_exchange.name}")
+            if key_exchange_key is None:
+                logger.error(f"Missing key exchange keypair for {self.key_exchange.name}")
+                return False
+            
+            # Send our public key
+            public_key = key_exchange_key["public_key"]
+            
+            # Generate a message ID for tracking the response
+            message_id = str(uuid.uuid4())
+            
+            # Create a future for the response
+            future = asyncio.Future()
+            
+            # Register a callback for the response
+            def callback(result):
+                if isinstance(result, Exception):
+                    # Don't set exception if we already have the shared key
+                    if peer_id in self.shared_keys:
+                        future.set_result(True)
+                    else:
+                        future.set_exception(result)
+                else:
+                    future.set_result(True)
+            
+            self.message_callbacks[message_id] = callback
+            
+            # Set key exchange state
+            self.key_exchange_states[peer_id] = KeyExchangeState.INITIATED
+            
+            # Send the key exchange initiation
+            success = await self.node.send_message(
+                peer_id=peer_id,
+                message_type="key_exchange_init",
+                message_id=message_id,
+                algorithm=self.key_exchange.name,
+                public_key=base64.b64encode(public_key).decode()
+            )
+            
+            if not success:
+                logger.error(f"Failed to send key exchange initiation to {peer_id}")
+                self.key_exchange_states[peer_id] = KeyExchangeState.NONE
+                return False
+            
+            # Wait for the response
+            try:
+                await asyncio.wait_for(future, timeout=20.0)
+                return True
+            except asyncio.TimeoutError:
+                # Check if we have a shared key despite the timeout
+                if peer_id in self.shared_keys:
+                    logger.warning(f"Key exchange callback timed out but shared key exists for {peer_id}")
+                    return True
+                    
+                logger.error(f"Timeout waiting for key exchange response from {peer_id}")
+                self.key_exchange_states[peer_id] = KeyExchangeState.NONE
+                return False
+            
+        except Exception as e:
+            logger.error(f"Error initiating key exchange with {peer_id}: {e}")
+            self.key_exchange_states[peer_id] = KeyExchangeState.NONE
+            # Check if we have a shared key despite the error
+            if peer_id in self.shared_keys:
+                logger.warning(f"Key exchange failed with error but shared key exists for {peer_id}")
+                return True
+            return False
     
     async def _handle_key_exchange_init(self, peer_id: str, message: Dict[str, Any]) -> None:
         """Handle a key exchange initiation message from a peer.
@@ -227,13 +356,12 @@ class SecureMessaging:
                 return
             
             # Encapsulate a shared secret
-            import base64
             public_key_bytes = base64.b64decode(public_key)
             ciphertext, shared_secret = self.key_exchange.encapsulate(public_key_bytes)
             
-            # Store the shared secret
+            # Store the shared secret temporarily
             self.shared_keys[peer_id] = shared_secret
-            self._save_peer_key(peer_id, shared_secret)
+            self.key_exchange_states[peer_id] = KeyExchangeState.RESPONDED
             
             # Log the key exchange
             self.secure_logger.log_event(
@@ -241,6 +369,7 @@ class SecureMessaging:
                 algorithm=self.key_exchange.name,
                 peer_id=peer_id,
                 direction="received",
+                state="responded",
                 security_level=getattr(self.key_exchange, "security_level", 3)
             )
             
@@ -249,10 +378,11 @@ class SecureMessaging:
                 peer_id=peer_id,
                 message_type="key_exchange_response",
                 algorithm=self.key_exchange.name,
+                message_id=message.get("message_id"),
                 ciphertext=base64.b64encode(ciphertext).decode()
             )
             
-            logger.info(f"Completed key exchange with {peer_id} (as responder)")
+            logger.info(f"Sent key exchange response to {peer_id}")
             
         except Exception as e:
             logger.error(f"Error handling key exchange initiation from {peer_id}: {e}")
@@ -286,13 +416,36 @@ class SecureMessaging:
                 return
             
             # Decapsulate the shared secret
-            import base64
             ciphertext_bytes = base64.b64decode(ciphertext)
             private_key = key_exchange_key["private_key"]
             shared_secret = self.key_exchange.decapsulate(private_key, ciphertext_bytes)
             
             # Store the shared secret
             self.shared_keys[peer_id] = shared_secret
+            self.key_exchange_states[peer_id] = KeyExchangeState.CONFIRMED
+            
+            # Send a confirmation message
+            await self.node.send_message(
+                peer_id=peer_id,
+                message_type="key_exchange_confirm",
+                algorithm=self.key_exchange.name
+            )
+            
+            # Send a test message to verify the key works
+            test_data = {
+                "test": True,
+                "timestamp": time.time()
+            }
+            test_data_json = json.dumps(test_data).encode()
+            encrypted_test = self.symmetric.encrypt(shared_secret, test_data_json)
+            
+            await self.node.send_message(
+                peer_id=peer_id,
+                message_type="key_exchange_test",
+                ciphertext=base64.b64encode(encrypted_test).decode()
+            )
+            
+            # Now save the key permanently
             self._save_peer_key(peer_id, shared_secret)
             
             # Log the key exchange
@@ -301,6 +454,7 @@ class SecureMessaging:
                 algorithm=self.key_exchange.name,
                 peer_id=peer_id,
                 direction="initiated",
+                state="established",
                 security_level=getattr(self.key_exchange, "security_level", 3)
             )
             
@@ -320,6 +474,55 @@ class SecureMessaging:
             if message_id and message_id in self.message_callbacks:
                 self.message_callbacks[message_id](e)
                 del self.message_callbacks[message_id]
+    
+    async def _handle_key_exchange_confirm(self, peer_id: str, message: Dict[str, Any]) -> None:
+        """Handle a key exchange confirmation message from a peer.
+        
+        Args:
+            peer_id: The ID of the peer who sent the message
+            message: The message data
+        """
+        logger.debug(f"Received key exchange confirmation from {peer_id}")
+        
+        # If we have a shared key, save it permanently
+        if peer_id in self.shared_keys and self.key_exchange_states.get(peer_id) == KeyExchangeState.RESPONDED:
+            self._save_peer_key(peer_id, self.shared_keys[peer_id])
+            logger.info(f"Completed key exchange with {peer_id} (as responder)")
+    
+    async def _handle_key_exchange_test(self, peer_id: str, message: Dict[str, Any]) -> None:
+        """Handle a key exchange test message from a peer.
+        
+        Args:
+            peer_id: The ID of the peer who sent the message
+            message: The message data
+        """
+        logger.debug(f"Received key exchange test message from {peer_id}")
+        
+        # If we don't have a shared key, ignore the message
+        if peer_id not in self.shared_keys:
+            logger.error(f"Received key exchange test from {peer_id} but no shared key exists")
+            return
+        
+        try:
+            ciphertext = message.get("ciphertext")
+            if not ciphertext:
+                logger.error(f"Invalid key exchange test from {peer_id}")
+                return
+            
+            # Try to decrypt the test message
+            ciphertext_bytes = base64.b64decode(ciphertext)
+            plaintext = self.symmetric.decrypt(self.shared_keys[peer_id], ciphertext_bytes)
+            
+            # Parse the test data
+            test_data = json.loads(plaintext.decode())
+            if test_data.get("test"):
+                logger.info(f"Key exchange test successful with {peer_id}")
+            
+        except Exception as e:
+            logger.error(f"Key exchange test failed with {peer_id}: {e}")
+            # Shared key might be invalid, need to renegotiate
+            if peer_id in self.key_exchange_states:
+                self.key_exchange_states[peer_id] = KeyExchangeState.NONE
     
     async def _handle_secure_message(self, peer_id: str, message: Dict[str, Any]) -> None:
         """Handle a secure message from a peer.
@@ -345,7 +548,6 @@ class SecureMessaging:
                 return
             
             # Decrypt the message
-            import base64
             ciphertext_bytes = base64.b64decode(ciphertext)
             signature_bytes = base64.b64decode(signature)
             public_key_bytes = base64.b64decode(public_key)
@@ -376,7 +578,7 @@ class SecureMessaging:
                 )
                 
                 logger.info(f"Received and verified message from {peer_id}")
-
+                
                 # Notify global message handlers
                 for handler in self.global_message_handlers:
                     try:
@@ -394,82 +596,6 @@ class SecureMessaging:
             
         except Exception as e:
             logger.error(f"Error handling secure message from {peer_id}: {e}")
-    
-    async def initiate_key_exchange(self, peer_id: str) -> bool:
-        """Initiate a key exchange with a peer.
-        
-        Args:
-            peer_id: The ID of the peer to exchange keys with
-            
-        Returns:
-            True if key exchange initiated successfully, False otherwise
-        """
-        logger.debug(f"Initiating key exchange with {peer_id}")
-        
-        try:
-            # Get our keypair
-            key_exchange_key = self.key_storage.get_key(f"key_exchange_{self.key_exchange.name}")
-            if key_exchange_key is None:
-                logger.error(f"Missing key exchange keypair for {self.key_exchange.name}")
-                return False
-            
-            # Send our public key
-            import base64
-            public_key = key_exchange_key["public_key"]
-            
-            # Generate a message ID for tracking the response
-            message_id = str(uuid.uuid4())
-            
-            # Create a future for the response
-            import asyncio
-            future = asyncio.Future()
-            
-            # Register a callback for the response
-            def callback(result):
-                if isinstance(result, Exception):
-                    # Don't set exception if we already have the shared key
-                    if peer_id in self.shared_keys:
-                        future.set_result(True)
-                    else:
-                        future.set_exception(result)
-                else:
-                    future.set_result(True)
-            
-            self.message_callbacks[message_id] = callback
-            
-            # Send the key exchange initiation
-            success = await self.node.send_message(
-                peer_id=peer_id,
-                message_type="key_exchange_init",
-                message_id=message_id,
-                algorithm=self.key_exchange.name,
-                public_key=base64.b64encode(public_key).decode()
-            )
-            
-            if not success:
-                logger.error(f"Failed to send key exchange initiation to {peer_id}")
-                return False
-            
-            # Wait for the response - increase timeout from 10 to 20 seconds
-            try:
-                await asyncio.wait_for(future, timeout=20.0)
-                return True
-            except asyncio.TimeoutError:
-                # Check if we have a shared key despite the timeout
-                if peer_id in self.shared_keys:
-                    logger.warning(f"Key exchange callback timed out but shared key exists for {peer_id}")
-                    return True
-                    
-                logger.error(f"Timeout waiting for key exchange response from {peer_id}")
-                return False
-            
-        except Exception as e:
-            logger.error(f"Error initiating key exchange with {peer_id}: {e}")
-            # Check if we have a shared key despite the error
-            if peer_id in self.shared_keys:
-                logger.warning(f"Key exchange failed with error but shared key exists for {peer_id}")
-                return True
-            return False
     
     async def send_message(self, peer_id: str, content: bytes, 
                     is_file: bool = False, filename: Optional[str] = None) -> bool:
@@ -493,6 +619,12 @@ class SecureMessaging:
             if not success:
                 logger.error(f"Failed to establish shared key with {peer_id}")
                 return False
+        
+        # Verify the key exchange is in a valid state
+        valid_states = [KeyExchangeState.CONFIRMED, KeyExchangeState.ESTABLISHED]
+        if peer_id not in self.key_exchange_states or self.key_exchange_states[peer_id] not in valid_states:
+            logger.error(f"Key exchange with {peer_id} is not in a valid state for sending messages")
+            return False
         
         try:
             # Get our signature keypair
@@ -531,7 +663,6 @@ class SecureMessaging:
             )
             
             # Send the encrypted message
-            import base64
             success = await self.node.send_message(
                 peer_id=peer_id,
                 message_type="secure_message",

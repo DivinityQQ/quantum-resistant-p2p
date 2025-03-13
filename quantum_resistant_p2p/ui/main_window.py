@@ -73,6 +73,10 @@ class MainWindow(QMainWindow):
         self._init_network()
         self._init_ui()
         self._start_network()
+
+        # Register a global message handler to show messages in the UI
+        if self.secure_messaging:
+            self.secure_messaging.register_global_message_handler(self.handle_incoming_message)
     
     def _init_network(self):
         """Initialize network components."""
@@ -145,13 +149,20 @@ class MainWindow(QMainWindow):
         Args:
             message: The decrypted message
         """
-        # Only display the message if it's from the currently selected peer
-        if self.messaging.current_peer == message.sender_id:
-            self.messaging.handle_message(message)
-        else:
-            # Optional: Show notification that a message was received from another peer
-            self.status_bar.showMessage(f"New message from {message.sender_id[:8]}...")
-            # You could also add a visual indicator to the peer in the peer list
+        try:
+            # Only display the message if it's from the currently selected peer
+            if hasattr(self, 'messaging') and self.messaging.current_peer == message.sender_id:
+                self.messaging.handle_message(message)
+            else:
+                # Show notification that a message was received from another peer
+                sender_id = message.sender_id[:8] + "..." if len(message.sender_id) > 8 else message.sender_id
+                if message.is_file:
+                    filename = message.filename or "unknown file"
+                    self.status_bar.showMessage(f"Received file '{filename}' from {sender_id}", 5000)
+                else:
+                    self.status_bar.showMessage(f"New message from {sender_id}", 5000)
+        except Exception as e:
+            logger.error(f"Error handling incoming message in UI: {e}")
 
     def _setup_menu(self):
         """Set up the menu bar."""

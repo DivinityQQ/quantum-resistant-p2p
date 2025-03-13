@@ -83,9 +83,6 @@ class KyberKeyExchange(KeyExchangeAlgorithm):
     hardness of solving the learning-with-errors (LWE) problem over module lattices.
     """
     
-    # Class-level storage for mock implementation
-    _mock_keypairs = {}  # public_key -> private_key
-    
     def __init__(self, security_level: int = 3):
         """Initialize Kyber with the specified security level.
         
@@ -115,7 +112,7 @@ class KyberKeyExchange(KeyExchangeAlgorithm):
         
         # Check if the algorithm is actually supported
         try:
-            if hasattr(oqs, 'KEM') and self.variant in oqs.KEM.get_enabled():
+            if hasattr(oqs, 'KEM') and hasattr(oqs.KEM, 'get_enabled') and self.variant in oqs.KEM.get_enabled():
                 self.kem = oqs.KEM(self.variant)
             else:
                 logger.warning(f"Kyber variant {self.variant} not enabled in OQS library, using deterministic mock implementation")
@@ -154,11 +151,9 @@ class KyberKeyExchange(KeyExchangeAlgorithm):
             private_key = hashlib.sha256(seed.encode()).digest()
             
             # Generate public key deterministically from private key
+            # NOTE: This is critical - both sides need to derive public key from private key consistently
             pub_seed = f"kyber-{self.security_level}-public-{private_key.hex()}"
             public_key = hashlib.sha256(pub_seed.encode()).digest()
-            
-            # Store the keypair for later use in mock encapsulation/decapsulation
-            self._mock_keypairs[public_key] = private_key
             
             logger.debug("Generated deterministic mock Kyber keypair")
             return public_key, private_key
@@ -189,17 +184,16 @@ class KyberKeyExchange(KeyExchangeAlgorithm):
         global LIBOQS_AVAILABLE
         
         if not LIBOQS_AVAILABLE or self.kem is None:
-            # Deterministic mock implementation
+            # Deterministic mock implementation - no dependency on class state
+            
             # Generate a ciphertext deterministically from the public key
             cipher_seed = f"kyber-{self.security_level}-ciphertext-{public_key.hex()}"
             ciphertext = hashlib.sha256(cipher_seed.encode()).digest()
-
+            
             # Generate a shared secret deterministically from the public key and ciphertext ONLY
-            # This ensures both parties derive the same shared secret without relying on shared state
             secret_seed = f"kyber-{self.security_level}-shared-{public_key.hex()}-{ciphertext.hex()}"
             shared_secret = hashlib.sha256(secret_seed.encode()).digest()
-
-            # No need to store in class-level dictionary
+            
             logger.debug("Performed deterministic mock Kyber encapsulation")
             return ciphertext, shared_secret
         
@@ -228,21 +222,17 @@ class KyberKeyExchange(KeyExchangeAlgorithm):
             The shared secret
         """
         global LIBOQS_AVAILABLE
-
+        
         if not LIBOQS_AVAILABLE or self.kem is None:
-            # Deterministic mock implementation
-
-            # Generate a public key from the private key
-            # This is a major improvement - instead of looking up in a dictionary,
-            # we regenerate the public key from the private key deterministically
+            # Generate a public key from the private key using the SAME algorithm as in generate_keypair
             private_key_hex = private_key.hex()
             pub_seed = f"kyber-{self.security_level}-public-{private_key_hex}"
             public_key = hashlib.sha256(pub_seed.encode()).digest()
-
-            # Now we have the public key, generate the shared secret deterministically
+            
+            # Generate shared secret using the SAME algorithm as in encapsulate
             secret_seed = f"kyber-{self.security_level}-shared-{public_key.hex()}-{ciphertext.hex()}"
             shared_secret = hashlib.sha256(secret_seed.encode()).digest()
-
+            
             logger.debug("Performed deterministic mock Kyber decapsulation")
             return shared_secret
         
@@ -267,10 +257,6 @@ class NTRUKeyExchange(KeyExchangeAlgorithm):
     NTRU is a post-quantum key encapsulation mechanism (KEM) based on the
     hardness of lattice problems.
     """
-    
-    # Class-level storage for mock implementation
-    _mock_keypairs = {}  # public_key -> private_key
-    _mock_shared_secrets = {}  # ciphertext -> shared_secret
     
     def __init__(self, security_level: int = 3):
         """Initialize NTRU with the specified security level.
@@ -301,7 +287,7 @@ class NTRUKeyExchange(KeyExchangeAlgorithm):
         
         # Check if the algorithm is actually supported
         try:
-            if hasattr(oqs, 'KEM') and self.variant in oqs.KEM.get_enabled():
+            if hasattr(oqs, 'KEM') and hasattr(oqs.KEM, 'get_enabled') and self.variant in oqs.KEM.get_enabled():
                 self.kem = oqs.KEM(self.variant)
             else:
                 logger.warning(f"NTRU variant {self.variant} not enabled in OQS library, using deterministic mock implementation")
@@ -343,9 +329,6 @@ class NTRUKeyExchange(KeyExchangeAlgorithm):
             pub_seed = f"ntru-{self.security_level}-public-{private_key.hex()}"
             public_key = hashlib.sha256(pub_seed.encode()).digest()
             
-            # Store the keypair for later use in mock encapsulation/decapsulation
-            self._mock_keypairs[public_key] = private_key
-            
             logger.debug("Generated deterministic mock NTRU keypair")
             return public_key, private_key
         
@@ -365,81 +348,75 @@ class NTRUKeyExchange(KeyExchangeAlgorithm):
     
     def encapsulate(self, public_key: bytes) -> Tuple[bytes, bytes]:
         """Encapsulate a shared secret using the recipient's public key.
-
+        
         Args:
             public_key: The recipient's public key
-
+            
         Returns:
             Tuple of (ciphertext, shared_secret)
         """
         global LIBOQS_AVAILABLE
-
+        
         if not LIBOQS_AVAILABLE or self.kem is None:
             # Deterministic mock implementation - no dependency on class state
-
+            
             # Generate a ciphertext deterministically from the public key
             cipher_seed = f"ntru-{self.security_level}-ciphertext-{public_key.hex()}"
             ciphertext = hashlib.sha256(cipher_seed.encode()).digest()
-
+            
             # Generate a shared secret deterministically from the public key and ciphertext ONLY
-            # This ensures both parties derive the same shared secret without relying on shared state
             secret_seed = f"ntru-{self.security_level}-shared-{public_key.hex()}-{ciphertext.hex()}"
             shared_secret = hashlib.sha256(secret_seed.encode()).digest()
-
-            # No need to store in class-level dictionary anymore
+            
             logger.debug("Performed deterministic mock NTRU encapsulation")
             return ciphertext, shared_secret
-
+        
         try:
             # Use actual OQS implementation
             ciphertext, shared_secret = self.kem.encap(public_key)
-
+            
             logger.debug(f"NTRU encapsulation: ciphertext {len(ciphertext)} bytes, "
                       f"shared secret {len(shared_secret)} bytes")
-
+            
             return ciphertext, shared_secret
         except Exception as e:
             logger.error(f"Error during NTRU encapsulation: {e}")
             # Fall back to mock implementation
             LIBOQS_AVAILABLE = False
             return self.encapsulate(public_key)  # Recursive call to use mock implementation
-
+    
     def decapsulate(self, private_key: bytes, ciphertext: bytes) -> bytes:
         """Decapsulate a shared secret using the recipient's private key.
-
+        
         Args:
             private_key: The recipient's private key
             ciphertext: The ciphertext from the sender
-
+            
         Returns:
             The shared secret
         """
         global LIBOQS_AVAILABLE
-
+        
         if not LIBOQS_AVAILABLE or self.kem is None:
-            # Deterministic mock implementation
-
-            # Generate a public key from the private key
-            # This is a major improvement - instead of looking up in a dictionary,
-            # we regenerate the public key from the private key deterministically
+            # Generate a public key from the private key using the SAME algorithm as in generate_keypair
             private_key_hex = private_key.hex()
             pub_seed = f"ntru-{self.security_level}-public-{private_key_hex}"
             public_key = hashlib.sha256(pub_seed.encode()).digest()
-
-            # Now we have the public key, generate the shared secret deterministically
+            
+            # Generate shared secret using the SAME algorithm as in encapsulate
             secret_seed = f"ntru-{self.security_level}-shared-{public_key.hex()}-{ciphertext.hex()}"
             shared_secret = hashlib.sha256(secret_seed.encode()).digest()
-
+            
             logger.debug("Performed deterministic mock NTRU decapsulation")
             return shared_secret
-
+        
         try:
             # Use actual OQS implementation
             kem = oqs.KEM(self.variant)
             shared_secret = kem.decap(ciphertext, private_key)
-
+            
             logger.debug(f"NTRU decapsulation: shared secret {len(shared_secret)} bytes")
-
+            
             return shared_secret
         except Exception as e:
             logger.error(f"Error during NTRU decapsulation: {e}")
