@@ -364,5 +364,30 @@ class MessagingWidget(QWidget):
             message: The received message
         """
         logger.debug(f"MessagingWidget displaying message {message.message_id} from {message.sender_id}")
-        # Add the message to the chat area
+        
+        # Special handling for system messages
+        if message.is_system:
+            # Display as a system message
+            try:
+                content = message.content.decode("utf-8")
+                self._add_system_message(content)
+                
+                # If this is a crypto settings message, add more details
+                if ("crypto" in content.lower() or "settings" in content.lower() or 
+                    "algorithm" in content.lower() or "key exchange" in content.lower()):
+                    if hasattr(message, 'key_exchange_algo') and message.key_exchange_algo:
+                        self._add_system_message(f"Peer key exchange: {message.key_exchange_algo}")
+                    if hasattr(message, 'symmetric_algo') and message.symmetric_algo:
+                        self._add_system_message(f"Peer symmetric encryption: {message.symmetric_algo}")
+                    if hasattr(message, 'signature_algo') and message.signature_algo:
+                        self._add_system_message(f"Peer signature: {message.signature_algo}")
+                    
+                    # Add a hint about potential issues
+                    self._add_system_message("Different cryptography settings may affect communication")
+                
+            except Exception as e:
+                logger.error(f"Error displaying system message: {e}")
+            return
+        
+        # Regular message handling
         self._add_message(message, is_outgoing=False)

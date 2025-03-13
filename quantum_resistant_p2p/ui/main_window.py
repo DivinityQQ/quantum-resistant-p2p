@@ -76,14 +76,15 @@ class MainWindow(QMainWindow):
         """Initialize components after successful login."""
         self._init_network()
         self._init_ui()
-        
+
         # Register message handler BEFORE starting the network
-        # This ensures we only register it once and don't miss any messages
         if self.secure_messaging and not self._message_handler_registered:
             self.secure_messaging.register_global_message_handler(self._on_secure_message_received)
+            # Register for crypto settings changes
+            self.secure_messaging.register_settings_change_listener(self._update_crypto_status)
             self._message_handler_registered = True
             logger.debug("Registered global message handler")
-        
+
         self._start_network()
     
     def _init_network(self):
@@ -202,6 +203,17 @@ class MainWindow(QMainWindow):
         """Start the network components."""
         # Start the network components asynchronously
         asyncio.create_task(self._async_start_network())
+
+    def _update_crypto_status(self):
+        """Update the cryptography status display in the UI."""
+        if hasattr(self, 'encryption_status') and self.encryption_status and hasattr(self, 'secure_messaging') and self.secure_messaging:
+            self.encryption_status.setText(
+                f"Crypto: {self.secure_messaging.key_exchange.name.split()[0]}, "
+                f"{self.secure_messaging.symmetric.name}, "
+                f"{self.secure_messaging.signature.name.split()[0]}"
+            )
+            self.status_bar.showMessage("Cryptography settings updated", 3000)
+            logger.debug("Updated cryptography status in UI")
     
     async def _async_start_network(self):
         """Asynchronously start the network components."""
@@ -263,8 +275,18 @@ class MainWindow(QMainWindow):
         """
         logger.debug(f"MainWindow received message {message.message_id} from {message.sender_id}")
         
+        # Special handling for system messages
+        if message.is_system:
+            # Show system message in the status bar
+            try:
+                content = message.content.decode("utf-8")
+                self.status_bar.showMessage(content, 5000)
+                logger.info(f"System message: {content}")
+            except Exception as e:
+                logger.error(f"Error displaying system message: {e}")
+        
         # Check if message is from the currently selected peer
-        if hasattr(self, 'messaging') and self.messaging.current_peer == message.sender_id:
+        elif hasattr(self, 'messaging') and self.messaging.current_peer == message.sender_id:
             # Pass to messaging widget for display
             self.messaging.handle_message(message)
         else:

@@ -5,7 +5,8 @@ Dialog for application and cryptography settings.
 import logging
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, 
-    QPushButton, QGroupBox, QFormLayout, QDialogButtonBox, QSpinBox
+    QPushButton, QGroupBox, QFormLayout, QDialogButtonBox, QSpinBox,
+    QMessageBox
 )
 from PyQt5.QtCore import Qt
 
@@ -117,6 +118,12 @@ class SettingsDialog(QDialog):
         network_group.setLayout(network_layout)
         layout.addWidget(network_group)
         
+        # Warning message
+        warning_label = QLabel("Warning: Changing cryptography settings will require re-establishing connections with peers.")
+        warning_label.setStyleSheet("color: red;")
+        warning_label.setWordWrap(True)
+        layout.addWidget(warning_label)
+        
         # Buttons
         button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         button_box.accepted.connect(self._on_accept)
@@ -156,16 +163,48 @@ class SettingsDialog(QDialog):
             else:  # SPHINCS+
                 new_signature = SPHINCSSignature(security_level=signature_level)
             
-            # Update the secure messaging service
-            self.secure_messaging.set_key_exchange_algorithm(new_key_exchange)
-            self.secure_messaging.set_symmetric_algorithm(new_symmetric)
-            self.secure_messaging.set_signature_algorithm(new_signature)
+            # Check if anything has changed
+            settings_changed = (
+                new_key_exchange.name != self.secure_messaging.key_exchange.name or
+                new_symmetric.name != self.secure_messaging.symmetric.name or
+                new_signature.name != self.secure_messaging.signature.name
+            )
             
-            logger.info("Updated cryptography settings")
+            if settings_changed:
+                # Ask for confirmation if settings have changed
+                response = QMessageBox.question(
+                    self,
+                    "Confirm Settings Change",
+                    "Changing cryptography settings will require re-establishing connections with peers. Continue?",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No
+                )
+                
+                if response != QMessageBox.Yes:
+                    return
+                
+                # Update the secure messaging service
+                self.secure_messaging.set_key_exchange_algorithm(new_key_exchange)
+                self.secure_messaging.set_symmetric_algorithm(new_symmetric)
+                self.secure_messaging.set_signature_algorithm(new_signature)
+                
+                # Show notification
+                QMessageBox.information(
+                    self,
+                    "Settings Updated",
+                    "Cryptography settings have been updated. New key exchanges will be performed with connected peers."
+                )
+                
+                logger.info("Updated cryptography settings")
             
             # Accept the dialog
             self.accept()
             
         except Exception as e:
             logger.error(f"Error updating settings: {e}")
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"An error occurred while updating settings: {str(e)}"
+            )
             self.reject()
