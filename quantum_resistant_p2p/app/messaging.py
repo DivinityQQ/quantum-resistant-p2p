@@ -139,6 +139,9 @@ class SecureMessaging:
         # List of settings change listeners
         self.settings_change_listeners: List[Callable[[], None]] = []
         
+        # Store peer crypto settings
+        self.peer_crypto_settings: Dict[str, Dict[str, str]] = {}
+        
         # Track processed message IDs to prevent duplicates
         self.processed_message_ids = set()
         
@@ -149,6 +152,7 @@ class SecureMessaging:
         self.node.register_message_handler("key_exchange_test", self._handle_key_exchange_test)
         self.node.register_message_handler("secure_message", self._handle_secure_message)
         self.node.register_message_handler("crypto_settings_update", self._handle_crypto_settings_update)
+        self.node.register_message_handler("crypto_settings_request", self._handle_crypto_settings_request)
         
         # Generate or load our keypair
         self._load_or_generate_keypair()
@@ -168,6 +172,9 @@ class SecureMessaging:
             f"Secure messaging initialized with {self.key_exchange.name}, "
             f"{self.symmetric.name}, and {self.signature.name}"
         )
+        
+        # Register connection event handler to automatically share settings
+        self.node.register_connection_handler(self._handle_new_connection)
     
     def register_global_message_handler(self, handler: Callable[[Message], None]) -> None:
         """Register a handler for all messages.
@@ -301,12 +308,24 @@ class SecureMessaging:
                     self.key_exchange_states[peer_id] = KeyExchangeState.ESTABLISHED
                     logger.info(f"Loaded shared key for peer {peer_id}")
     
-    async def notify_peers_of_settings_change(self) -> None:
-        """Notify all connected peers about cryptography settings changes."""
-        peers = self.node.get_peers()
-        if not peers:
-            return
+    async def _handle_new_connection(self, peer_id: str) -> None:
+        """Handle a new connection with a peer.
         
+        Args:
+            peer_id: The ID of the newly connected peer
+        """
+        logger.info(f"New connection established with {peer_id}, sharing crypto settings")
+        # Send our crypto settings to the peer
+        await self.send_crypto_settings_to_peer(peer_id)
+        # Also request their settings
+        await self.request_crypto_settings_from_peer(peer_id)
+    
+    async def send_crypto_settings_to_peer(self, peer_id: str) -> None:
+        """Send our cryptography settings to a specific peer.
+        
+        Args:
+            peer_id: The ID of the peer to send settings to
+        """
         # Create settings info message
         settings_info = {
             "key_exchange": self.key_exchange.name,
@@ -325,18 +344,58 @@ class SecureMessaging:
             private_key = signature_key["private_key"]
             signature = self.signature.sign(private_key, message_json)
         
+        # Send the settings update
+        try:
+            await self.node.send_message(
+                peer_id=peer_id,
+                message_type="crypto_settings_update",
+                settings=base64.b64encode(message_json).decode(),
+                signature=base64.b64encode(signature).decode() if signature else None
+            )
+            logger.debug(f"Sent crypto settings to {peer_id}")
+        except Exception as e:
+            logger.error(f"Failed to send crypto settings to {peer_id}: {e}")
+    
+    async def request_crypto_settings_from_peer(self, peer_id: str) -> None:
+        """Request cryptography settings from a specific peer.
+        
+        Args:
+            peer_id: The ID of the peer to request settings from
+        """
+        try:
+            await self.node.send_message(
+                peer_id=peer_id,
+                message_type="crypto_settings_request",
+                timestamp=time.time()
+            )
+            logger.debug(f"Requested crypto settings from {peer_id}")
+        except Exception as e:
+            logger.error(f"Failed to request crypto settings from {peer_id}: {e}")
+    
+    async def _handle_crypto_settings_request(self, peer_id: str, message: Dict[str, Any]) -> None:
+        """Handle a request for cryptography settings from a peer.
+        
+        Args:
+            peer_id: The ID of the peer who sent the request
+            message: The message data
+        """
+        logger.debug(f"Received crypto settings request from {peer_id}")
+        
+        # Respond with our settings
+        await self.send_crypto_settings_to_peer(peer_id)
+    
+    async def notify_peers_of_settings_change(self) -> None:
+        """Notify all connected peers about cryptography settings changes."""
+        peers = self.node.get_peers()
+        if not peers:
+            return
+        
         # Send to all connected peers
         for peer_id in peers:
             try:
-                await self.node.send_message(
-                    peer_id=peer_id,
-                    message_type="crypto_settings_update",
-                    settings=base64.b64encode(message_json).decode(),
-                    signature=base64.b64encode(signature).decode() if signature else None
-                )
-                logger.debug(f"Sent crypto settings update to {peer_id}")
+                await self.send_crypto_settings_to_peer(peer_id)
             except Exception as e:
-                logger.error(f"Failed to send crypto settings update to {peer_id}: {e}")
+                logger.error(f"Failed to notify peer {peer_id} of settings change: {e}")
     
     async def initiate_key_exchange(self, peer_id: str) -> bool:
         """Initiate a key exchange with a peer.
@@ -446,6 +505,11 @@ class SecureMessaging:
             if algorithm_name != self.key_exchange.name:
                 logger.warning(f"Peer {peer_id} is using a different key exchange algorithm: {algorithm_name}")
                 
+                # Update peer's crypto settings
+                if peer_id not in self.peer_crypto_settings:
+                    self.peer_crypto_settings[peer_id] = {}
+                self.peer_crypto_settings[peer_id]["key_exchange"] = algorithm_name
+                
                 # Notify about algorithm mismatch
                 for handler in self.global_message_handlers:
                     try:
@@ -517,6 +581,11 @@ class SecureMessaging:
             # Make sure this is an algorithm we support
             if algorithm_name != self.key_exchange.name:
                 logger.warning(f"Peer {peer_id} is using a different key exchange algorithm: {algorithm_name}")
+                
+                # Update peer's crypto settings
+                if peer_id not in self.peer_crypto_settings:
+                    self.peer_crypto_settings[peer_id] = {}
+                self.peer_crypto_settings[peer_id]["key_exchange"] = algorithm_name
                 
                 # Notify about algorithm mismatch
                 for handler in self.global_message_handlers:
@@ -679,6 +748,15 @@ class SecureMessaging:
             # Parse the settings
             settings = json.loads(settings_json.decode())
             
+            # Store the peer's settings
+            if peer_id not in self.peer_crypto_settings:
+                self.peer_crypto_settings[peer_id] = {}
+            
+            self.peer_crypto_settings[peer_id]["key_exchange"] = settings.get("key_exchange")
+            self.peer_crypto_settings[peer_id]["symmetric"] = settings.get("symmetric")
+            self.peer_crypto_settings[peer_id]["signature"] = settings.get("signature")
+            self.peer_crypto_settings[peer_id]["last_updated"] = time.time()
+            
             # Log the update
             logger.info(f"Peer {peer_id} uses cryptography settings: "
                        f"key_exchange={settings.get('key_exchange')}, "
@@ -726,6 +804,9 @@ class SecureMessaging:
                     # Initiate a new key exchange
                     asyncio.create_task(self.initiate_key_exchange(peer_id))
                     logger.info(f"Initiated new key exchange with {peer_id} due to algorithm mismatch")
+            
+            # Notify settings change listeners
+            self._notify_settings_change()
             
         except Exception as e:
             logger.error(f"Error handling crypto settings update from {peer_id}: {e}")
@@ -785,6 +866,19 @@ class SecureMessaging:
                     old_ids = list(self.processed_message_ids)[:50]
                     for old_id in old_ids:
                         self.processed_message_ids.remove(old_id)
+                
+                # Update peer crypto settings from message metadata if available
+                if peer_id not in self.peer_crypto_settings:
+                    self.peer_crypto_settings[peer_id] = {}
+                
+                if hasattr(decrypted_message, 'key_exchange_algo') and decrypted_message.key_exchange_algo:
+                    self.peer_crypto_settings[peer_id]["key_exchange"] = decrypted_message.key_exchange_algo
+                    
+                if hasattr(decrypted_message, 'symmetric_algo') and decrypted_message.symmetric_algo:
+                    self.peer_crypto_settings[peer_id]["symmetric"] = decrypted_message.symmetric_algo
+                    
+                if hasattr(decrypted_message, 'signature_algo') and decrypted_message.signature_algo:
+                    self.peer_crypto_settings[peer_id]["signature"] = decrypted_message.signature_algo
                 
                 # Check for algorithm mismatch
                 if (hasattr(decrypted_message, 'key_exchange_algo') and 
@@ -960,6 +1054,17 @@ class SecureMessaging:
         self.message_callbacks[message_id] = callback
         logger.debug(f"Registered callback for message {message_id}")
     
+    def get_peer_crypto_settings(self, peer_id: str) -> Optional[Dict[str, str]]:
+        """Get the cryptography settings of a peer.
+        
+        Args:
+            peer_id: The ID of the peer
+            
+        Returns:
+            Dictionary of peer's cryptography settings, or None if not available
+        """
+        return self.peer_crypto_settings.get(peer_id)
+    
     def set_key_exchange_algorithm(self, algorithm: KeyExchangeAlgorithm) -> None:
         """Set the key exchange algorithm.
         
@@ -1108,3 +1213,73 @@ class SecureMessaging:
             },
             "peers_with_shared_keys": len(self.shared_keys)
         }
+    
+    def adopt_peer_settings(self, peer_id: str) -> bool:
+        """Adopt the cryptography settings of a peer.
+        
+        Args:
+            peer_id: The ID of the peer whose settings to adopt
+            
+        Returns:
+            True if settings were adopted, False otherwise
+        """
+        if peer_id not in self.peer_crypto_settings:
+            logger.error(f"No settings available for peer {peer_id}")
+            return False
+        
+        peer_settings = self.peer_crypto_settings[peer_id]
+        settings_changed = False
+        
+        # Adopt key exchange algorithm if needed
+        key_exchange_algo = peer_settings.get("key_exchange")
+        if key_exchange_algo and key_exchange_algo != self.key_exchange.name:
+            # Map algorithm name to actual algorithm
+            if "Kyber" in key_exchange_algo:
+                level = int(key_exchange_algo.split("Level")[1].strip()[0])
+                algorithm = KyberKeyExchange(security_level=level)
+            elif "NTRU" in key_exchange_algo:
+                level = int(key_exchange_algo.split("Level")[1].strip()[0])
+                algorithm = NTRUKeyExchange(security_level=level)
+            else:
+                logger.warning(f"Unknown key exchange algorithm: {key_exchange_algo}")
+                return False
+            
+            self.set_key_exchange_algorithm(algorithm)
+            settings_changed = True
+        
+        # Adopt symmetric algorithm if needed
+        symmetric_algo = peer_settings.get("symmetric")
+        if symmetric_algo and symmetric_algo != self.symmetric.name:
+            if symmetric_algo == "AES-256-GCM":
+                algorithm = AES256GCM()
+            elif symmetric_algo == "ChaCha20-Poly1305":
+                algorithm = ChaCha20Poly1305()
+            else:
+                logger.warning(f"Unknown symmetric algorithm: {symmetric_algo}")
+                return False
+            
+            self.set_symmetric_algorithm(algorithm)
+            settings_changed = True
+        
+        # Adopt signature algorithm if needed
+        signature_algo = peer_settings.get("signature")
+        if signature_algo and signature_algo != self.signature.name:
+            if "Dilithium" in signature_algo:
+                level = int(signature_algo.split("Level")[1].strip()[0])
+                algorithm = DilithiumSignature(security_level=level)
+            elif "SPHINCS+" in signature_algo:
+                level = int(signature_algo.split("Level")[1].strip()[0])
+                algorithm = SPHINCSSignature(security_level=level)
+            else:
+                logger.warning(f"Unknown signature algorithm: {signature_algo}")
+                return False
+            
+            self.set_signature_algorithm(algorithm)
+            settings_changed = True
+        
+        if settings_changed:
+            logger.info(f"Successfully adopted settings from peer {peer_id}")
+            return True
+        else:
+            logger.info(f"No settings changes needed for peer {peer_id}")
+            return False

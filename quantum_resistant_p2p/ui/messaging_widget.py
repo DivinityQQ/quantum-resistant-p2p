@@ -8,10 +8,11 @@ import os
 from datetime import datetime
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QLineEdit, 
-    QPushButton, QLabel, QFileDialog, QProgressBar, QSplitter
+    QPushButton, QLabel, QFileDialog, QProgressBar, QSplitter,
+    QGroupBox, QFormLayout, QMessageBox
 )
 from PyQt5.QtCore import Qt, pyqtSignal, pyqtSlot
-from PyQt5.QtGui import QFont
+from PyQt5.QtGui import QFont, QColor
 
 from ..app import SecureMessaging, Message
 
@@ -23,6 +24,8 @@ class MessagingWidget(QWidget):
     
     # Signal for running async tasks
     async_task = pyqtSignal(object)
+    # Signal for opening settings dialog
+    open_settings_dialog = pyqtSignal()
     
     def __init__(self, secure_messaging: SecureMessaging, parent=None):
         """Initialize the messaging widget.
@@ -47,9 +50,52 @@ class MessagingWidget(QWidget):
         layout = QVBoxLayout()
         
         # Header with peer info
+        header_layout = QHBoxLayout()
+        
         self.peer_label = QLabel("No peer selected")
         self.peer_label.setStyleSheet("font-weight: bold;")
-        layout.addWidget(self.peer_label)
+        header_layout.addWidget(self.peer_label, 1)  # Stretch factor 1
+        
+        self.settings_button = QPushButton("Crypto Settings")
+        self.settings_button.setEnabled(False)
+        self.settings_button.clicked.connect(self._on_settings_clicked)
+        header_layout.addWidget(self.settings_button)
+        
+        layout.addLayout(header_layout)
+        
+        # Crypto settings info panel (initially hidden)
+        self.crypto_panel = QGroupBox("Cryptography Settings")
+        self.crypto_panel.setVisible(False)
+        crypto_layout = QFormLayout()
+        
+        # Our settings
+        self.our_key_exchange_label = QLabel("-")
+        self.our_symmetric_label = QLabel("-")
+        self.our_signature_label = QLabel("-")
+        
+        crypto_layout.addRow(QLabel("<b>Local:</b>"), QLabel(""))
+        crypto_layout.addRow("Key Exchange:", self.our_key_exchange_label)
+        crypto_layout.addRow("Symmetric:", self.our_symmetric_label)
+        crypto_layout.addRow("Signature:", self.our_signature_label)
+        
+        # Peer settings
+        self.peer_key_exchange_label = QLabel("-")
+        self.peer_symmetric_label = QLabel("-")
+        self.peer_signature_label = QLabel("-")
+        
+        crypto_layout.addRow(QLabel("<b>Peer:</b>"), QLabel(""))
+        crypto_layout.addRow("Key Exchange:", self.peer_key_exchange_label)
+        crypto_layout.addRow("Symmetric:", self.peer_symmetric_label)
+        crypto_layout.addRow("Signature:", self.peer_signature_label)
+        
+        # Add adopt settings button
+        self.adopt_settings_button = QPushButton("Use Peer Settings")
+        self.adopt_settings_button.setEnabled(False)
+        self.adopt_settings_button.clicked.connect(self._on_adopt_settings_clicked)
+        crypto_layout.addRow("", self.adopt_settings_button)
+        
+        self.crypto_panel.setLayout(crypto_layout)
+        layout.addWidget(self.crypto_panel)
         
         # Status label
         self.status_label = QLabel("Select a peer to chat with")
@@ -92,6 +138,68 @@ class MessagingWidget(QWidget):
         
         logger.debug("Messaging widget initialized")
     
+    def _update_crypto_display(self):
+        """Update the cryptography settings display."""
+        # Update our settings
+        self.our_key_exchange_label.setText(self.secure_messaging.key_exchange.name)
+        self.our_symmetric_label.setText(self.secure_messaging.symmetric.name)
+        self.our_signature_label.setText(self.secure_messaging.signature.name)
+        
+        # Update peer settings if available
+        if self.current_peer:
+            peer_settings = self.secure_messaging.get_peer_crypto_settings(self.current_peer)
+            if peer_settings:
+                # Update peer settings
+                key_exchange = peer_settings.get("key_exchange", "-")
+                symmetric = peer_settings.get("symmetric", "-")
+                signature = peer_settings.get("signature", "-")
+                
+                self.peer_key_exchange_label.setText(key_exchange)
+                self.peer_symmetric_label.setText(symmetric)
+                self.peer_signature_label.setText(signature)
+                
+                # Highlight differences
+                self.peer_key_exchange_label.setStyleSheet(
+                    "color: red;" if key_exchange != self.secure_messaging.key_exchange.name else ""
+                )
+                self.peer_symmetric_label.setStyleSheet(
+                    "color: red;" if symmetric != self.secure_messaging.symmetric.name else ""
+                )
+                self.peer_signature_label.setStyleSheet(
+                    "color: red;" if signature != self.secure_messaging.signature.name else ""
+                )
+                
+                # Enable adopt settings button if there are differences
+                self.adopt_settings_button.setEnabled(
+                    key_exchange != self.secure_messaging.key_exchange.name or
+                    symmetric != self.secure_messaging.symmetric.name or
+                    signature != self.secure_messaging.signature.name
+                )
+                
+                # Show the crypto panel
+                self.crypto_panel.setVisible(True)
+            else:
+                # No peer settings available yet
+                self.peer_key_exchange_label.setText("Unknown")
+                self.peer_symmetric_label.setText("Unknown")
+                self.peer_signature_label.setText("Unknown")
+                self.adopt_settings_button.setEnabled(False)
+                
+                # Request settings from peer
+                if self.current_peer in self.secure_messaging.node.get_peers():
+                    self.async_task.emit(
+                        self.secure_messaging.request_crypto_settings_from_peer(self.current_peer)
+                    )
+        else:
+            # Reset peer settings when no peer is selected
+            self.peer_key_exchange_label.setText("-")
+            self.peer_symmetric_label.setText("-")
+            self.peer_signature_label.setText("-")
+            self.adopt_settings_button.setEnabled(False)
+            
+            # Hide the crypto panel
+            self.crypto_panel.setVisible(False)
+    
     def set_current_peer(self, peer_id: str):
         """Set the current peer for messaging.
         
@@ -100,6 +208,9 @@ class MessagingWidget(QWidget):
         """
         self.current_peer = peer_id
         self.peer_label.setText(f"Chatting with: {peer_id[:8]}...")
+        
+        # Enable settings button when peer is selected
+        self.settings_button.setEnabled(True)
         
         # Clear the chat area
         self.chat_area.clear()
@@ -112,9 +223,17 @@ class MessagingWidget(QWidget):
         if peer_id in connected_peers:
             self._add_system_message("Connected to peer")
             self._enable_messaging()
+            
+            # Request crypto settings from the peer
+            self.async_task.emit(
+                self.secure_messaging.request_crypto_settings_from_peer(peer_id)
+            )
         else:
             self._add_system_message("Not connected to peer. Use the Connect button in the peer list.")
             self._disable_messaging()
+        
+        # Update the crypto settings display
+        self._update_crypto_display()
         
         logger.info(f"Set current peer to {peer_id}")
     
@@ -156,6 +275,12 @@ class MessagingWidget(QWidget):
                 self.status_label.setText("Connected")
                 self._add_system_message(f"Successfully connected to {host}:{port}")
                 self._enable_messaging()
+                
+                # Request crypto settings from the peer
+                await self.secure_messaging.request_crypto_settings_from_peer(self.current_peer)
+                
+                # Update the crypto settings display
+                self._update_crypto_display()
             else:
                 self.status_label.setText("Connection failed")
                 self._add_system_message(f"Failed to connect to {host}:{port}")
@@ -218,19 +343,54 @@ class MessagingWidget(QWidget):
             self.chat_area.verticalScrollBar().maximum()
         )
     
-    def _add_system_message(self, message: str):
+    def _add_system_message(self, message: str, is_warning: bool = False):
         """Add a system message to the chat area.
         
         Args:
             message: The message to add
+            is_warning: Whether this is a warning message
         """
         timestamp = datetime.now().strftime("%H:%M:%S")
-        self.chat_area.append(f"[{timestamp}] * {message} *")
+        
+        # Set text color based on message type
+        if is_warning:
+            self.chat_area.append(f'<font color="red">[{timestamp}] * {message} *</font>')
+        else:
+            self.chat_area.append(f"[{timestamp}] * {message} *")
         
         # Scroll to the bottom
         self.chat_area.verticalScrollBar().setValue(
             self.chat_area.verticalScrollBar().maximum()
         )
+    
+    def _on_settings_clicked(self):
+        """Handle clicking the settings button."""
+        self.open_settings_dialog.emit()
+    
+    def _on_adopt_settings_clicked(self):
+        """Handle clicking the adopt settings button."""
+        if not self.current_peer:
+            return
+            
+        # Ask for confirmation
+        reply = QMessageBox.question(
+            self,
+            "Adopt Peer Settings",
+            f"Do you want to adopt the cryptography settings of peer {self.current_peer[:8]}...?\n\n"
+            "This will restart key exchanges with all connected peers.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            # Adopt the peer's settings
+            success = self.secure_messaging.adopt_peer_settings(self.current_peer)
+            if success:
+                self._add_system_message(f"Adopted cryptography settings from peer {self.current_peer[:8]}...")
+                # Update the display
+                self._update_crypto_display()
+            else:
+                self._add_system_message(f"Failed to adopt settings from peer {self.current_peer[:8]}...", True)
     
     def _on_send_clicked(self):
         """Handle clicking the send button."""
@@ -240,7 +400,7 @@ class MessagingWidget(QWidget):
         
         # Check if connected
         if self.current_peer not in self.secure_messaging.node.get_peers():
-            self._add_system_message("Not connected to peer. Connect first.")
+            self._add_system_message("Not connected to peer. Connect first.", True)
             return
         
         # Get the message
@@ -275,7 +435,7 @@ class MessagingWidget(QWidget):
         
         # Check if connected
         if self.current_peer not in self.secure_messaging.node.get_peers():
-            self._add_system_message("Not connected to peer. Connect first.")
+            self._add_system_message("Not connected to peer. Connect first.", True)
             return
         
         # Open file dialog
@@ -340,12 +500,12 @@ class MessagingWidget(QWidget):
                 
                 logger.info(f"File sent successfully: {file_name} ({file_size} bytes)")
             else:
-                self._add_system_message(f"Failed to send file: {file_name}")
+                self._add_system_message(f"Failed to send file: {file_name}", True)
                 logger.error(f"Failed to send file: {file_name}")
             
         except Exception as e:
             self.progress_bar.setVisible(False)
-            self._add_system_message(f"Error sending file: {str(e)}")
+            self._add_system_message(f"Error sending file: {str(e)}", True)
             logger.error(f"Error sending file {file_path}: {e}")
     
     @pyqtSlot(object)
@@ -370,7 +530,8 @@ class MessagingWidget(QWidget):
             # Display as a system message
             try:
                 content = message.content.decode("utf-8")
-                self._add_system_message(content)
+                is_warning = "different" in content.lower() or "mismatch" in content.lower()
+                self._add_system_message(content, is_warning)
                 
                 # If this is a crypto settings message, add more details
                 if ("crypto" in content.lower() or "settings" in content.lower() or 
@@ -382,8 +543,8 @@ class MessagingWidget(QWidget):
                     if hasattr(message, 'signature_algo') and message.signature_algo:
                         self._add_system_message(f"Peer signature: {message.signature_algo}")
                     
-                    # Add a hint about potential issues
-                    self._add_system_message("Different cryptography settings may affect communication")
+                    # Update the crypto settings display
+                    self._update_crypto_display()
                 
             except Exception as e:
                 logger.error(f"Error displaying system message: {e}")
@@ -391,3 +552,20 @@ class MessagingWidget(QWidget):
         
         # Regular message handling
         self._add_message(message, is_outgoing=False)
+        
+        # Update peer crypto settings from message metadata if available
+        if hasattr(message, 'key_exchange_algo') or hasattr(message, 'symmetric_algo') or hasattr(message, 'signature_algo'):
+            if self.current_peer not in self.secure_messaging.peer_crypto_settings:
+                self.secure_messaging.peer_crypto_settings[self.current_peer] = {}
+                
+            if hasattr(message, 'key_exchange_algo') and message.key_exchange_algo:
+                self.secure_messaging.peer_crypto_settings[self.current_peer]["key_exchange"] = message.key_exchange_algo
+                
+            if hasattr(message, 'symmetric_algo') and message.symmetric_algo:
+                self.secure_messaging.peer_crypto_settings[self.current_peer]["symmetric"] = message.symmetric_algo
+                
+            if hasattr(message, 'signature_algo') and message.signature_algo:
+                self.secure_messaging.peer_crypto_settings[self.current_peer]["signature"] = message.signature_algo
+                
+            # Update the display
+            self._update_crypto_display()

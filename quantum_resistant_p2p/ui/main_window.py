@@ -119,6 +119,7 @@ class MainWindow(QMainWindow):
         # Right panel - messaging
         self.messaging = MessagingWidget(self.secure_messaging)
         splitter.addWidget(self.messaging)
+        self.messaging.open_settings_dialog.connect(self._show_crypto_settings)
         
         # Set initial splitter sizes
         splitter.setSizes([200, 600])
@@ -266,15 +267,15 @@ class MainWindow(QMainWindow):
     
     def _on_secure_message_received(self, message):
         """Primary handler for all secure messages.
-        
+
         This is the ONLY place that should process incoming secure messages
         for display in the UI.
-        
+
         Args:
             message: The decrypted message object
         """
         logger.debug(f"MainWindow received message {message.message_id} from {message.sender_id}")
-        
+
         # Special handling for system messages
         if message.is_system:
             # Show system message in the status bar
@@ -284,7 +285,7 @@ class MainWindow(QMainWindow):
                 logger.info(f"System message: {content}")
             except Exception as e:
                 logger.error(f"Error displaying system message: {e}")
-        
+
         # Check if message is from the currently selected peer
         elif hasattr(self, 'messaging') and self.messaging.current_peer == message.sender_id:
             # Pass to messaging widget for display

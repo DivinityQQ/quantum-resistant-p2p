@@ -5,7 +5,7 @@ P2P Node implementation for quantum-resistant P2P communication.
 import asyncio
 import logging
 import json
-from typing import Dict, List, Optional, Callable, Any, Tuple
+from typing import Dict, List, Optional, Callable, Any, Tuple, Set
 import uuid
 
 logger = logging.getLogger(__name__)
@@ -33,6 +33,8 @@ class P2PNode:
         self.connections: Dict[str, asyncio.StreamWriter] = {}  # node_id -> writer
         self.server = None
         self.message_handlers: Dict[str, List[Callable]] = {}
+        # New: Connection event handlers
+        self.connection_handlers: Set[Callable[[str], None]] = set()
         self.running = False
         
         logger.info(f"P2P Node initialized with ID: {self.node_id}")
@@ -66,6 +68,30 @@ class P2PNode:
             
             self.connections.clear()
             logger.info(f"P2P Node {self.node_id} stopped")
+    
+    def register_connection_handler(self, handler: Callable[[str], None]) -> None:
+        """Register a handler for new peer connections.
+        
+        Args:
+            handler: Function to call when a new peer connects. Takes peer_id as parameter.
+        """
+        self.connection_handlers.add(handler)
+        logger.debug(f"Registered connection handler {id(handler)}")
+    
+    async def _notify_connection_handlers(self, peer_id: str) -> None:
+        """Notify all registered connection handlers about a new connection.
+        
+        Args:
+            peer_id: The ID of the newly connected peer
+        """
+        for handler in self.connection_handlers:
+            try:
+                if asyncio.iscoroutinefunction(handler):
+                    await handler(peer_id)
+                else:
+                    handler(peer_id)
+            except Exception as e:
+                logger.error(f"Error in connection handler for peer {peer_id}: {e}")
     
     async def _handle_connection(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         """Handle an incoming connection from a peer.
@@ -115,6 +141,9 @@ class P2PNode:
             self.connections[peer_id] = writer
             
             logger.info(f"Registered peer {peer_id} at {peer_host}:{peer_port}")
+            
+            # Notify connection handlers about the new peer
+            await self._notify_connection_handlers(peer_id)
             
             # Handle incoming messages
             while True:
@@ -215,6 +244,9 @@ class P2PNode:
             
             # Start a task to handle messages from this peer
             asyncio.create_task(self._handle_peer_messages(peer_id, reader))
+            
+            # Notify connection handlers
+            await self._notify_connection_handlers(peer_id)
             
             return True
             
