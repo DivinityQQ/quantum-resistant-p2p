@@ -169,6 +169,92 @@ class PeerListWidget(QWidget):
         
         logger.debug(f"Updated peer list with {len(discovered)} peers")
     
+    def _on_peer_clicked(self, item):
+        """Handle clicking on a peer in the list.
+        
+        Args:
+            item: The clicked list item
+        """
+        # Get the peer ID from the item
+        peer_id = item.data(Qt.UserRole)
+        host = item.data(Qt.UserRole + 1)
+        port = item.data(Qt.UserRole + 2)
+        
+        # Store the current peer ID
+        self.current_peer_id = peer_id
+        
+        # Emit the signal to select this peer
+        self.peer_selected.emit(peer_id)
+        
+        # Automatically attempt to connect if not already connected
+        if peer_id not in self.node.get_peers():
+            logger.info(f"Auto-connecting to peer {peer_id} at {host}:{port}")
+            self.connection_started.emit(peer_id, host, port)
+        
+        logger.debug(f"Selected peer {peer_id}")
+    
+    def _on_connect_clicked(self):
+        """Handle clicking the connect button."""
+        # Get the selected peer
+        selected_items = self.peer_list.selectedItems()
+        if not selected_items:
+            QMessageBox.warning(self, "No Peer Selected", "Please select a peer to connect to.")
+            return
+        
+        item = selected_items[0]
+        peer_id = item.data(Qt.UserRole)
+        host = item.data(Qt.UserRole + 1)
+        port = item.data(Qt.UserRole + 2)
+        
+        # Only attempt connection if not already connected
+        if peer_id in self.node.get_peers():
+            QMessageBox.information(self, "Already Connected", f"Already connected to {peer_id[:8]}...")
+            return
+        
+        # Emit signal to start connection
+        self.connection_started.emit(peer_id, host, port)
+        
+        logger.info(f"Starting connection to peer {peer_id} at {host}:{port}")
+    
+    def _on_refresh_clicked(self):
+        """Handle clicking the refresh button."""
+        # Get discovered and connected peers
+        discovered = self.discovery.get_discovered_nodes()
+        connected = self.node.get_peers()
+        
+        # Update the list
+        self.update_peers(discovered, connected)
+        
+        logger.debug("Manually refreshed peer list")
+    
+    def _on_add_peer_clicked(self):
+        """Handle clicking the add peer button."""
+        # Show input dialog for host and port
+        host, ok = QInputDialog.getText(
+            self, "Add Peer", "Enter peer host:"
+        )
+        
+        if not ok or not host:
+            return
+        
+        port, ok = QInputDialog.getInt(
+            self, "Add Peer", "Enter peer port:", 8000, 1, 65535
+        )
+        
+        if not ok:
+            return
+        
+        # Add the peer to discovery
+        node_id = f"manual_{host}_{port}"
+        self.discovery.add_known_node(node_id, host, port)
+        
+        # Update the list
+        discovered = self.discovery.get_discovered_nodes()
+        connected = self.node.get_peers()
+        self.update_peers(discovered, connected)
+        
+        logger.info(f"Manually added peer {host}:{port}")
+        
     def _refresh_crypto_indicators(self):
         """Refresh crypto status indicators in the peer list."""
         # Only proceed if we have secure_messaging
