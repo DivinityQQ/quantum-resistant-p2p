@@ -310,15 +310,30 @@ class SecureMessaging:
     
     async def _handle_new_connection(self, peer_id: str) -> None:
         """Handle a new connection with a peer.
-        
+
         Args:
             peer_id: The ID of the newly connected peer
         """
         logger.info(f"New connection established with {peer_id}, sharing crypto settings")
-        # Send our crypto settings to the peer
-        await self.send_crypto_settings_to_peer(peer_id)
-        # Also request their settings
-        await self.request_crypto_settings_from_peer(peer_id)
+
+        try:
+            # First send our settings to the peer
+            await self.send_crypto_settings_to_peer(peer_id)
+
+            # Then request their settings
+            await self.request_crypto_settings_from_peer(peer_id)
+
+            # Notify any listeners that might want to update UI
+            self._notify_settings_change()
+
+            # Log the connection
+            self.secure_logger.log_event(
+                event_type="connection",
+                peer_id=peer_id,
+                direction="established"
+            )
+        except Exception as e:
+            logger.error(f"Error handling new connection with {peer_id}: {e}")
     
     async def send_crypto_settings_to_peer(self, peer_id: str) -> None:
         """Send our cryptography settings to a specific peer.
@@ -749,9 +764,19 @@ class SecureMessaging:
             settings = json.loads(settings_json.decode())
             
             # Store the peer's settings
+            settings_changed = False
+            
             if peer_id not in self.peer_crypto_settings:
                 self.peer_crypto_settings[peer_id] = {}
+                settings_changed = True
             
+            # Check if settings have actually changed
+            if (self.peer_crypto_settings[peer_id].get("key_exchange") != settings.get("key_exchange") or
+                self.peer_crypto_settings[peer_id].get("symmetric") != settings.get("symmetric") or
+                self.peer_crypto_settings[peer_id].get("signature") != settings.get("signature")):
+                settings_changed = True
+            
+            # Update stored settings
             self.peer_crypto_settings[peer_id]["key_exchange"] = settings.get("key_exchange")
             self.peer_crypto_settings[peer_id]["symmetric"] = settings.get("symmetric")
             self.peer_crypto_settings[peer_id]["signature"] = settings.get("signature")
@@ -801,12 +826,15 @@ class SecureMessaging:
                     if peer_id in self.key_exchange_states:
                         del self.key_exchange_states[peer_id]
                     
-                    # Initiate a new key exchange
-                    asyncio.create_task(self.initiate_key_exchange(peer_id))
-                    logger.info(f"Initiated new key exchange with {peer_id} due to algorithm mismatch")
+                    # Initiate a new key exchange if peer is connected
+                    if peer_id in self.node.get_peers():
+                        asyncio.create_task(self.initiate_key_exchange(peer_id))
+                        logger.info(f"Initiated new key exchange with {peer_id} due to algorithm mismatch")
             
-            # Notify settings change listeners
-            self._notify_settings_change()
+            # Only notify if settings have actually changed
+            if settings_changed:
+                # Notify settings change listeners for UI updates
+                self._notify_settings_change()
             
         except Exception as e:
             logger.error(f"Error handling crypto settings update from {peer_id}: {e}")

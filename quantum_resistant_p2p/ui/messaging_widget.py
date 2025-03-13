@@ -44,6 +44,9 @@ class MessagingWidget(QWidget):
         
         # Connect async signal
         self.async_task.connect(self._run_async_task)
+        
+        # Register for crypto settings changes
+        self.secure_messaging.register_settings_change_listener(self._on_crypto_settings_changed)
     
     def _init_ui(self):
         """Initialize the user interface."""
@@ -138,8 +141,17 @@ class MessagingWidget(QWidget):
         
         logger.debug("Messaging widget initialized")
     
+    def _on_crypto_settings_changed(self):
+        """Handle crypto settings changes."""
+        # Only update if we have a current peer
+        if self.current_peer:
+            self._update_crypto_display()
+    
     def _update_crypto_display(self):
         """Update the cryptography settings display."""
+        # Always show the crypto panel when a peer is selected
+        self.crypto_panel.setVisible(self.current_peer is not None)
+        
         # Update our settings
         self.our_key_exchange_label.setText(self.secure_messaging.key_exchange.name)
         self.our_symmetric_label.setText(self.secure_messaging.symmetric.name)
@@ -170,19 +182,22 @@ class MessagingWidget(QWidget):
                 )
                 
                 # Enable adopt settings button if there are differences
-                self.adopt_settings_button.setEnabled(
+                has_differences = (
                     key_exchange != self.secure_messaging.key_exchange.name or
                     symmetric != self.secure_messaging.symmetric.name or
                     signature != self.secure_messaging.signature.name
                 )
+                self.adopt_settings_button.setEnabled(has_differences)
                 
-                # Show the crypto panel
-                self.crypto_panel.setVisible(True)
+                # If there are differences, add a hint in the chat
+                if has_differences and not hasattr(self, '_mismatch_notified'):
+                    self._add_system_message("Cryptographic settings differ from peer. Consider using 'Use Peer Settings' button to adopt them.", True)
+                    setattr(self, '_mismatch_notified', True)
             else:
                 # No peer settings available yet
-                self.peer_key_exchange_label.setText("Unknown")
-                self.peer_symmetric_label.setText("Unknown")
-                self.peer_signature_label.setText("Unknown")
+                self.peer_key_exchange_label.setText("Requesting...")
+                self.peer_symmetric_label.setText("Requesting...")
+                self.peer_signature_label.setText("Requesting...")
                 self.adopt_settings_button.setEnabled(False)
                 
                 # Request settings from peer
@@ -196,9 +211,6 @@ class MessagingWidget(QWidget):
             self.peer_symmetric_label.setText("-")
             self.peer_signature_label.setText("-")
             self.adopt_settings_button.setEnabled(False)
-            
-            # Hide the crypto panel
-            self.crypto_panel.setVisible(False)
     
     def set_current_peer(self, peer_id: str):
         """Set the current peer for messaging.
@@ -206,6 +218,10 @@ class MessagingWidget(QWidget):
         Args:
             peer_id: The ID of the peer
         """
+        # Clear previous notification flag
+        if hasattr(self, '_mismatch_notified'):
+            delattr(self, '_mismatch_notified')
+            
         self.current_peer = peer_id
         self.peer_label.setText(f"Chatting with: {peer_id[:8]}...")
         
@@ -223,6 +239,9 @@ class MessagingWidget(QWidget):
         if peer_id in connected_peers:
             self._add_system_message("Connected to peer")
             self._enable_messaging()
+            
+            # Make crypto panel visible immediately with "requesting" status
+            self.crypto_panel.setVisible(True)
             
             # Request crypto settings from the peer
             self.async_task.emit(
@@ -275,6 +294,9 @@ class MessagingWidget(QWidget):
                 self.status_label.setText("Connected")
                 self._add_system_message(f"Successfully connected to {host}:{port}")
                 self._enable_messaging()
+                
+                # Make crypto panel visible immediately
+                self.crypto_panel.setVisible(True)
                 
                 # Request crypto settings from the peer
                 await self.secure_messaging.request_crypto_settings_from_peer(self.current_peer)

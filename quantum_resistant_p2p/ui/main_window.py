@@ -107,47 +107,50 @@ class MainWindow(QMainWindow):
         # Create central widget
         central_widget = QWidget()
         main_layout = QVBoxLayout(central_widget)
-        
+
         # Create splitter for main layout
         splitter = QSplitter(Qt.Horizontal)
         main_layout.addWidget(splitter)
-        
+
         # Left panel - peer list
-        self.peer_list = PeerListWidget(self.node, self.node_discovery)
+        self.peer_list = PeerListWidget(self.node, self.node_discovery, self.secure_messaging)
         splitter.addWidget(self.peer_list)
-        
+
         # Right panel - messaging
         self.messaging = MessagingWidget(self.secure_messaging)
         splitter.addWidget(self.messaging)
-        self.messaging.open_settings_dialog.connect(self._show_crypto_settings)
-        
+
         # Set initial splitter sizes
         splitter.setSizes([200, 600])
-        
+
         # Set up the status bar
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
-        
+
         # Status indicators
         self.connection_status = QLabel("Not connected")
         self.encryption_status = QLabel("No encryption")
         self.status_bar.addPermanentWidget(self.connection_status)
         self.status_bar.addPermanentWidget(self.encryption_status)
-        
+
         # Initial status message
         self.status_bar.showMessage("Welcome to Quantum P2P")
-        
+
         # Set up menu bar
         self._setup_menu()
-        
+
         # Set central widget
         self.setCentralWidget(central_widget)
-        
+
         # Connect signals
         self.peer_list.peer_selected.connect(self.messaging.set_current_peer)
         self.peer_list.connection_started.connect(self.messaging.initiate_connection)
         self.peer_list.async_task.connect(self._run_async_task)
-        
+        self.messaging.open_settings_dialog.connect(self._show_crypto_settings)
+
+        # Register for crypto settings changes
+        self.secure_messaging.register_settings_change_listener(self._update_crypto_status)
+
         logger.info("User interface initialized")
     
     def _setup_menu(self):
