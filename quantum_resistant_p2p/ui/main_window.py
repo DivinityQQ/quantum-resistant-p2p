@@ -134,8 +134,25 @@ class MainWindow(QMainWindow):
         self.peer_list.connection_started.connect(self.messaging.initiate_connection)
         self.peer_list.async_task.connect(self._run_async_task)
         
+        # Register a handler for secure messages to show them in the messaging widget
+        self.secure_messaging.register_global_message_handler(self.handle_incoming_message)
+
         logger.info("User interface initialized")
     
+    def handle_incoming_message(self, message):
+        """Handle an incoming secure message.
+        
+        Args:
+            message: The decrypted message
+        """
+        # Only display the message if it's from the currently selected peer
+        if self.messaging.current_peer == message.sender_id:
+            self.messaging.handle_message(message)
+        else:
+            # Optional: Show notification that a message was received from another peer
+            self.status_bar.showMessage(f"New message from {message.sender_id[:8]}...")
+            # You could also add a visual indicator to the peer in the peer list
+
     def _setup_menu(self):
         """Set up the menu bar."""
         menu_bar = self.menuBar()

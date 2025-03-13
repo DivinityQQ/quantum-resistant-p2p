@@ -84,6 +84,7 @@ class SecureMessaging:
         self.node = node
         self.key_storage = key_storage
         self.secure_logger = logger  # Rename to avoid conflict with global logger
+        self.global_message_handlers = []
         
         # Use default algorithms if not specified
         self.key_exchange = key_exchange_algorithm or KyberKeyExchange()
@@ -117,6 +118,15 @@ class SecureMessaging:
             f"{self.symmetric.name}, and {self.signature.name}"
         )
     
+    def register_global_message_handler(self, handler):
+        """Register a handler for all messages.
+
+        Args:
+            handler: Callback function that takes a Message as parameter
+        """
+        self.global_message_handlers.append(handler)
+        logger.debug("Registered global message handler")
+
     def _load_or_generate_keypair(self) -> None:
         """Load existing keypairs or generate new ones if they don't exist."""
         # Check if we have key exchange keypair
@@ -321,6 +331,13 @@ class SecureMessaging:
                 )
                 
                 logger.info(f"Received and verified message from {peer_id}")
+
+                # Notify global message handlers
+                for handler in self.global_message_handlers:
+                    try:
+                        handler(decrypted_message)
+                    except Exception as e:
+                        logger.error(f"Error in global message handler: {e}")
                 
                 # Call any registered callbacks for this message
                 if decrypted_message.message_id in self.message_callbacks:
