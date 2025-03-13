@@ -8,7 +8,8 @@ import sys
 from pathlib import Path
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter, 
-    QTabWidget, QLabel, QStatusBar, QAction, QFileDialog, QMessageBox
+    QTabWidget, QLabel, QStatusBar, QAction, QFileDialog, QMessageBox,
+    QInputDialog
 )
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, pyqtSlot
 from PyQt5.QtGui import QIcon
@@ -43,6 +44,9 @@ class MainWindow(QMainWindow):
         self.node_discovery = None
         self.secure_messaging = None
         
+        # Track if message handler has been registered to prevent duplicates
+        self._message_handler_registered = False
+        
         # UI initialization
         self.setWindowTitle("Quantum Resistant P2P")
         self.setMinimumSize(800, 600)
@@ -72,11 +76,15 @@ class MainWindow(QMainWindow):
         """Initialize components after successful login."""
         self._init_network()
         self._init_ui()
+        
+        # Register message handler BEFORE starting the network
+        # This ensures we only register it once and don't miss any messages
+        if self.secure_messaging and not self._message_handler_registered:
+            self.secure_messaging.register_global_message_handler(self._on_secure_message_received)
+            self._message_handler_registered = True
+            logger.debug("Registered global message handler")
+        
         self._start_network()
-
-        # Register a global message handler to show messages in the UI
-        if self.secure_messaging:
-            self.secure_messaging.register_global_message_handler(self.handle_incoming_message)
     
     def _init_network(self):
         """Initialize network components."""
@@ -138,32 +146,8 @@ class MainWindow(QMainWindow):
         self.peer_list.connection_started.connect(self.messaging.initiate_connection)
         self.peer_list.async_task.connect(self._run_async_task)
         
-        # Register a handler for secure messages to show them in the messaging widget
-        self.secure_messaging.register_global_message_handler(self.handle_incoming_message)
-
         logger.info("User interface initialized")
     
-    def handle_incoming_message(self, message):
-        """Handle an incoming secure message.
-        
-        Args:
-            message: The decrypted message
-        """
-        try:
-            # Only display the message if it's from the currently selected peer
-            if hasattr(self, 'messaging') and self.messaging.current_peer == message.sender_id:
-                self.messaging.handle_message(message)
-            else:
-                # Show notification that a message was received from another peer
-                sender_id = message.sender_id[:8] + "..." if len(message.sender_id) > 8 else message.sender_id
-                if message.is_file:
-                    filename = message.filename or "unknown file"
-                    self.status_bar.showMessage(f"Received file '{filename}' from {sender_id}", 5000)
-                else:
-                    self.status_bar.showMessage(f"New message from {sender_id}", 5000)
-        except Exception as e:
-            logger.error(f"Error handling incoming message in UI: {e}")
-
     def _setup_menu(self):
         """Set up the menu bar."""
         menu_bar = self.menuBar()
@@ -268,6 +252,30 @@ class MainWindow(QMainWindow):
                 logger.error(f"Error updating peer list: {e}")
                 await asyncio.sleep(10)
     
+    def _on_secure_message_received(self, message):
+        """Primary handler for all secure messages.
+        
+        This is the ONLY place that should process incoming secure messages
+        for display in the UI.
+        
+        Args:
+            message: The decrypted message object
+        """
+        logger.debug(f"MainWindow received message {message.message_id} from {message.sender_id}")
+        
+        # Check if message is from the currently selected peer
+        if hasattr(self, 'messaging') and self.messaging.current_peer == message.sender_id:
+            # Pass to messaging widget for display
+            self.messaging.handle_message(message)
+        else:
+            # Show notification for messages from non-selected peers
+            sender_id = message.sender_id[:8] + "..." if len(message.sender_id) > 8 else message.sender_id
+            if message.is_file:
+                filename = message.filename or "unknown file"
+                self.status_bar.showMessage(f"Received file '{filename}' from {sender_id}", 5000)
+            else:
+                self.status_bar.showMessage(f"New message from {sender_id}", 5000)
+    
     async def _connect_to_peer(self, host: str, port: int):
         """Connect to a peer.
         
@@ -318,7 +326,7 @@ class MainWindow(QMainWindow):
     
     def _show_send_file_dialog(self):
         """Show the dialog to send a file to a peer."""
-        if not self.messaging.current_peer:
+        if not hasattr(self, 'messaging') or not self.messaging.current_peer:
             QMessageBox.warning(self, "Error", "Please select a peer first.")
             return
         

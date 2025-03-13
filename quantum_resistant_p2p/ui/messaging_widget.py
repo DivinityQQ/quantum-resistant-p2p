@@ -363,5 +363,6 @@ class MessagingWidget(QWidget):
         Args:
             message: The received message
         """
+        logger.debug(f"MessagingWidget displaying message {message.message_id} from {message.sender_id}")
         # Add the message to the chat area
         self._add_message(message, is_outgoing=False)
