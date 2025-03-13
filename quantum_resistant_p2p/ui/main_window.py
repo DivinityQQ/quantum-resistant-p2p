@@ -227,18 +227,18 @@ class MainWindow(QMainWindow):
                 discovered = self.node_discovery.get_discovered_nodes()
                 # Get connected peers
                 connected = self.node.get_peers()
-                
+
                 # Update the UI
                 self.peer_list.update_peers(discovered, connected)
-                
+
                 # Wait before next update
-                await asyncio.sleep(5)
-                
+                await asyncio.sleep(10)
+
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"Error updating peer list: {e}")
-                await asyncio.sleep(5)
+                await asyncio.sleep(10)
     
     async def _connect_to_peer(self, host: str, port: int):
         """Connect to a peer.

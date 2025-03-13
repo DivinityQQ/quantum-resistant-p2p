@@ -37,6 +37,9 @@ class PeerListWidget(QWidget):
         self.node = node
         self.discovery = discovery
         
+        # Keep track of the currently selected peer
+        self.current_peer_id = None
+        
         self._init_ui()
     
     def _init_ui(self):
@@ -66,10 +69,10 @@ class PeerListWidget(QWidget):
         self.add_peer_button.clicked.connect(self._on_add_peer_clicked)
         button_layout.addWidget(self.add_peer_button)
         
-        # Connect button
-        self.connect_button = QPushButton("Connect")
-        self.connect_button.clicked.connect(self._on_connect_clicked)
-        button_layout.addWidget(self.connect_button)
+        # Auto-connect checkbox
+        self.auto_connect_button = QPushButton("Connect")
+        self.auto_connect_button.clicked.connect(self._on_connect_clicked)
+        button_layout.addWidget(self.auto_connect_button)
         
         layout.addLayout(button_layout)
         
@@ -81,13 +84,27 @@ class PeerListWidget(QWidget):
         logger.debug("Peer list widget initialized")
     
     def update_peers(self, discovered: list, connected: list):
-        """Update the list of peers.
+        """Update the list of peers while preserving selection.
         
         Args:
             discovered: List of discovered peers (node_id, host, port)
             connected: List of connected peer IDs
         """
+        # Remember the currently selected peer ID
+        selected_items = self.peer_list.selectedItems()
+        if selected_items:
+            selected_peer_id = selected_items[0].data(Qt.UserRole)
+        else:
+            selected_peer_id = self.current_peer_id
+        
+        # Remember scroll position
+        scrollbar_pos = self.peer_list.verticalScrollBar().value()
+        
+        # Clear and rebuild the list
         self.peer_list.clear()
+        
+        # Rebuild the list
+        new_selected_item = None
         
         # Add discovered peers
         for node_id, host, port in discovered:
@@ -103,6 +120,17 @@ class PeerListWidget(QWidget):
                 item.setText(f"{node_id[:8]}... ({host}:{port}) [Connected]")
             
             self.peer_list.addItem(item)
+            
+            # If this is the currently selected peer, remember this item
+            if node_id == selected_peer_id:
+                new_selected_item = item
+        
+        # Restore selection
+        if new_selected_item:
+            self.peer_list.setCurrentItem(new_selected_item)
+            
+        # Restore scroll position
+        self.peer_list.verticalScrollBar().setValue(scrollbar_pos)
         
         logger.debug(f"Updated peer list with {len(discovered)} peers")
     
@@ -114,9 +142,19 @@ class PeerListWidget(QWidget):
         """
         # Get the peer ID from the item
         peer_id = item.data(Qt.UserRole)
+        host = item.data(Qt.UserRole + 1)
+        port = item.data(Qt.UserRole + 2)
+        
+        # Store the current peer ID
+        self.current_peer_id = peer_id
         
         # Emit the signal to select this peer
         self.peer_selected.emit(peer_id)
+        
+        # Automatically attempt to connect if not already connected
+        if peer_id not in self.node.get_peers():
+            logger.info(f"Auto-connecting to peer {peer_id} at {host}:{port}")
+            self.connection_started.emit(peer_id, host, port)
         
         logger.debug(f"Selected peer {peer_id}")
     
