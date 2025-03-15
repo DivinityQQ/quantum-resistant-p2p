@@ -199,14 +199,15 @@ class P2PNode:
                 'node_id': self.node_id,
                 'type': 'hello'
             }
-            message_json = json.dumps(initial_message).encode() + b'\n'
-            writer.write(message_json)
-            await writer.drain()
+            initial_json = json.dumps(initial_message).encode()
+            
+            # Use chunked sending
+            await self._send_chunked_message(writer, initial_json)
             logger.debug(f"Sent hello message to {host}:{port}")
             
             # Read peer's response to get their node ID
             try:
-                data = await asyncio.wait_for(reader.readline(), timeout=5.0)
+                data = await asyncio.wait_for(self._read_message(reader), timeout=5.0)
                 if not data:
                     logger.error(f"No response from peer at {host}:{port}")
                     writer.close()
