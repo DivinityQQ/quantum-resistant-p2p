@@ -175,36 +175,36 @@ class P2PNode:
     
     async def connect_to_peer(self, host: str, port: int) -> bool:
         """Connect to a peer at the specified host and port.
-        
+
         Args:
             host: The host IP address or hostname of the peer
             port: The port number the peer is listening on
-            
+
         Returns:
             bool: True if connection successful, False otherwise
         """
         logger.info(f"Attempting to connect to peer at {host}:{port}")
-        
+
         # First check if we're already connected to this peer by host and port
         for peer_id, (peer_host, peer_port) in self.peers.items():
             if peer_host == host and peer_port == port:
                 logger.info(f"Already connected to peer {peer_id} at {host}:{port}")
                 return True
-        
+
         try:
             reader, writer = await asyncio.open_connection(host, port)
-            
+
             # Send initial message with our node ID
             initial_message = {
                 'node_id': self.node_id,
                 'type': 'hello'
             }
             initial_json = json.dumps(initial_message).encode()
-            
+
             # Use chunked sending
             await self._send_chunked_message(writer, initial_json)
             logger.debug(f"Sent hello message to {host}:{port}")
-            
+
             # Read peer's response to get their node ID
             try:
                 data = await asyncio.wait_for(self._read_message(reader), timeout=5.0)
@@ -216,41 +216,41 @@ class P2PNode:
                 logger.error(f"Timeout waiting for response from {host}:{port}")
                 writer.close()
                 return False
-            
+
             try:
                 message = json.loads(data.decode())
             except json.JSONDecodeError:
                 logger.error(f"Invalid JSON response from peer at {host}:{port}")
                 writer.close()
                 return False
-            
+
             if 'node_id' not in message:
                 logger.error(f"Invalid response from peer at {host}:{port}, missing node_id")
                 writer.close()
                 return False
-            
+
             peer_id = message['node_id']
-            
+
             # Don't connect to ourselves
             if peer_id == self.node_id:
                 logger.warning(f"Attempted to connect to ourselves at {host}:{port}")
                 writer.close()
                 return False
-            
+
             # Store peer information
             self.peers[peer_id] = (host, port)
             self.connections[peer_id] = writer
-            
+
             logger.info(f"Connected to peer {peer_id} at {host}:{port}")
-            
+
             # Start a task to handle messages from this peer
             asyncio.create_task(self._handle_peer_messages(peer_id, reader))
-            
+
             # Notify connection handlers
             await self._notify_connection_handlers(peer_id)
-            
+
             return True
-            
+
         except (OSError, asyncio.TimeoutError) as e:
             logger.error(f"Failed to connect to peer at {host}:{port}: {e}")
             return False
@@ -382,7 +382,7 @@ class P2PNode:
                     
     async def _handle_peer_messages(self, peer_id: str, reader: asyncio.StreamReader) -> None:
         """Handle messages from a connected peer.
-
+    
         Args:
             peer_id: The ID of the peer
             reader: The stream reader for the connection
@@ -395,18 +395,29 @@ class P2PNode:
                     break
                 
                 await self._process_message(peer_id, data)
-
+    
         except (asyncio.CancelledError, ConnectionError) as e:
             logger.error(f"Error reading from peer {peer_id}: {e}")
         except Exception as e:
             logger.error(f"Unexpected error handling messages from peer {peer_id}: {e}")
         finally:
+            # Notify any disconnect handlers before removing peer
+            for handler in self.connection_handlers:
+                try:
+                    if asyncio.iscoroutinefunction(handler):
+                        await handler(f"disconnect:{peer_id}")
+                    else:
+                        handler(f"disconnect:{peer_id}")
+                except Exception as e:
+                    logger.error(f"Error in connection handler for disconnect of peer {peer_id}: {e}")
+            
+            # Now remove the peer from our collections
             if peer_id in self.peers:
                 del self.peers[peer_id]
             if peer_id in self.connections:
                 self.connections[peer_id].close()
                 del self.connections[peer_id]
-
+    
             logger.info(f"Connection with peer {peer_id} closed")
     
     async def _process_message(self, peer_id: str, data: bytes) -> None:

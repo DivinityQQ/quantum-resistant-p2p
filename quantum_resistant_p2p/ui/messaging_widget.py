@@ -231,49 +231,76 @@ class MessagingWidget(QWidget):
         """Update the cryptography settings display."""
         # Always show the crypto panel when a peer is selected
         self.crypto_panel.setVisible(self.current_peer is not None)
-    
+
         # Update our settings
         self.our_key_exchange_label.setText(self.secure_messaging.key_exchange.display_name)
         self.our_symmetric_label.setText(self.secure_messaging.symmetric.name)
         self.our_signature_label.setText(self.secure_messaging.signature.display_name)
-    
+
         # Update connection status and control buttons
         if self.current_peer:
+            # Check if the peer is actually connected (in the active peers list)
             connected = self.current_peer in self.secure_messaging.node.get_peers()
             has_shared_key = self.current_peer in self.secure_messaging.shared_keys
-    
+
             # Enable message controls if we have shared key and are connected
             self.message_input.setEnabled(connected and has_shared_key)
             self.send_button.setEnabled(connected and has_shared_key)
             self.file_button.setEnabled(connected and has_shared_key)
-    
-            # Disable key exchange button if we already have a shared key
-            # Only enable it if we're connected but don't have a shared key
-            self.key_exchange_button.setEnabled(connected and not has_shared_key)
-    
-            # Update connection status label
-            if connected and has_shared_key:
-                self.connection_status_label.setText("Connected with shared key")
-                self.connection_status_label.setStyleSheet("font-weight: bold; color: green;")
-            elif connected:
-                self.connection_status_label.setText("Connected, no shared key")
-                self.connection_status_label.setStyleSheet("font-weight: bold; color: orange;")
+
+            # Get peer settings to check compatibility
+            peer_settings = self.secure_messaging.get_peer_crypto_settings(self.current_peer)
+            settings_compatible = False
+
+            if peer_settings:
+                # Check if key exchange algorithm matches
+                peer_key_exchange = peer_settings.get("key_exchange", "").split(" [Mock]")[0]
+                local_key_exchange = self.secure_messaging.key_exchange.display_name
+                settings_compatible = (peer_key_exchange == local_key_exchange)
+
+            # Only enable key exchange button if:
+            # 1. We're connected
+            # 2. We don't already have a shared key
+            # 3. The settings are compatible
+            self.key_exchange_button.setEnabled(connected and not has_shared_key and settings_compatible)
+
+            # If settings are incompatible, show a tooltip explaining why
+            if not settings_compatible and connected and not has_shared_key:
+                self.key_exchange_button.setToolTip(
+                    "Cannot establish shared key: Cryptographic settings mismatch.\n"
+                    "You must use matching key exchange algorithms."
+                )
             else:
+                self.key_exchange_button.setToolTip("")
+
+            # Update connection status label
+            if not connected:
                 self.connection_status_label.setText("Not connected")
                 self.connection_status_label.setStyleSheet("font-weight: bold; color: red;")
-    
+
+                # Make sure to disable all controls
+                self.message_input.setEnabled(False)
+                self.send_button.setEnabled(False)
+                self.file_button.setEnabled(False)
+                self.key_exchange_button.setEnabled(False)
+            elif connected and has_shared_key:
+                self.connection_status_label.setText("Connected with shared key")
+                self.connection_status_label.setStyleSheet("font-weight: bold; color: green;")
+            else:
+                self.connection_status_label.setText("Connected, no shared key")
+                self.connection_status_label.setStyleSheet("font-weight: bold; color: orange;")
+
             # Update peer settings if available
-            peer_settings = self.secure_messaging.get_peer_crypto_settings(self.current_peer)
             if peer_settings:
                 # Update peer settings
                 key_exchange = peer_settings.get("key_exchange", "-")
                 symmetric = peer_settings.get("symmetric", "-")
                 signature = peer_settings.get("signature", "-")
-    
+
                 self.peer_key_exchange_label.setText(key_exchange)
                 self.peer_symmetric_label.setText(symmetric)
                 self.peer_signature_label.setText(signature)
-    
+
                 # Highlight differences
                 self.peer_key_exchange_label.setStyleSheet(
                     "color: red;" if key_exchange.split(" [Mock]")[0] != self.secure_messaging.key_exchange.display_name else ""
@@ -284,7 +311,7 @@ class MessagingWidget(QWidget):
                 self.peer_signature_label.setStyleSheet(
                     "color: red;" if signature.split(" [Mock]")[0] != self.secure_messaging.signature.display_name else ""
                 )
-    
+
                 # Enable adopt settings button if there are differences and we're connected
                 has_differences = (
                     key_exchange.split(" [Mock]")[0] != self.secure_messaging.key_exchange.display_name or
@@ -292,7 +319,7 @@ class MessagingWidget(QWidget):
                     signature.split(" [Mock]")[0] != self.secure_messaging.signature.display_name
                 )
                 self.adopt_settings_button.setEnabled(connected and has_differences)
-    
+
                 # If there are differences, add a hint in the chat if not already notified
                 if has_differences and not hasattr(self, '_mismatch_notified'):
                     self._add_system_message("Cryptographic settings differ from peer. Consider using 'Use Peer Settings' button to adopt them.", True)
@@ -303,7 +330,7 @@ class MessagingWidget(QWidget):
                 self.peer_symmetric_label.setText("Requesting...")
                 self.peer_signature_label.setText("Requesting...")
                 self.adopt_settings_button.setEnabled(False)
-    
+
                 # Request settings from peer
                 if connected:
                     self.async_task.emit(
@@ -321,43 +348,43 @@ class MessagingWidget(QWidget):
     
     def set_current_peer(self, peer_id: str):
         """Set the current peer for messaging.
-        
+
         Args:
             peer_id: The ID of the peer
         """
         # Clear previous notification flag
         if hasattr(self, '_mismatch_notified'):
             delattr(self, '_mismatch_notified')
-            
+
         self.current_peer = peer_id
         self.peer_label.setText(f"Chatting with: {peer_id[:8]}...")
-        
+
         # Enable settings and refresh buttons when peer is selected
         self.settings_button.setEnabled(True)
         self.refresh_button.setEnabled(True)
-        
+
         # Clear the chat area
         self.chat_area.clear()
-        
+
         # Add a system message
         self._add_system_message(f"Started chat with {peer_id[:8]}...")
-        
-        # Check connection status
+
+        # Check connection status - whether the peer is actually in the active peers list
         connected_peers = self.secure_messaging.node.get_peers()
         if peer_id in connected_peers:
             self._add_system_message("Connected to peer")
             has_shared_key = peer_id in self.secure_messaging.shared_keys
-            
+
             if has_shared_key:
                 self._add_system_message("Shared key established")
                 self._enable_messaging()
             else:
-                self._add_system_message("No shared key established. Use 'Establish Shared Key' button.")
+                self._add_system_message("No shared key established.")
                 self._disable_messaging()
-                
+
             # Make crypto panel visible immediately with "requesting" status
             self.crypto_panel.setVisible(True)
-            
+
             # Request crypto settings from the peer
             self.async_task.emit(
                 self.secure_messaging.request_crypto_settings_from_peer(peer_id)
@@ -365,10 +392,10 @@ class MessagingWidget(QWidget):
         else:
             self._add_system_message("Not connected to peer. Use the Connect button in the peer list.")
             self._disable_messaging()
-        
+
         # Update the crypto settings display
         self._update_crypto_display()
-        
+
         logger.info(f"Set current peer to {peer_id}")
     
     def initiate_connection(self, peer_id: str, host: str, port: int):

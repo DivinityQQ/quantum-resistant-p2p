@@ -397,6 +397,31 @@ class SecureMessaging:
         Args:
             peer_id: The ID of the newly connected peer
         """
+        # Check for disconnect event (format: "disconnect:peer_id")
+        if peer_id.startswith("disconnect:"):
+            disconnected_peer = peer_id.split(":", 1)[1]
+            logger.info(f"Handling disconnect event for peer {disconnected_peer}")
+
+            # Remove shared keys and state for this peer
+            if disconnected_peer in self.shared_keys:
+                del self.shared_keys[disconnected_peer]
+            if disconnected_peer in self.key_exchange_states:
+                del self.key_exchange_states[disconnected_peer]
+
+            # Notify listeners that a peer disconnected
+            for handler in self.global_message_handlers:
+                try:
+                    disconnect_message = Message.system_message(
+                        f"Peer {disconnected_peer} has disconnected"
+                    )
+                    handler(disconnect_message)
+                except Exception as e:
+                    logger.error(f"Error in peer disconnect handler: {e}")
+
+            # Notify UI about the change
+            self._notify_settings_change()
+            return
+
         logger.info(f"New connection established with {peer_id}, sharing crypto settings")
 
         try:
@@ -916,33 +941,33 @@ class SecureMessaging:
     
     async def _handle_key_exchange_test(self, peer_id: str, message: Dict[str, Any]) -> None:
         """Handle a key exchange test message from a peer.
-        
+
         Args:
             peer_id: The ID of the peer who sent the message
             message: The message data
         """
         logger.debug(f"Received key exchange test message from {peer_id}")
-        
+
         # If we don't have a shared key, ignore the message
         if peer_id not in self.shared_keys:
             logger.error(f"Received key exchange test from {peer_id} but no shared key exists")
             return
-        
+
         try:
             ciphertext = message.get("ciphertext")
             if not ciphertext:
                 logger.error(f"Invalid key exchange test from {peer_id}")
                 return
-            
+
             # Try to decrypt the test message
             ciphertext_bytes = base64.b64decode(ciphertext)
             plaintext = self.symmetric.decrypt(self.shared_keys[peer_id], ciphertext_bytes)
-            
+
             # Parse the test data
             test_data = json.loads(plaintext.decode())
             if test_data.get("test"):
                 logger.info(f"Key exchange test successful with {peer_id}")
-                
+
                 # Notify about successful key exchange
                 for handler in self.global_message_handlers:
                     try:
@@ -952,16 +977,16 @@ class SecureMessaging:
                         handler(success_message)
                     except Exception as e:
                         logger.error(f"Error in key exchange success handler: {e}")
-                        
+
                 # Notify settings change listeners to update UI
                 self._notify_settings_change()
-                
+
         except Exception as e:
             logger.error(f"Key exchange test failed with {peer_id}: {e}")
             # Shared key might be invalid, need to renegotiate
             if peer_id in self.key_exchange_states:
                 self.key_exchange_states[peer_id] = KeyExchangeState.NONE
-    
+
                 # Notify about key exchange failure
                 for handler in self.global_message_handlers:
                     try:
