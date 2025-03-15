@@ -336,32 +336,36 @@ class SecureMessaging:
 
     def _derive_symmetric_key(self, shared_secret: bytes, peer_id: str) -> bytes:
         """Derive a symmetric key of the appropriate length from a shared secret.
-
+        
         Args:
             shared_secret: The shared secret from key exchange
             peer_id: The ID of the peer (used as context info)
-
+            
         Returns:
             A derived key of the appropriate length for the current symmetric algorithm
         """
         # Get the required key size for the current symmetric algorithm
         required_key_size = self.symmetric.key_size
-
+        
         # Use HKDF to derive a key of the exact length needed
         # - The salt can be None for our purposes
-        # - The info parameter should be unique to prevent the same key being derived for different purposes
-        info = f"quantum_resistant_p2p-v1-{self.node.node_id}-{peer_id}-{self.symmetric.name}".encode()
-
+        # - CRITICAL: The info parameter must be identical for both peers
+        # - To ensure this, sort the node IDs alphabetically
+        node_ids = sorted([self.node.node_id, peer_id])
+        
+        # Create a deterministic, symmetric info string
+        info = f"quantum_resistant_p2p-v1-{node_ids[0]}-{node_ids[1]}-{self.symmetric.name}".encode()
+        
         derived_key = HKDF(
             algorithm=hashes.SHA256(),
             length=required_key_size,
             salt=None,
             info=info,
         ).derive(shared_secret)
-
+        
         logger.debug(f"Derived {required_key_size}-byte key for {self.symmetric.name} from "
                     f"{len(shared_secret)}-byte shared secret")
-
+        
         return derived_key
 
     def is_algorithm_compatible_with_peer(self, peer_id: str) -> bool:
@@ -1428,7 +1432,7 @@ class SecureMessaging:
     
     def set_symmetric_algorithm(self, algorithm: SymmetricAlgorithm) -> None:
         """Set the symmetric encryption algorithm.
-        
+
         Args:
             algorithm: The algorithm to use
         """
@@ -1436,10 +1440,10 @@ class SecureMessaging:
         if self.symmetric.name != algorithm.name:
             # Store old algorithm name for logging
             old_algorithm = self.symmetric.name
-            
+
             # Update the algorithm
             self.symmetric = algorithm
-            
+
             # Re-derive keys for all peers with available original shared secrets
             for peer_id, original_secret in list(self.key_exchange_originals.items()):
                 if peer_id in self.key_exchange_states and self.key_exchange_states[peer_id] == KeyExchangeState.ESTABLISHED:
@@ -1447,14 +1451,14 @@ class SecureMessaging:
                         # Derive a new key with the new algorithm's requirements
                         derived_key = self._derive_symmetric_key(original_secret, peer_id)
                         self.shared_keys[peer_id] = derived_key
-                        
+
                         # Save the updated key
                         self._save_peer_key(peer_id, derived_key)
-                        
+
                         logger.info(f"Re-derived key for peer {peer_id} with new algorithm {self.symmetric.name}")
                     except Exception as e:
                         logger.error(f"Failed to re-derive key for peer {peer_id}: {e}")
-            
+
             # Log the change
             logger.info(f"Changed symmetric algorithm from {old_algorithm} to {self.symmetric.name}")
             self.secure_logger.log_event(
@@ -1463,10 +1467,10 @@ class SecureMessaging:
                 old_algorithm=old_algorithm,
                 new_algorithm=self.symmetric.name
             )
-            
+
             # Notify cryptography settings change listeners
             self._notify_settings_change()
-            
+
             # Notify peers about our settings change
             asyncio.create_task(self.notify_peers_of_settings_change())
     
