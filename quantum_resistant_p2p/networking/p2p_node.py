@@ -7,28 +7,28 @@ import logging
 import json
 from typing import Dict, List, Optional, Callable, Any, Tuple, Set
 import uuid
+import struct
 
 logger = logging.getLogger(__name__)
 
 
 class P2PNode:
-    """A peer-to-peer network node supporting direct communication between peers.
+    """A peer-to-peer network node supporting direct communication between peers."""
     
-    This class provides functionality for establishing connections with other
-    P2P nodes, sending and receiving messages, and handling connection events.
-    """
-    
-    def __init__(self, host: str = '0.0.0.0', port: int = 8000, node_id: Optional[str] = None):
+    def __init__(self, host: str = '0.0.0.0', port: int = 8000, node_id: Optional[str] = None,
+                 max_chunk_size: int = 64*1024):  # 64KB default chunk size
         """Initialize a new P2P node.
         
         Args:
             host: The host IP address to bind to
             port: The port number to listen on
             node_id: Unique identifier for this node. If None, a random UUID is generated.
+            max_chunk_size: Maximum size of message chunks in bytes
         """
         self.host = host
         self.port = port
         self.node_id = node_id or str(uuid.uuid4())
+        self.max_chunk_size = max_chunk_size
         self.peers: Dict[str, Tuple[str, int]] = {}  # node_id -> (host, port)
         self.connections: Dict[str, asyncio.StreamWriter] = {}  # node_id -> writer
         self.server = None
@@ -95,65 +95,65 @@ class P2PNode:
     
     async def _handle_connection(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         """Handle an incoming connection from a peer.
-        
+
         Args:
             reader: Stream reader for the connection
             writer: Stream writer for the connection
         """
         peer_address = writer.get_extra_info('peername')
         logger.info(f"New connection from {peer_address}")
-        
+
         try:
             # Read the initial message containing peer ID
-            data = await reader.readline()
+            data = await self._read_message(reader)
             if not data:
                 logger.error(f"No data received from {peer_address}, closing connection")
                 writer.close()
                 return
-                
+
             try:
                 message = json.loads(data.decode())
             except json.JSONDecodeError:
                 logger.error(f"Invalid JSON received from {peer_address}, closing connection")
                 writer.close()
                 return
-            
+
             if 'node_id' not in message:
                 logger.error(f"Invalid initial message from {peer_address}, missing node_id")
                 writer.close()
                 return
-            
+
             peer_id = message['node_id']
             peer_host, peer_port = peer_address
-            
+
             # Send our own hello message if not already sent
             if message.get('type') == 'hello':
                 response = {
                     'node_id': self.node_id,
                     'type': 'hello_response'
                 }
-                writer.write(json.dumps(response).encode() + b'\n')
-                await writer.drain()
+                response_json = json.dumps(response).encode()
+                await self._send_chunked_message(writer, response_json)
                 logger.debug(f"Sent hello response to {peer_id}")
-            
+
             # Store peer information
             self.peers[peer_id] = (peer_host, peer_port)
             self.connections[peer_id] = writer
-            
+
             logger.info(f"Registered peer {peer_id} at {peer_host}:{peer_port}")
-            
+
             # Notify connection handlers about the new peer
             await self._notify_connection_handlers(peer_id)
-            
+
             # Handle incoming messages
             while True:
-                data = await reader.readline()
+                data = await self._read_message(reader)
                 if not data:
                     logger.info(f"Connection closed by peer {peer_id}")
                     break
                 
                 await self._process_message(peer_id, data)
-                
+
         except (asyncio.CancelledError, ConnectionError) as e:
             logger.error(f"Connection error with {peer_address}: {e}")
         except Exception as e:
@@ -165,7 +165,7 @@ class P2PNode:
                     del self.peers[peer_id]
                 if peer_id in self.connections:
                     del self.connections[peer_id]
-            
+
             writer.close()
             try:
                 await writer.wait_closed()
@@ -256,23 +256,145 @@ class P2PNode:
         except Exception as e:
             logger.error(f"Unexpected error connecting to peer at {host}:{port}: {e}")
             return False
-    
+
+    async def _read_message(self, reader: asyncio.StreamReader) -> Optional[bytes]:
+        """Read a complete message that may be split into chunks.
+        
+        Args:
+            reader: The stream reader to read from
+            
+        Returns:
+            The complete message as bytes, or None if connection closed
+        """
+        try:
+            # Read message header (1 byte for flags)
+            header = await reader.readexactly(1)
+            if not header:
+                return None
+                
+            flags = header[0]
+            is_chunked = (flags & 0x01) == 0x01
+            
+            if not is_chunked:
+                # Simple message - read length and then data
+                length_bytes = await reader.readexactly(4)
+                length = struct.unpack("!I", length_bytes)[0]
+                
+                # Read the entire message
+                data = await reader.readexactly(length)
+                return data
+            else:
+                # Chunked message - handle reassembly
+                message_id_bytes = await reader.readexactly(16)  # UUID as bytes
+                total_chunks_bytes = await reader.readexactly(4)
+                total_chunks = struct.unpack("!I", total_chunks_bytes)[0]
+                total_length_bytes = await reader.readexactly(4)
+                total_length = struct.unpack("!I", total_length_bytes)[0]
+                
+                # Prepare buffer for reassembly
+                message_buffer = bytearray(total_length)
+                chunks_received = 0
+                
+                # Read all chunks
+                while chunks_received < total_chunks:
+                    # Read chunk header
+                    chunk_index_bytes = await reader.readexactly(4)
+                    chunk_index = struct.unpack("!I", chunk_index_bytes)[0]
+                    chunk_length_bytes = await reader.readexactly(4)
+                    chunk_length = struct.unpack("!I", chunk_length_bytes)[0]
+                    
+                    # Read chunk data
+                    chunk_data = await reader.readexactly(chunk_length)
+                    
+                    # Calculate offset in the buffer
+                    offset = chunk_index * self.max_chunk_size
+                    message_buffer[offset:offset+chunk_length] = chunk_data
+                    
+                    chunks_received += 1
+                
+                return bytes(message_buffer)
+                
+        except asyncio.IncompleteReadError:
+            logger.error("Connection closed while reading message")
+            return None
+        except Exception as e:
+            logger.error(f"Error reading message: {e}")
+            return None
+
+    async def _send_chunked_message(self, writer: asyncio.StreamWriter, data: bytes) -> bool:
+        """Send a potentially large message by splitting it into chunks.
+        
+        Args:
+            writer: The stream writer to write to
+            data: The message data to send
+            
+        Returns:
+            True if successfully sent, False otherwise
+        """
+        try:
+            total_length = len(data)
+            
+            # Determine if we need chunking
+            if total_length <= self.max_chunk_size:
+                # Simple message - no chunking needed
+                header = bytes([0x00])  # Flag byte - no chunking
+                length_bytes = struct.pack("!I", total_length)
+                
+                # Write header, length, and data
+                writer.write(header + length_bytes + data)
+                await writer.drain()
+            else:
+                # Chunked message
+                header = bytes([0x01])  # Flag byte - chunked
+                message_id = uuid.uuid4().bytes  # 16 bytes
+                
+                # Calculate number of chunks
+                total_chunks = (total_length + self.max_chunk_size - 1) // self.max_chunk_size
+                
+                # Write message header
+                writer.write(header)
+                writer.write(message_id)
+                writer.write(struct.pack("!I", total_chunks))
+                writer.write(struct.pack("!I", total_length))
+                await writer.drain()
+                
+                # Send chunks
+                for i in range(total_chunks):
+                    start = i * self.max_chunk_size
+                    end = min(start + self.max_chunk_size, total_length)
+                    chunk_data = data[start:end]
+                    chunk_length = len(chunk_data)
+                    
+                    # Write chunk header
+                    writer.write(struct.pack("!I", i))  # Chunk index
+                    writer.write(struct.pack("!I", chunk_length))
+                    
+                    # Write chunk data
+                    writer.write(chunk_data)
+                    await writer.drain()
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error sending chunked message: {e}")
+            return False
+                    
     async def _handle_peer_messages(self, peer_id: str, reader: asyncio.StreamReader) -> None:
         """Handle messages from a connected peer.
-        
+
         Args:
             peer_id: The ID of the peer
             reader: The stream reader for the connection
         """
         try:
             while True:
-                data = await reader.readline()
+                data = await self._read_message(reader)
                 if not data:
                     logger.info(f"Connection closed by peer {peer_id}")
                     break
                 
                 await self._process_message(peer_id, data)
-                
+
         except (asyncio.CancelledError, ConnectionError) as e:
             logger.error(f"Error reading from peer {peer_id}: {e}")
         except Exception as e:
@@ -283,7 +405,7 @@ class P2PNode:
             if peer_id in self.connections:
                 self.connections[peer_id].close()
                 del self.connections[peer_id]
-            
+
             logger.info(f"Connection with peer {peer_id} closed")
     
     async def _process_message(self, peer_id: str, data: bytes) -> None:
@@ -320,38 +442,43 @@ class P2PNode:
     
     async def send_message(self, peer_id: str, message_type: str, **kwargs) -> bool:
         """Send a message to a specific peer.
-        
+
         Args:
             peer_id: The ID of the peer to send the message to
             message_type: The type of message being sent
             **kwargs: Additional key-value pairs to include in the message
-            
+
         Returns:
             bool: True if message was sent, False otherwise
         """
         if peer_id not in self.connections:
             logger.error(f"Cannot send message to unknown peer {peer_id}")
             return False
-        
+
         try:
             message = {
                 'type': message_type,
                 'from': self.node_id,
                 **kwargs
             }
-            
+
             writer = self.connections[peer_id]
-            writer.write(json.dumps(message).encode() + b'\n')
-            await writer.drain()
-            
-            logger.debug(f"Sent {message_type} message to {peer_id}")
-            return True
-            
+            message_json = json.dumps(message).encode()
+
+            # Use chunked sending
+            success = await self._send_chunked_message(writer, message_json)
+
+            if success:
+                logger.debug(f"Sent {message_type} message to {peer_id}")
+                return True
+            else:
+                logger.error(f"Failed to send message to {peer_id}")
+
         except (ConnectionError, asyncio.TimeoutError) as e:
             logger.error(f"Failed to send message to {peer_id}: {e}")
         except Exception as e:
             logger.error(f"Unexpected error sending message to {peer_id}: {e}")
-        
+
         # Remove the peer if we can't send to them
         if peer_id in self.peers:
             del self.peers[peer_id]
@@ -361,9 +488,9 @@ class P2PNode:
             except Exception:
                 pass
             del self.connections[peer_id]
-        
+
         return False
-    
+
     def register_message_handler(self, message_type: str, handler: Callable) -> None:
         """Register a handler function for a specific message type.
         

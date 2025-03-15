@@ -336,36 +336,36 @@ class SecureMessaging:
 
     def _derive_symmetric_key(self, shared_secret: bytes, peer_id: str) -> bytes:
         """Derive a symmetric key of the appropriate length from a shared secret.
-        
+
         Args:
             shared_secret: The shared secret from key exchange
             peer_id: The ID of the peer (used as context info)
-            
+
         Returns:
             A derived key of the appropriate length for the current symmetric algorithm
         """
         # Get the required key size for the current symmetric algorithm
         required_key_size = self.symmetric.key_size
-        
+
         # Use HKDF to derive a key of the exact length needed
         # - The salt can be None for our purposes
         # - CRITICAL: The info parameter must be identical for both peers
         # - To ensure this, sort the node IDs alphabetically
         node_ids = sorted([self.node.node_id, peer_id])
-        
+
         # Create a deterministic, symmetric info string
         info = f"quantum_resistant_p2p-v1-{node_ids[0]}-{node_ids[1]}-{self.symmetric.name}".encode()
-        
+
         derived_key = HKDF(
             algorithm=hashes.SHA256(),
             length=required_key_size,
             salt=None,
             info=info,
         ).derive(shared_secret)
-        
+
         logger.debug(f"Derived {required_key_size}-byte key for {self.symmetric.name} from "
                     f"{len(shared_secret)}-byte shared secret")
-        
+
         return derived_key
 
     def is_algorithm_compatible_with_peer(self, peer_id: str) -> bool:
@@ -1328,7 +1328,7 @@ class SecureMessaging:
             return False
     
     async def send_file(self, peer_id: str, file_path: str) -> bool:
-        """Send a file to a peer.
+        """Send a file to a peer using chunked messaging.
         
         Args:
             peer_id: The ID of the peer to send the file to
@@ -1340,15 +1340,26 @@ class SecureMessaging:
         logger.debug(f"Sending file {file_path} to {peer_id}")
         
         try:
+            # Get file info
+            file_name = os.path.basename(file_path)
+            file_size = os.path.getsize(file_path)
+            
+            # Log the transfer
+            self.secure_logger.log_event(
+                event_type="message_sent",
+                peer_id=peer_id,
+                is_file=True,
+                filename=file_name,
+                size=file_size
+            )
+            
             # Read the file
             with open(file_path, "rb") as f:
                 content = f.read()
             
-            # Get the filename
-            filename = os.path.basename(file_path)
-            
-            # Send the file as a message
-            return await self.send_message(peer_id, content, is_file=True, filename=filename)
+            # Now send the file data as a secure message
+            # The node's chunking mechanism will handle large files automatically
+            return await self.send_message(peer_id, content, is_file=True, filename=file_name)
             
         except Exception as e:
             logger.error(f"Error sending file {file_path} to {peer_id}: {e}")
