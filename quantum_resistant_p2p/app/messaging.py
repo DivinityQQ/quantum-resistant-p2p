@@ -153,6 +153,7 @@ class SecureMessaging:
         self.node.register_message_handler("secure_message", self._handle_secure_message)
         self.node.register_message_handler("crypto_settings_update", self._handle_crypto_settings_update)
         self.node.register_message_handler("crypto_settings_request", self._handle_crypto_settings_request)
+        self.node.register_message_handler("key_exchange_rejected", self._handle_key_exchange_rejected)
         
         # Generate or load our keypair
         self._load_or_generate_keypair()
@@ -307,7 +308,30 @@ class SecureMessaging:
                     self.shared_keys[peer_id] = shared_key
                     self.key_exchange_states[peer_id] = KeyExchangeState.ESTABLISHED
                     logger.info(f"Loaded shared key for peer {peer_id}")
-    
+
+    def is_algorithm_compatible_with_peer(self, peer_id: str) -> bool:
+        """Check if our current algorithm is compatible with the peer's algorithm.
+
+        Args:
+            peer_id: The ID of the peer to check
+
+        Returns:
+            True if algorithms are compatible, False otherwise
+        """
+        if peer_id not in self.peer_crypto_settings:
+            # If we don't know the peer's settings, assume incompatible
+            return False
+
+        peer_settings = self.peer_crypto_settings[peer_id]
+
+        # Check if the key exchange algorithms match exactly (excluding [Mock] suffixes)
+        peer_key_exchange = peer_settings.get("key_exchange", "").split(" [Mock]")[0]
+        our_key_exchange = self.key_exchange.display_name
+
+        # Must be the same algorithm type for compatibility
+        return peer_key_exchange == our_key_exchange
+
+
     async def _handle_new_connection(self, peer_id: str) -> None:
         """Handle a new connection with a peer.
 
@@ -414,38 +438,63 @@ class SecureMessaging:
     
     async def initiate_key_exchange(self, peer_id: str) -> bool:
         """Initiate a key exchange with a peer.
-        
+
         Args:
             peer_id: The ID of the peer to exchange keys with
-            
+
         Returns:
             True if key exchange initiated successfully, False otherwise
         """
         logger.debug(f"Initiating key exchange with {peer_id}")
-        
+
         # If we already have a key exchange in progress, don't start another
         if peer_id in self.key_exchange_states and self.key_exchange_states[peer_id] in [
             KeyExchangeState.INITIATED, KeyExchangeState.RESPONDED, KeyExchangeState.CONFIRMED
         ]:
             logger.warning(f"Key exchange already in progress with {peer_id}")
             return False
-        
+
+        # Check for algorithm compatibility before proceeding
+        compatible = self.is_algorithm_compatible_with_peer(peer_id)
+        if not compatible:
+            # Get peer's algorithm if available
+            peer_algo = "unknown"
+            if peer_id in self.peer_crypto_settings:
+                peer_algo = self.peer_crypto_settings[peer_id].get("key_exchange", "unknown")
+
+            logger.warning(f"Algorithm incompatibility with peer {peer_id}: " +
+                          f"we use {self.key_exchange.display_name}, they use {peer_algo}")
+
+            # Notify about algorithm mismatch via system message
+            for handler in self.global_message_handlers:
+                try:
+                    mismatch_message = Message.system_message(
+                        f"Cannot perform key exchange: Algorithm incompatibility - we use " +
+                        f"{self.key_exchange.display_name}, peer uses {peer_algo}. " +
+                        f"Both peers must use the same algorithm type."
+                    )
+                    handler(mismatch_message)
+                except Exception as e:
+                    logger.error(f"Error in algorithm mismatch handler: {e}")
+
+            return False
+
         try:
             # Get our keypair
             key_exchange_key = self.key_storage.get_key(f"key_exchange_{self.key_exchange.name}")
             if key_exchange_key is None:
                 logger.error(f"Missing key exchange keypair for {self.key_exchange.name}")
                 return False
-            
+
             # Send our public key
             public_key = key_exchange_key["public_key"]
-            
+
             # Generate a message ID for tracking the response
             message_id = str(uuid.uuid4())
-            
+
             # Create a future for the response
             future = asyncio.Future()
-            
+
             # Register a callback for the response
             def callback(result):
                 if isinstance(result, Exception):
@@ -456,26 +505,27 @@ class SecureMessaging:
                         future.set_exception(result)
                 else:
                     future.set_result(True)
-            
+
             self.message_callbacks[message_id] = callback
-            
+
             # Set key exchange state
             self.key_exchange_states[peer_id] = KeyExchangeState.INITIATED
-            
+
             # Send the key exchange initiation
             success = await self.node.send_message(
                 peer_id=peer_id,
                 message_type="key_exchange_init",
                 message_id=message_id,
-                algorithm=self.key_exchange.name,
+                algorithm=self.key_exchange.display_name,  # Send only the display name without [Mock]
+                is_mock=self.key_exchange.is_using_mock,   # Add explicit mock flag
                 public_key=base64.b64encode(public_key).decode()
             )
-            
+
             if not success:
                 logger.error(f"Failed to send key exchange initiation to {peer_id}")
                 self.key_exchange_states[peer_id] = KeyExchangeState.NONE
                 return False
-            
+
             # Wait for the response
             try:
                 await asyncio.wait_for(future, timeout=20.0)
@@ -485,11 +535,11 @@ class SecureMessaging:
                 if peer_id in self.shared_keys:
                     logger.warning(f"Key exchange callback timed out but shared key exists for {peer_id}")
                     return True
-                    
+
                 logger.error(f"Timeout waiting for key exchange response from {peer_id}")
                 self.key_exchange_states[peer_id] = KeyExchangeState.NONE
                 return False
-            
+
         except Exception as e:
             logger.error(f"Error initiating key exchange with {peer_id}: {e}")
             self.key_exchange_states[peer_id] = KeyExchangeState.NONE
@@ -501,142 +551,250 @@ class SecureMessaging:
     
     async def _handle_key_exchange_init(self, peer_id: str, message: Dict[str, Any]) -> None:
         """Handle a key exchange initiation message from a peer.
-        
+
         Args:
             peer_id: The ID of the peer who sent the message
             message: The message data
         """
         logger.debug(f"Received key exchange initiation from {peer_id}")
-        
+
         try:
             algorithm_name = message.get("algorithm")
+            is_mock = message.get("is_mock", False)
             public_key = message.get("public_key")
-            
+
             if not algorithm_name or not public_key:
                 logger.error(f"Invalid key exchange initiation from {peer_id}")
                 return
-            
-            # Check if this is the same algorithm we're using
-            if algorithm_name != self.key_exchange.name:
-                logger.warning(f"Peer {peer_id} is using a different key exchange algorithm: {algorithm_name}")
-                
-                # Update peer's crypto settings
-                if peer_id not in self.peer_crypto_settings:
-                    self.peer_crypto_settings[peer_id] = {}
-                self.peer_crypto_settings[peer_id]["key_exchange"] = algorithm_name
-                
+
+            # Update peer's crypto settings immediately
+            if peer_id not in self.peer_crypto_settings:
+                self.peer_crypto_settings[peer_id] = {}
+
+            # Store algorithm name, adding [Mock] suffix if is_mock is True
+            self.peer_crypto_settings[peer_id]["key_exchange"] = (
+                f"{algorithm_name}{' [Mock]' if is_mock else ''}"
+            )
+
+            # Notify UI about settings update
+            self._notify_settings_change()
+
+            # Check if peer's algorithm is compatible with ours
+            our_algo_display = self.key_exchange.display_name
+            if algorithm_name != our_algo_display:
+                logger.warning(f"Peer {peer_id} is using a different key exchange algorithm: {algorithm_name}" +
+                              f" (our algorithm: {our_algo_display})")
+
                 # Notify about algorithm mismatch
                 for handler in self.global_message_handlers:
                     try:
                         mismatch_message = Message.system_message(
-                            f"Peer is using a different key exchange algorithm: {algorithm_name}"
+                            f"Peer is using a different key exchange algorithm: {algorithm_name}. " +
+                            f"Key exchange will fail unless both peers use the same algorithm."
                         )
                         mismatch_message.key_exchange_algo = algorithm_name
                         handler(mismatch_message)
                     except Exception as e:
                         logger.error(f"Error in algorithm mismatch handler: {e}")
-                
-                # We'll still try to continue if possible
-                
+
+                # Send rejection message to inform peer about incompatibility
+                await self.node.send_message(
+                    peer_id=peer_id,
+                    message_type="key_exchange_rejected",
+                    message_id=message.get("message_id"),
+                    reason="algorithm_mismatch",
+                    our_algorithm=our_algo_display,
+                    is_mock=self.key_exchange.is_using_mock
+                )
+
+                return
+
             # Get our keypair
             key_exchange_key = self.key_storage.get_key(f"key_exchange_{self.key_exchange.name}")
             if key_exchange_key is None:
                 logger.error(f"Missing key exchange keypair for {self.key_exchange.name}")
+
+                # Send rejection due to missing keypair
+                await self.node.send_message(
+                    peer_id=peer_id,
+                    message_type="key_exchange_rejected",
+                    message_id=message.get("message_id"),
+                    reason="missing_keypair"
+                )
+
                 return
-            
+
             # Encapsulate a shared secret
             public_key_bytes = base64.b64decode(public_key)
-            ciphertext, shared_secret = self.key_exchange.encapsulate(public_key_bytes)
-            
+
+            try:
+                ciphertext, shared_secret = self.key_exchange.encapsulate(public_key_bytes)
+            except Exception as e:
+                logger.error(f"Failed to encapsulate shared secret: {e}")
+
+                # Send rejection due to encapsulation error
+                await self.node.send_message(
+                    peer_id=peer_id,
+                    message_type="key_exchange_rejected",
+                    message_id=message.get("message_id"),
+                    reason="encapsulation_error"
+                )
+
+                return
+
             # Store the shared secret temporarily
             self.shared_keys[peer_id] = shared_secret
             self.key_exchange_states[peer_id] = KeyExchangeState.RESPONDED
-            
+
             # Log the key exchange
             self.secure_logger.log_event(
                 event_type="key_exchange",
-                algorithm=self.key_exchange.name,
+                algorithm=self.key_exchange.display_name,
                 peer_id=peer_id,
                 direction="received",
                 state="responded",
                 security_level=getattr(self.key_exchange, "security_level", 3)
             )
-            
+
             # Send the response
             await self.node.send_message(
                 peer_id=peer_id,
                 message_type="key_exchange_response",
-                algorithm=self.key_exchange.name,
+                algorithm=self.key_exchange.display_name,
+                is_mock=self.key_exchange.is_using_mock,
                 message_id=message.get("message_id"),
                 ciphertext=base64.b64encode(ciphertext).decode()
             )
-            
+
             logger.info(f"Sent key exchange response to {peer_id}")
-            
+
         except Exception as e:
             logger.error(f"Error handling key exchange initiation from {peer_id}: {e}")
+
+            # Send rejection due to general error
+            try:
+                await self.node.send_message(
+                    peer_id=peer_id,
+                    message_type="key_exchange_rejected",
+                    message_id=message.get("message_id"),
+                    reason="general_error",
+                    error=str(e)
+                )
+            except Exception:
+                pass
     
     async def _handle_key_exchange_response(self, peer_id: str, message: Dict[str, Any]) -> None:
         """Handle a key exchange response message from a peer.
-        
+
         Args:
             peer_id: The ID of the peer who sent the message
             message: The message data
         """
         logger.debug(f"Received key exchange response from {peer_id}")
-        
+
         try:
             algorithm_name = message.get("algorithm")
+            is_mock = message.get("is_mock", False)
             ciphertext = message.get("ciphertext")
-            
+            message_id = message.get("message_id")
+
             if not algorithm_name or not ciphertext:
                 logger.error(f"Invalid key exchange response from {peer_id}")
+
+                # Call any registered callbacks with an error
+                if message_id and message_id in self.message_callbacks:
+                    error = Exception("Invalid key exchange response")
+                    self.message_callbacks[message_id](error)
+                    del self.message_callbacks[message_id]
+
                 return
-            
-            # Make sure this is an algorithm we support
-            if algorithm_name != self.key_exchange.name:
+
+            # Update peer's crypto settings
+            if peer_id not in self.peer_crypto_settings:
+                self.peer_crypto_settings[peer_id] = {}
+
+            # Store algorithm name, adding [Mock] suffix if is_mock is True
+            self.peer_crypto_settings[peer_id]["key_exchange"] = (
+                f"{algorithm_name}{' [Mock]' if is_mock else ''}"
+            )
+
+            # Notify UI about settings update
+            self._notify_settings_change()
+
+            # Check for algorithm mismatch
+            if algorithm_name != self.key_exchange.display_name:
                 logger.warning(f"Peer {peer_id} is using a different key exchange algorithm: {algorithm_name}")
-                
-                # Update peer's crypto settings
-                if peer_id not in self.peer_crypto_settings:
-                    self.peer_crypto_settings[peer_id] = {}
-                self.peer_crypto_settings[peer_id]["key_exchange"] = algorithm_name
-                
+
                 # Notify about algorithm mismatch
                 for handler in self.global_message_handlers:
                     try:
                         mismatch_message = Message.system_message(
-                            f"Peer is using a different key exchange algorithm: {algorithm_name}"
+                            f"Peer is using a different key exchange algorithm: {algorithm_name}. " +
+                            f"Key exchange may fail."
                         )
                         mismatch_message.key_exchange_algo = algorithm_name
                         handler(mismatch_message)
                     except Exception as e:
                         logger.error(f"Error in algorithm mismatch handler: {e}")
-                
-                # Continue anyway if possible
-            
+
+                # Call any registered callbacks with an error
+                if message_id and message_id in self.message_callbacks:
+                    error = Exception(f"Algorithm mismatch: expected {self.key_exchange.display_name}, got {algorithm_name}")
+                    self.message_callbacks[message_id](error)
+                    del self.message_callbacks[message_id]
+
+                return
+
             # Get our keypair
             key_exchange_key = self.key_storage.get_key(f"key_exchange_{self.key_exchange.name}")
             if key_exchange_key is None:
                 logger.error(f"Missing key exchange keypair for {self.key_exchange.name}")
+
+                # Call any registered callbacks with an error
+                if message_id and message_id in self.message_callbacks:
+                    error = Exception(f"Missing key exchange keypair for {self.key_exchange.name}")
+                    self.message_callbacks[message_id](error)
+                    del self.message_callbacks[message_id]
+
                 return
-            
+
             # Decapsulate the shared secret
-            ciphertext_bytes = base64.b64decode(ciphertext)
-            private_key = key_exchange_key["private_key"]
-            shared_secret = self.key_exchange.decapsulate(private_key, ciphertext_bytes)
-            
+            try:
+                ciphertext_bytes = base64.b64decode(ciphertext)
+                private_key = key_exchange_key["private_key"]
+                shared_secret = self.key_exchange.decapsulate(private_key, ciphertext_bytes)
+            except Exception as e:
+                logger.error(f"Error during key decapsulation: {e}")
+
+                # Call any registered callbacks with the error
+                if message_id and message_id in self.message_callbacks:
+                    self.message_callbacks[message_id](e)
+                    del self.message_callbacks[message_id]
+
+                # Notify user about the failure
+                for handler in self.global_message_handlers:
+                    try:
+                        error_message = Message.system_message(
+                            f"Key exchange failed: Unable to complete key establishment. Error: {str(e)}"
+                        )
+                        handler(error_message)
+                    except Exception as ex:
+                        logger.error(f"Error in key exchange error handler: {ex}")
+
+                return
+
             # Store the shared secret
             self.shared_keys[peer_id] = shared_secret
             self.key_exchange_states[peer_id] = KeyExchangeState.CONFIRMED
-            
+
             # Send a confirmation message
             await self.node.send_message(
                 peer_id=peer_id,
                 message_type="key_exchange_confirm",
-                algorithm=self.key_exchange.name
+                algorithm=self.key_exchange.display_name,
+                is_mock=self.key_exchange.is_using_mock
             )
-            
+
             # Send a test message to verify the key works
             test_data = {
                 "test": True,
@@ -644,39 +802,37 @@ class SecureMessaging:
             }
             test_data_json = json.dumps(test_data).encode()
             encrypted_test = self.symmetric.encrypt(shared_secret, test_data_json)
-            
+
             await self.node.send_message(
                 peer_id=peer_id,
                 message_type="key_exchange_test",
                 ciphertext=base64.b64encode(encrypted_test).decode()
             )
-            
+
             # Now save the key permanently
             self._save_peer_key(peer_id, shared_secret)
-            
+
             # Log the key exchange
             self.secure_logger.log_event(
                 event_type="key_exchange",
-                algorithm=self.key_exchange.name,
+                algorithm=self.key_exchange.display_name,
                 peer_id=peer_id,
                 direction="initiated",
                 state="established",
                 security_level=getattr(self.key_exchange, "security_level", 3)
             )
-            
+
             logger.info(f"Completed key exchange with {peer_id} (as initiator)")
-            
+
             # Call any registered callbacks for this message
-            message_id = message.get("message_id")
             if message_id and message_id in self.message_callbacks:
                 self.message_callbacks[message_id](None)
                 del self.message_callbacks[message_id]
-            
+
         except Exception as e:
             logger.error(f"Error handling key exchange response from {peer_id}: {e}")
-            
-            # Call any registered callbacks for this message with the error
-            message_id = message.get("message_id")
+
+            # Call any registered callbacks with the error
             if message_id and message_id in self.message_callbacks:
                 self.message_callbacks[message_id](e)
                 del self.message_callbacks[message_id]
@@ -729,7 +885,71 @@ class SecureMessaging:
             # Shared key might be invalid, need to renegotiate
             if peer_id in self.key_exchange_states:
                 self.key_exchange_states[peer_id] = KeyExchangeState.NONE
-    
+
+    async def _handle_key_exchange_rejected(self, peer_id: str, message: Dict[str, Any]) -> None:
+        """Handle a key exchange rejection message from a peer.
+
+        Args:
+            peer_id: The ID of the peer who sent the message
+            message: The message data
+        """
+        reason = message.get("reason", "unknown")
+        logger.warning(f"Key exchange rejected by {peer_id}. Reason: {reason}")
+
+        # Update peer's crypto settings if provided
+        if "our_algorithm" in message and peer_id in self.peer_crypto_settings:
+            algorithm = message.get("our_algorithm")
+            is_mock = message.get("is_mock", False)
+            self.peer_crypto_settings[peer_id]["key_exchange"] = (
+                f"{algorithm}{' [Mock]' if is_mock else ''}"
+            )
+            # Notify settings listeners
+            self._notify_settings_change()
+
+        # Clear any ongoing key exchange state
+        if peer_id in self.key_exchange_states:
+            self.key_exchange_states[peer_id] = KeyExchangeState.NONE
+
+        # If we had a shared key, remove it as it's no longer valid
+        if peer_id in self.shared_keys:
+            del self.shared_keys[peer_id]
+
+        # Notify the user about the rejection
+        message_text = f"Key exchange rejected by peer. "
+
+        if reason == "algorithm_mismatch":
+            peer_algo = message.get("our_algorithm", "unknown")
+            is_mock = message.get("is_mock", False)
+            if is_mock:
+                peer_algo += " [Mock]"
+
+            message_text += (
+                f"Algorithm mismatch: you're using {self.key_exchange.display_name}, " +
+                f"peer is using {peer_algo}. Both peers must use the same algorithm type."
+            )
+        elif reason == "missing_keypair":
+            message_text += "Peer is missing required key material."
+        elif reason == "encapsulation_error":
+            message_text += "Failed to process your public key."
+        elif reason == "general_error":
+            error = message.get("error", "unknown error")
+            message_text += f"Error: {error}"
+
+        # Send system message to notify user
+        for handler in self.global_message_handlers:
+            try:
+                system_message = Message.system_message(message_text)
+                handler(system_message)
+            except Exception as e:
+                logger.error(f"Error in key exchange rejection handler: {e}")
+
+        # Call any registered callbacks for this message with an error
+        message_id = message.get("message_id")
+        if message_id and message_id in self.message_callbacks:
+            error = Exception(f"Key exchange rejected: {reason}")
+            self.message_callbacks[message_id](error)
+            del self.message_callbacks[message_id]
+
     async def _handle_crypto_settings_update(self, peer_id: str, message: Dict[str, Any]) -> None:
         """Handle a cryptography settings update from a peer.
         
