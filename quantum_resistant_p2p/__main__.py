@@ -21,7 +21,8 @@ def setup_logging():
     log_dir = Path.home() / ".quantum_resistant_p2p" / "logs"
     log_dir.mkdir(exist_ok=True, parents=True)
     
-    log_file = log_dir / "app.log"
+    # Change from app.log to a normal system log
+    log_file = log_dir / "system.log"
     
     # Configure root logger
     logging.basicConfig(

@@ -19,6 +19,8 @@ from PyQt5.QtGui import QIcon
 from .peer_list import PeerListWidget
 from .messaging_widget import MessagingWidget
 from .settings_dialog import SettingsDialog
+from .security_metrics_dialog import SecurityMetricsDialog
+from .log_viewer_dialog import LogViewerDialog
 from .oqs_status_widget import OQSStatusWidget
 from .login_dialog import LoginDialog
 from ..app import SecureMessaging, SecureLogger
@@ -37,32 +39,33 @@ class MainWindow(QMainWindow):
     def __init__(self):
         """Initialize the main window."""
         super().__init__()
-        
+
         # Initialize components
         self.key_storage = KeyStorage()
-        self.secure_logger = SecureLogger()
-        
+        # Secure logger will be initialized after login when we have the master key
+        self.secure_logger = None
+
         # Network components will be initialized after login
         self.node = None
         self.node_discovery = None
         self.secure_messaging = None
-        
+
         # Track if message handler has been registered to prevent duplicates
         self._message_handler_registered = False
-        
+
         # UI initialization
         self.setWindowTitle("Quantum Resistant P2P")
         self.setMinimumSize(800, 600)
-        
+
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
-        
+
         layout = QVBoxLayout(self.central_widget)
         layout.addWidget(QLabel("Logging in..."))
-        
+
         # Connect async signal
         self.async_task.connect(self._run_async_task)
-        
+
         # Show login dialog first
         QTimer.singleShot(100, self._show_login_dialog)
     
@@ -77,9 +80,16 @@ class MainWindow(QMainWindow):
     
     def _init_after_login(self):
         """Initialize components after successful login."""
+        # Get the master key from key storage
+        master_key = self.key_storage.get_master_key()
+        
+        # Initialize secure logger with the master key
+        self.secure_logger = SecureLogger(encryption_key=master_key)
+        
+        # Then initialize the rest of the system
         self._init_network()
         self._init_ui()
-
+    
         # Register message handler BEFORE starting the network
         if self.secure_messaging and not self._message_handler_registered:
             self.secure_messaging.register_global_message_handler(self._on_secure_message_received)
@@ -87,7 +97,7 @@ class MainWindow(QMainWindow):
             self.secure_messaging.register_settings_change_listener(self._update_crypto_status)
             self._message_handler_registered = True
             logger.debug("Registered global message handler")
-
+    
         self._start_network()
     
     def _init_network(self):
@@ -401,11 +411,13 @@ class MainWindow(QMainWindow):
     
     def _show_security_metrics(self):
         """Show the security metrics dialog."""
-        pass  # TODO: Implement
+        dialog = SecurityMetricsDialog(self.secure_messaging, self.secure_logger, self)
+        dialog.exec_()
     
     def _show_logs(self):
         """Show the logs view."""
-        pass  # TODO: Implement
+        dialog = LogViewerDialog(self.secure_logger, self)
+        dialog.exec_()
     
     def _show_about_dialog(self):
         """Show the about dialog."""
@@ -420,7 +432,7 @@ class MainWindow(QMainWindow):
     
     def closeEvent(self, event):
         """Handle the window close event.
-        
+
         Args:
             event: The close event
         """
@@ -428,7 +440,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'messaging') and self.messaging:
             # This will trigger the destroyed signal and _cleanup_resources
             self.messaging.deleteLater()
-        
+
         # Stop the network components asynchronously
         asyncio.create_task(self._async_stop_network())
         event.accept()

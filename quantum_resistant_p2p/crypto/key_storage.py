@@ -138,6 +138,33 @@ class KeyStorage:
         except Exception as e:
             logger.error(f"Failed to unlock key storage: {e}")
             return False
+
+    def get_master_key(self) -> bytes:
+        """Get the master key for use by other secure components.
+        
+        This should only be called after successful unlock.
+        
+        Returns:
+            The master key as bytes or None if not unlocked
+        """
+        if self.master_key is None:
+            logger.error("Cannot get master key, storage not unlocked")
+            return None
+        
+        # For security, we don't return the exact master key
+        # Instead, derive a separate key for logs using the master key
+        import hashlib
+        import hmac
+        
+        # Derive a specific key for logs using HMAC
+        log_key = hmac.new(
+            key=self.master_key,
+            msg=b"secure_logger_key_v1",
+            digestmod=hashlib.sha256
+        ).digest()
+        
+        logger.debug("Derived log encryption key from master key")
+        return log_key
     
     def _save_storage(self) -> bool:
         """Save the key storage to disk.
