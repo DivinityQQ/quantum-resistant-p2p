@@ -424,6 +424,11 @@ class MainWindow(QMainWindow):
         Args:
             event: The close event
         """
+        # If we have a messaging widget, make sure to clean it up
+        if hasattr(self, 'messaging') and self.messaging:
+            # This will trigger the destroyed signal and _cleanup_resources
+            self.messaging.deleteLater()
+        
         # Stop the network components asynchronously
         asyncio.create_task(self._async_stop_network())
         event.accept()

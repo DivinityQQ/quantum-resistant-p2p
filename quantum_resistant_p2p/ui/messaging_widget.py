@@ -11,7 +11,7 @@ from PyQt5.QtWidgets import (
     QPushButton, QLabel, QFileDialog, QProgressBar, QSplitter,
     QGroupBox, QFormLayout, QMessageBox
 )
-from PyQt5.QtCore import Qt, pyqtSignal, pyqtSlot
+from PyQt5.QtCore import Qt, pyqtSignal, pyqtSlot, QTimer
 from PyQt5.QtGui import QFont, QColor
 
 from ..app import SecureMessaging, Message
@@ -29,24 +29,32 @@ class MessagingWidget(QWidget):
     
     def __init__(self, secure_messaging: SecureMessaging, parent=None):
         """Initialize the messaging widget.
-        
+
         Args:
             secure_messaging: The secure messaging service
             parent: The parent widget
         """
         super().__init__(parent)
-        
+
         self.secure_messaging = secure_messaging
         self.current_peer = None
         self.is_connecting = False
-        
+
         self._init_ui()
-        
+
         # Connect async signal
         self.async_task.connect(self._run_async_task)
-        
+
         # Register for crypto settings changes
         self.secure_messaging.register_settings_change_listener(self._on_crypto_settings_changed)
+
+        # Add connection status checker timer
+        self.connection_checker = QTimer(self)
+        self.connection_checker.timeout.connect(self._check_connection_status)
+        self.connection_checker.start(2000)  # Check every 2 seconds
+
+        # Connect to the destroyed signal to clean up resources
+        self.destroyed.connect(self._cleanup_resources)
     
     def _init_ui(self):
         """Initialize the user interface."""
@@ -369,9 +377,14 @@ class MessagingWidget(QWidget):
         # Add a system message
         self._add_system_message(f"Started chat with {peer_id[:8]}...")
 
-        # Check connection status - whether the peer is actually in the active peers list
+        # Check connection status
         connected_peers = self.secure_messaging.node.get_peers()
-        if peer_id in connected_peers:
+        is_connected = peer_id in connected_peers
+
+        # Initialize previous connection state
+        self.previous_connection_state = is_connected
+
+        if is_connected:
             self._add_system_message("Connected to peer")
             has_shared_key = peer_id in self.secure_messaging.shared_keys
 
@@ -420,7 +433,38 @@ class MessagingWidget(QWidget):
         
         # Start connection task
         self.async_task.emit(self._connect_to_peer(host, port))
-    
+
+    def _check_connection_status(self):
+        """Periodically check if the current peer is still connected."""
+        if not self.current_peer:
+            return
+
+        # Check if peer is still in the connected peers list
+        connected_peers = self.secure_messaging.node.get_peers()
+        was_connected = self.current_peer in connected_peers
+
+        # If connection status changed, update the UI
+        if not was_connected and hasattr(self, 'previous_connection_state') and self.previous_connection_state:
+            # Connection lost
+            self._add_system_message(f"Connection lost with peer {self.current_peer[:8]}...")
+            self.connection_status_label.setText("Not connected")
+            self.connection_status_label.setStyleSheet("font-weight: bold; color: red;")
+
+            # Disable messaging controls
+            self._disable_messaging()
+
+            # Update UI
+            self._update_crypto_display()
+
+        # Store current connection state for next check
+        self.previous_connection_state = was_connected   
+
+    def _cleanup_resources(self):
+        """Clean up resources when widget is destroyed."""
+        logger.debug("Cleaning up MessagingWidget resources")
+        if hasattr(self, 'connection_checker'):
+            self.connection_checker.stop()
+
     async def _connect_to_peer(self, host: str, port: int):
         """Connect to a peer asynchronously.
         
