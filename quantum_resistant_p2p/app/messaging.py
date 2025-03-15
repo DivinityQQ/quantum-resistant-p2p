@@ -942,12 +942,35 @@ class SecureMessaging:
             test_data = json.loads(plaintext.decode())
             if test_data.get("test"):
                 logger.info(f"Key exchange test successful with {peer_id}")
-            
+                
+                # Notify about successful key exchange
+                for handler in self.global_message_handlers:
+                    try:
+                        success_message = Message.system_message(
+                            f"Secure connection established with {peer_id}"
+                        )
+                        handler(success_message)
+                    except Exception as e:
+                        logger.error(f"Error in key exchange success handler: {e}")
+                        
+                # Notify settings change listeners to update UI
+                self._notify_settings_change()
+                
         except Exception as e:
             logger.error(f"Key exchange test failed with {peer_id}: {e}")
             # Shared key might be invalid, need to renegotiate
             if peer_id in self.key_exchange_states:
                 self.key_exchange_states[peer_id] = KeyExchangeState.NONE
+    
+                # Notify about key exchange failure
+                for handler in self.global_message_handlers:
+                    try:
+                        error_message = Message.system_message(
+                            f"Key exchange test failed with {peer_id}: {str(e)}"
+                        )
+                        handler(error_message)
+                    except Exception as ex:
+                        logger.error(f"Error in key exchange failure handler: {ex}")
 
     async def _handle_key_exchange_rejected(self, peer_id: str, message: Dict[str, Any]) -> None:
         """Handle a key exchange rejection message from a peer.
@@ -1329,21 +1352,21 @@ class SecureMessaging:
     
     async def send_file(self, peer_id: str, file_path: str) -> bool:
         """Send a file to a peer using chunked messaging.
-        
+
         Args:
             peer_id: The ID of the peer to send the file to
             file_path: The path to the file
-            
+
         Returns:
             True if file sent successfully, False otherwise
         """
         logger.debug(f"Sending file {file_path} to {peer_id}")
-        
+
         try:
             # Get file info
             file_name = os.path.basename(file_path)
             file_size = os.path.getsize(file_path)
-            
+
             # Log the transfer
             self.secure_logger.log_event(
                 event_type="message_sent",
@@ -1352,15 +1375,15 @@ class SecureMessaging:
                 filename=file_name,
                 size=file_size
             )
-            
+
             # Read the file
             with open(file_path, "rb") as f:
                 content = f.read()
-            
+
             # Now send the file data as a secure message
             # The node's chunking mechanism will handle large files automatically
             return await self.send_message(peer_id, content, is_file=True, filename=file_name)
-            
+
         except Exception as e:
             logger.error(f"Error sending file {file_path} to {peer_id}: {e}")
             return False
