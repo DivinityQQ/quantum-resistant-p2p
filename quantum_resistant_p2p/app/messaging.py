@@ -20,6 +20,8 @@ from ..crypto import (
     SignatureAlgorithm, DilithiumSignature, SPHINCSSignature,
     KeyStorage
 )
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from cryptography.hazmat.primitives import hashes
 from .logging import SecureLogger
 
 logger = logging.getLogger(__name__)
@@ -106,7 +108,7 @@ class SecureMessaging:
                  symmetric_algorithm: Optional[SymmetricAlgorithm] = None,
                  signature_algorithm: Optional[SignatureAlgorithm] = None):
         """Initialize secure messaging functionality.
-        
+
         Args:
             node: The P2P node for communication
             key_storage: The key storage for cryptographic keys
@@ -118,33 +120,36 @@ class SecureMessaging:
         self.node = node
         self.key_storage = key_storage
         self.secure_logger = logger  # Rename to avoid conflict with global logger
-        
+
         # Use default algorithms if not specified
         self.key_exchange = key_exchange_algorithm or KyberKeyExchange()
         self.symmetric = symmetric_algorithm or AES256GCM()
         self.signature = signature_algorithm or DilithiumSignature()
-        
+
         # Dictionary mapping peer IDs to shared symmetric keys
         self.shared_keys: Dict[str, bytes] = {}
-        
+
+        # Dictionary mapping peer IDs to original shared secrets (before derivation)
+        self.key_exchange_originals: Dict[str, bytes] = {}
+
         # Dictionary mapping peer IDs to key exchange states
         self.key_exchange_states: Dict[str, int] = {}
-        
+
         # Dictionary mapping message IDs to callbacks for received messages
         self.message_callbacks: Dict[str, Callable[[Any], None]] = {}
-        
+
         # List of global message handlers
         self.global_message_handlers: List[Callable[[Message], None]] = []
-        
+
         # List of settings change listeners
         self.settings_change_listeners: List[Callable[[], None]] = []
-        
+
         # Store peer crypto settings
         self.peer_crypto_settings: Dict[str, Dict[str, str]] = {}
-        
+
         # Track processed message IDs to prevent duplicates
         self.processed_message_ids = set()
-        
+
         # Register message handlers
         self.node.register_message_handler("key_exchange_init", self._handle_key_exchange_init)
         self.node.register_message_handler("key_exchange_response", self._handle_key_exchange_response)
@@ -154,26 +159,26 @@ class SecureMessaging:
         self.node.register_message_handler("crypto_settings_update", self._handle_crypto_settings_update)
         self.node.register_message_handler("crypto_settings_request", self._handle_crypto_settings_request)
         self.node.register_message_handler("key_exchange_rejected", self._handle_key_exchange_rejected)
-        
+
         # Generate or load our keypair
         self._load_or_generate_keypair()
-        
+
         # Load saved peer keys
         self._load_peer_keys()
-        
+
         # Log initialization
         self.secure_logger.log_event(
             event_type="initialization",
             message=f"Secure messaging initialized with {self.key_exchange.name}, "
                     f"{self.symmetric.name}, and {self.signature.name}"
         )
-        
+
         # Use the module logger
         logging.getLogger(__name__).info(
             f"Secure messaging initialized with {self.key_exchange.name}, "
             f"{self.symmetric.name}, and {self.signature.name}"
         )
-        
+
         # Register connection event handler to automatically share settings
         self.node.register_connection_handler(self._handle_new_connection)
     
@@ -265,20 +270,29 @@ class SecureMessaging:
     
     def _save_peer_key(self, peer_id: str, shared_key: bytes) -> None:
         """Save a shared key for a peer in KeyStorage.
-        
+
         Args:
             peer_id: The ID of the peer
-            shared_key: The shared key
+            shared_key: The derived shared key
         """
         # Generate a deterministic key ID based on both peer IDs
         key_id = self._generate_key_id(peer_id)
-        
+
+        # Get the original shared secret if available
+        original_secret = self.key_exchange_originals.get(peer_id)
+
         key_data = {
             "peer_id": peer_id,
             "shared_key": shared_key,
             "algorithm": self.key_exchange.name,
+            "symmetric_algorithm": self.symmetric.name,
             "created_at": time.time()
         }
+
+        # Store the original secret if available
+        if original_secret:
+            key_data["original_shared_secret"] = original_secret
+
         success = self.key_storage.store_key(key_id, key_data)
         if success:
             logger.info(f"Saved shared key for peer {peer_id}")
@@ -294,7 +308,8 @@ class SecureMessaging:
             if key_id.startswith("peer_shared_key_"):
                 peer_id = key_data.get("peer_id")
                 shared_key = key_data.get("shared_key")
-                
+                original_secret = key_data.get("original_shared_secret")
+
                 # Convert from base64 if needed
                 if isinstance(shared_key, str):
                     import base64
@@ -303,11 +318,51 @@ class SecureMessaging:
                     except:
                         logger.error(f"Failed to decode shared key for peer {peer_id}")
                         continue
-                
+                    
+                # Also convert original secret if available
+                if original_secret and isinstance(original_secret, str):
+                    import base64
+                    try:
+                        original_secret = base64.b64decode(original_secret)
+                        # Store the original secret
+                        self.key_exchange_originals[peer_id] = original_secret
+                    except:
+                        logger.error(f"Failed to decode original shared secret for peer {peer_id}")
+
                 if peer_id and shared_key:
                     self.shared_keys[peer_id] = shared_key
                     self.key_exchange_states[peer_id] = KeyExchangeState.ESTABLISHED
                     logger.info(f"Loaded shared key for peer {peer_id}")
+
+    def _derive_symmetric_key(self, shared_secret: bytes, peer_id: str) -> bytes:
+        """Derive a symmetric key of the appropriate length from a shared secret.
+
+        Args:
+            shared_secret: The shared secret from key exchange
+            peer_id: The ID of the peer (used as context info)
+
+        Returns:
+            A derived key of the appropriate length for the current symmetric algorithm
+        """
+        # Get the required key size for the current symmetric algorithm
+        required_key_size = self.symmetric.key_size
+
+        # Use HKDF to derive a key of the exact length needed
+        # - The salt can be None for our purposes
+        # - The info parameter should be unique to prevent the same key being derived for different purposes
+        info = f"quantum_resistant_p2p-v1-{self.node.node_id}-{peer_id}-{self.symmetric.name}".encode()
+
+        derived_key = HKDF(
+            algorithm=hashes.SHA256(),
+            length=required_key_size,
+            salt=None,
+            info=info,
+        ).derive(shared_secret)
+
+        logger.debug(f"Derived {required_key_size}-byte key for {self.symmetric.name} from "
+                    f"{len(shared_secret)}-byte shared secret")
+
+        return derived_key
 
     def is_algorithm_compatible_with_peer(self, peer_id: str) -> bool:
         """Check if our current algorithm is compatible with the peer's algorithm.
@@ -642,8 +697,10 @@ class SecureMessaging:
 
                 return
 
-            # Store the shared secret temporarily
-            self.shared_keys[peer_id] = shared_secret
+            # Store both original shared secret and derived key
+            self.key_exchange_originals[peer_id] = shared_secret
+            derived_key = self._derive_symmetric_key(shared_secret, peer_id)
+            self.shared_keys[peer_id] = derived_key
             self.key_exchange_states[peer_id] = KeyExchangeState.RESPONDED
 
             # Log the key exchange
@@ -783,8 +840,10 @@ class SecureMessaging:
 
                 return
 
-            # Store the shared secret
-            self.shared_keys[peer_id] = shared_secret
+            # Store both original shared secret and derived key
+            self.key_exchange_originals[peer_id] = shared_secret
+            derived_key = self._derive_symmetric_key(shared_secret, peer_id)
+            self.shared_keys[peer_id] = derived_key
             self.key_exchange_states[peer_id] = KeyExchangeState.CONFIRMED
 
             # Send a confirmation message
@@ -801,7 +860,7 @@ class SecureMessaging:
                 "timestamp": time.time()
             }
             test_data_json = json.dumps(test_data).encode()
-            encrypted_test = self.symmetric.encrypt(shared_secret, test_data_json)
+            encrypted_test = self.symmetric.encrypt(derived_key, test_data_json)
 
             await self.node.send_message(
                 peer_id=peer_id,
@@ -810,7 +869,7 @@ class SecureMessaging:
             )
 
             # Now save the key permanently
-            self._save_peer_key(peer_id, shared_secret)
+            self._save_peer_key(peer_id, derived_key)
 
             # Log the key exchange
             self.secure_logger.log_event(
@@ -1380,6 +1439,21 @@ class SecureMessaging:
             
             # Update the algorithm
             self.symmetric = algorithm
+            
+            # Re-derive keys for all peers with available original shared secrets
+            for peer_id, original_secret in list(self.key_exchange_originals.items()):
+                if peer_id in self.key_exchange_states and self.key_exchange_states[peer_id] == KeyExchangeState.ESTABLISHED:
+                    try:
+                        # Derive a new key with the new algorithm's requirements
+                        derived_key = self._derive_symmetric_key(original_secret, peer_id)
+                        self.shared_keys[peer_id] = derived_key
+                        
+                        # Save the updated key
+                        self._save_peer_key(peer_id, derived_key)
+                        
+                        logger.info(f"Re-derived key for peer {peer_id} with new algorithm {self.symmetric.name}")
+                    except Exception as e:
+                        logger.error(f"Failed to re-derive key for peer {peer_id}: {e}")
             
             # Log the change
             logger.info(f"Changed symmetric algorithm from {old_algorithm} to {self.symmetric.name}")
