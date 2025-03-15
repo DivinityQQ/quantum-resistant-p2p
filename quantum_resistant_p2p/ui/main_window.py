@@ -5,6 +5,8 @@ Main window for the post-quantum P2P application.
 import logging
 import asyncio
 import sys
+import os
+import subprocess
 from pathlib import Path
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter, 
@@ -17,6 +19,7 @@ from PyQt5.QtGui import QIcon
 from .peer_list import PeerListWidget
 from .messaging_widget import MessagingWidget
 from .settings_dialog import SettingsDialog
+from .oqs_status_widget import OQSStatusWidget
 from .login_dialog import LoginDialog
 from ..app import SecureMessaging, SecureLogger
 from ..crypto import KeyStorage
@@ -132,6 +135,9 @@ class MainWindow(QMainWindow):
         self.encryption_status = QLabel("No encryption")
         self.status_bar.addPermanentWidget(self.connection_status)
         self.status_bar.addPermanentWidget(self.encryption_status)
+        self.oqs_status = OQSStatusWidget()
+        self.oqs_status.setup_clicked.connect(self._show_oqs_setup)
+        self.status_bar.addPermanentWidget(self.oqs_status)
 
         # Initial status message
         self.status_bar.showMessage("Welcome to Quantum P2P")
@@ -212,13 +218,34 @@ class MainWindow(QMainWindow):
         """Update the cryptography status display in the UI."""
         if hasattr(self, 'encryption_status') and self.encryption_status and hasattr(self, 'secure_messaging') and self.secure_messaging:
             self.encryption_status.setText(
-                f"Crypto: {self.secure_messaging.key_exchange.name.split()[0]}, "
+                f"Crypto: {self.secure_messaging.key_exchange.display_name.split()[0]}, "
                 f"{self.secure_messaging.symmetric.name}, "
-                f"{self.secure_messaging.signature.name.split()[0]}"
+                f"{self.secure_messaging.signature.display_name.split()[0]}"
             )
             self.status_bar.showMessage("Cryptography settings updated", 3000)
             logger.debug("Updated cryptography status in UI")
     
+    def _show_oqs_setup(self):
+        """Show the OQS setup script."""
+        try:
+            # Check if the setup script exists
+            setup_script = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "setup_oqs.py")
+            if not os.path.exists(setup_script):
+                QMessageBox.warning(self, "Setup Script Not Found", 
+                                   "The setup_oqs.py script could not be found.")
+                return
+                
+            # Execute the setup script in a new window
+            if sys.platform == "win32":
+                subprocess.Popen(["python", setup_script])
+            else:
+                subprocess.Popen(["python3", setup_script])
+                
+            QMessageBox.information(self, "Setup Started", 
+                                   "The OQS setup script has been started in a new window.")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Error starting OQS setup: {str(e)}")
+
     async def _async_start_network(self):
         """Asynchronously start the network components."""
         try:
@@ -231,9 +258,9 @@ class MainWindow(QMainWindow):
             # Update UI
             self.connection_status.setText(f"Node ID: {self.node.node_id[:8]}...")
             self.encryption_status.setText(
-                f"Crypto: {self.secure_messaging.key_exchange.name.split()[0]}, "
+                f"Crypto: {self.secure_messaging.key_exchange.display_name.split()[0]}, "
                 f"{self.secure_messaging.symmetric.name}, "
-                f"{self.secure_messaging.signature.name.split()[0]}"
+                f"{self.secure_messaging.signature.display_name.split()[0]}"
             )
             
             self.status_bar.showMessage("Network started", 3000)

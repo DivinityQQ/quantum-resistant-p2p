@@ -7,26 +7,17 @@ import logging
 import os
 from typing import Tuple, Optional
 
+# Import the base class
+from .algorithm_base import CryptoAlgorithm
+
 # Standard cryptography lib
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM, ChaCha20Poly1305 as ChaCha20Poly1305Cipher
 
 logger = logging.getLogger(__name__)
 
 
-class SymmetricAlgorithm(abc.ABC):
+class SymmetricAlgorithm(CryptoAlgorithm):
     """Abstract base class for symmetric encryption algorithms."""
-    
-    @property
-    @abc.abstractmethod
-    def name(self) -> str:
-        """Get the name of the algorithm."""
-        pass
-    
-    @property
-    @abc.abstractmethod
-    def description(self) -> str:
-        """Get a description of the algorithm."""
-        pass
     
     @property
     @abc.abstractmethod

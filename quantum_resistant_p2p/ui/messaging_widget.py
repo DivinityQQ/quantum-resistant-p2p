@@ -153,9 +153,9 @@ class MessagingWidget(QWidget):
         self.crypto_panel.setVisible(self.current_peer is not None)
         
         # Update our settings
-        self.our_key_exchange_label.setText(self.secure_messaging.key_exchange.name)
+        self.our_key_exchange_label.setText(self.secure_messaging.key_exchange.display_name)
         self.our_symmetric_label.setText(self.secure_messaging.symmetric.name)
-        self.our_signature_label.setText(self.secure_messaging.signature.name)
+        self.our_signature_label.setText(self.secure_messaging.signature.display_name)
         
         # Update peer settings if available
         if self.current_peer:
@@ -172,20 +172,20 @@ class MessagingWidget(QWidget):
                 
                 # Highlight differences
                 self.peer_key_exchange_label.setStyleSheet(
-                    "color: red;" if key_exchange != self.secure_messaging.key_exchange.name else ""
+                    "color: red;" if key_exchange != self.secure_messaging.key_exchange.display_name else ""
                 )
                 self.peer_symmetric_label.setStyleSheet(
-                    "color: red;" if symmetric != self.secure_messaging.symmetric.name else ""
+                    "color: red;" if symmetric != self.secure_messaging.symmetric.display_name else ""
                 )
                 self.peer_signature_label.setStyleSheet(
-                    "color: red;" if signature != self.secure_messaging.signature.name else ""
+                    "color: red;" if signature != self.secure_messaging.signature.display_name else ""
                 )
                 
                 # Enable adopt settings button if there are differences
                 has_differences = (
-                    key_exchange != self.secure_messaging.key_exchange.name or
-                    symmetric != self.secure_messaging.symmetric.name or
-                    signature != self.secure_messaging.signature.name
+                    key_exchange != self.secure_messaging.key_exchange.display_name or
+                    symmetric != self.secure_messaging.symmetric.display_name or
+                    signature != self.secure_messaging.signature.display_name
                 )
                 self.adopt_settings_button.setEnabled(has_differences)
                 

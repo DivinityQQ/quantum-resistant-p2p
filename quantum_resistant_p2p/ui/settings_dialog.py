@@ -14,7 +14,8 @@ from ..app import SecureMessaging
 from ..crypto import (
     KyberKeyExchange, NTRUKeyExchange,
     AES256GCM, ChaCha20Poly1305,
-    DilithiumSignature, SPHINCSSignature
+    DilithiumSignature, SPHINCSSignature,
+    LIBOQS_AVAILABLE, LIBOQS_VERSION
 )
 
 logger = logging.getLogger(__name__)
@@ -42,6 +43,15 @@ class SettingsDialog(QDialog):
     def _init_ui(self):
         """Initialize the user interface."""
         layout = QVBoxLayout()
+
+        # Add OQS status indicator
+        if LIBOQS_AVAILABLE:
+            oqs_label = QLabel(f"OQS Library: Available (version {LIBOQS_VERSION})")
+            oqs_label.setStyleSheet("color: green; font-weight: bold;")
+        else:
+            oqs_label = QLabel("OQS Library: Not Available (using mock implementations)")
+            oqs_label.setStyleSheet("color: orange; font-weight: bold;")
+        layout.addWidget(oqs_label)
         
         # Peer synchronization group
         sync_group = QGroupBox("Peer Settings Synchronization")

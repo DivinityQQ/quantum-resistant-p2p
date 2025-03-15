@@ -9,6 +9,9 @@ import os
 import hashlib
 import threading
 
+# Import the base class
+from .algorithm_base import CryptoAlgorithm
+
 # Try to import oqs (Open Quantum Safe)
 try:
     import oqs
@@ -26,20 +29,8 @@ def get_node_id():
     return os.environ.get('NODE_ID', str(threading.get_ident()))
 
 
-class KeyExchangeAlgorithm(abc.ABC):
+class KeyExchangeAlgorithm(CryptoAlgorithm):
     """Abstract base class for key exchange algorithms."""
-    
-    @property
-    @abc.abstractmethod
-    def name(self) -> str:
-        """Get the name of the algorithm."""
-        pass
-    
-    @property
-    @abc.abstractmethod
-    def description(self) -> str:
-        """Get a description of the algorithm."""
-        pass
     
     @abc.abstractmethod
     def generate_keypair(self) -> Tuple[bytes, bytes]:
@@ -93,30 +84,49 @@ class KyberKeyExchange(KeyExchangeAlgorithm):
         
         self.security_level = security_level
         self.kem = None
+        self.variant = None
+        
+        # Attempt to get list of enabled KEM mechanisms if OQS is available
+        self.enabled_kems = []
+        if LIBOQS_AVAILABLE:
+            try:
+                self.enabled_kems = oqs.get_enabled_kem_mechanisms()
+            except Exception as e:
+                logger.error(f"Error getting enabled KEM mechanisms: {e}")
+                LIBOQS_AVAILABLE = False
         
         if not LIBOQS_AVAILABLE:
             logger.warning("Using deterministic mock implementation of Kyber")
             return
         
         # Map security levels to Kyber variants
+        # Using both ML-KEM (new names) and Kyber (old names) for compatibility
         kyber_variants = {
-            1: "Kyber512",
-            3: "Kyber768",
-            5: "Kyber1024"
+            1: ["ML-KEM-512", "Kyber512"],
+            3: ["ML-KEM-768", "Kyber768"],
+            5: ["ML-KEM-1024", "Kyber1024"]
         }
         
         if security_level not in kyber_variants:
             raise ValueError(f"Invalid security level: {security_level}. Must be 1, 3, or 5.")
         
-        self.variant = kyber_variants[security_level]
+        # Try the new ML-KEM name first, then fall back to the old Kyber name
+        variant_found = False
+        for variant in kyber_variants[security_level]:
+            if variant in self.enabled_kems:
+                self.variant = variant
+                variant_found = True
+                break
         
-        # Check if the algorithm is actually supported
+        if not variant_found:
+            logger.warning(f"No Kyber variant found for security level {security_level}, using deterministic mock implementation")
+            LIBOQS_AVAILABLE = False
+            return
+        
+        # Try to create the KEM instance
         try:
-            if hasattr(oqs, 'KEM') and hasattr(oqs.KEM, 'get_enabled') and self.variant in oqs.KEM.get_enabled():
-                self.kem = oqs.KEM(self.variant)
-            else:
-                logger.warning(f"Kyber variant {self.variant} not enabled in OQS library, using deterministic mock implementation")
-                LIBOQS_AVAILABLE = False
+            self.kem = oqs.KeyEncapsulation(self.variant)
+            logger.info(f"Successfully initialized Kyber variant {self.variant}")
         except Exception as e:
             logger.error(f"Error initializing Kyber: {e}")
             LIBOQS_AVAILABLE = False
@@ -126,7 +136,9 @@ class KyberKeyExchange(KeyExchangeAlgorithm):
     @property
     def name(self) -> str:
         """Get the name of the algorithm."""
-        return f"CRYSTALS-Kyber (Level {self.security_level})"
+        if LIBOQS_AVAILABLE and self.kem is not None:
+            return f"CRYSTALS-Kyber (Level {self.security_level})"
+        return f"CRYSTALS-Kyber (Level {self.security_level}) [Mock]"
     
     @property
     def description(self) -> str:
@@ -159,13 +171,14 @@ class KyberKeyExchange(KeyExchangeAlgorithm):
             return public_key, private_key
         
         try:
-            # Use actual OQS implementation
-            public_key, secret_key = self.kem.keypair()
+            # Use actual OQS implementation with the current API pattern
+            public_key = self.kem.generate_keypair()
+            private_key = self.kem.export_secret_key()
             
             logger.debug(f"Generated Kyber keypair: public key {len(public_key)} bytes, "
-                      f"private key {len(secret_key)} bytes")
+                      f"private key {len(private_key)} bytes")
             
-            return public_key, secret_key
+            return public_key, private_key
         except Exception as e:
             logger.error(f"Error generating Kyber keypair: {e}")
             # Fall back to mock implementation
@@ -198,8 +211,10 @@ class KyberKeyExchange(KeyExchangeAlgorithm):
             return ciphertext, shared_secret
         
         try:
-            # Use actual OQS implementation
-            ciphertext, shared_secret = self.kem.encap(public_key)
+            # Use actual OQS implementation with current API pattern
+            # Create a new instance for encapsulation
+            encap_kem = oqs.KeyEncapsulation(self.variant)
+            ciphertext, shared_secret = encap_kem.encap_secret(public_key)
             
             logger.debug(f"Kyber encapsulation: ciphertext {len(ciphertext)} bytes, "
                       f"shared secret {len(shared_secret)} bytes")
@@ -237,9 +252,9 @@ class KyberKeyExchange(KeyExchangeAlgorithm):
             return shared_secret
         
         try:
-            # Use actual OQS implementation
-            kem = oqs.KEM(self.variant)
-            shared_secret = kem.decap(ciphertext, private_key)
+            # Create a new KEM instance with the private key for decapsulation
+            decap_kem = oqs.KeyEncapsulation(self.variant, private_key)
+            shared_secret = decap_kem.decap_secret(ciphertext)
             
             logger.debug(f"Kyber decapsulation: shared secret {len(shared_secret)} bytes")
             
@@ -268,32 +283,51 @@ class NTRUKeyExchange(KeyExchangeAlgorithm):
         
         self.security_level = security_level
         self.kem = None
+        self.variant = None
+        
+        # Attempt to get list of enabled KEM mechanisms if OQS is available
+        self.enabled_kems = []
+        if LIBOQS_AVAILABLE:
+            try:
+                self.enabled_kems = oqs.get_enabled_kem_mechanisms()
+            except Exception as e:
+                logger.error(f"Error getting enabled KEM mechanisms: {e}")
+                LIBOQS_AVAILABLE = False
         
         if not LIBOQS_AVAILABLE:
             logger.warning("Using deterministic mock implementation of NTRU")
             return
         
-        # Map security levels to NTRU variants
+        # Map security levels to NTRU variants or suitable alternatives
+        # Traditional NTRU might not be available, but we can use alternatives
         ntru_variants = {
-            1: "NTRU-HPS-2048-509",
-            3: "NTRU-HPS-2048-677",
-            5: "NTRU-HPS-4096-821"
+            1: ["sntrup761"],  # approx. security level 1-3
+            3: ["sntrup761"],  # approx. security level 1-3
+            5: ["sntrup761"]   # lower than level 5, but best available option
         }
         
         if security_level not in ntru_variants:
             raise ValueError(f"Invalid security level: {security_level}. Must be 1, 3, or 5.")
         
-        self.variant = ntru_variants[security_level]
+        # Try to find an available NTRU-like variant
+        variant_found = False
+        for variant in ntru_variants[security_level]:
+            if variant in self.enabled_kems:
+                self.variant = variant
+                variant_found = True
+                break
         
-        # Check if the algorithm is actually supported
+        if not variant_found:
+            logger.warning(f"No NTRU-like variant found for security level {security_level}, using deterministic mock implementation")
+            LIBOQS_AVAILABLE = False
+            return
+        
+        # Try to create the KEM instance
         try:
-            if hasattr(oqs, 'KEM') and hasattr(oqs.KEM, 'get_enabled') and self.variant in oqs.KEM.get_enabled():
-                self.kem = oqs.KEM(self.variant)
-            else:
-                logger.warning(f"NTRU variant {self.variant} not enabled in OQS library, using deterministic mock implementation")
-                LIBOQS_AVAILABLE = False
+            self.kem = oqs.KeyEncapsulation(self.variant)
+            logger.info(f"Successfully initialized NTRU-like variant {self.variant}")
         except Exception as e:
-            logger.error(f"Error initializing NTRU: {e}")
+            logger.error(f"Error initializing NTRU-like algorithm: {e}")
             LIBOQS_AVAILABLE = False
         
         logger.info(f"Initialized NTRU key exchange with security level {security_level}")
@@ -301,11 +335,18 @@ class NTRUKeyExchange(KeyExchangeAlgorithm):
     @property
     def name(self) -> str:
         """Get the name of the algorithm."""
-        return f"NTRU (Level {self.security_level})"
+        if LIBOQS_AVAILABLE and self.kem is not None:
+            if hasattr(self, 'variant') and self.variant and self.variant != "sntrup761":
+                return f"{self.variant} (Level {self.security_level})"
+            return f"NTRU (Level {self.security_level})"
+        return f"NTRU (Level {self.security_level}) [Mock]"
     
     @property
     def description(self) -> str:
         """Get a description of the algorithm."""
+        if LIBOQS_AVAILABLE and self.kem is not None and self.variant == "sntrup761":
+            return ("SNTRUP761 is a lattice-based key encapsulation mechanism used as an NTRU alternative. "
+                   "It provides similar security guarantees to NTRU.")
         return ("NTRU is a lattice-based key encapsulation mechanism. "
                 "It is one of the oldest post-quantum cryptographic systems.")
     
@@ -333,15 +374,16 @@ class NTRUKeyExchange(KeyExchangeAlgorithm):
             return public_key, private_key
         
         try:
-            # Use actual OQS implementation
-            public_key, secret_key = self.kem.keypair()
+            # Use actual OQS implementation with the current API pattern
+            public_key = self.kem.generate_keypair()
+            private_key = self.kem.export_secret_key()
             
-            logger.debug(f"Generated NTRU keypair: public key {len(public_key)} bytes, "
-                      f"private key {len(secret_key)} bytes")
+            logger.debug(f"Generated NTRU-like keypair: public key {len(public_key)} bytes, "
+                      f"private key {len(private_key)} bytes")
             
-            return public_key, secret_key
+            return public_key, private_key
         except Exception as e:
-            logger.error(f"Error generating NTRU keypair: {e}")
+            logger.error(f"Error generating NTRU-like keypair: {e}")
             # Fall back to mock implementation
             LIBOQS_AVAILABLE = False
             return self.generate_keypair()  # Recursive call to use mock implementation
@@ -372,15 +414,17 @@ class NTRUKeyExchange(KeyExchangeAlgorithm):
             return ciphertext, shared_secret
         
         try:
-            # Use actual OQS implementation
-            ciphertext, shared_secret = self.kem.encap(public_key)
+            # Use actual OQS implementation with current API pattern
+            # Create a new instance for encapsulation
+            encap_kem = oqs.KeyEncapsulation(self.variant)
+            ciphertext, shared_secret = encap_kem.encap_secret(public_key)
             
-            logger.debug(f"NTRU encapsulation: ciphertext {len(ciphertext)} bytes, "
+            logger.debug(f"NTRU-like encapsulation: ciphertext {len(ciphertext)} bytes, "
                       f"shared secret {len(shared_secret)} bytes")
             
             return ciphertext, shared_secret
         except Exception as e:
-            logger.error(f"Error during NTRU encapsulation: {e}")
+            logger.error(f"Error during NTRU-like encapsulation: {e}")
             # Fall back to mock implementation
             LIBOQS_AVAILABLE = False
             return self.encapsulate(public_key)  # Recursive call to use mock implementation
@@ -411,15 +455,15 @@ class NTRUKeyExchange(KeyExchangeAlgorithm):
             return shared_secret
         
         try:
-            # Use actual OQS implementation
-            kem = oqs.KEM(self.variant)
-            shared_secret = kem.decap(ciphertext, private_key)
+            # Create a new KEM instance with the private key for decapsulation
+            decap_kem = oqs.KeyEncapsulation(self.variant, private_key)
+            shared_secret = decap_kem.decap_secret(ciphertext)
             
-            logger.debug(f"NTRU decapsulation: shared secret {len(shared_secret)} bytes")
+            logger.debug(f"NTRU-like decapsulation: shared secret {len(shared_secret)} bytes")
             
             return shared_secret
         except Exception as e:
-            logger.error(f"Error during NTRU decapsulation: {e}")
+            logger.error(f"Error during NTRU-like decapsulation: {e}")
             # Fall back to mock implementation
             LIBOQS_AVAILABLE = False
             return self.decapsulate(private_key, ciphertext)  # Recursive call to use mock implementation

@@ -10,6 +10,9 @@ import hmac
 import threading
 from typing import Tuple, Optional, Dict
 
+# Import the base class
+from .algorithm_base import CryptoAlgorithm
+
 # Try to import oqs (Open Quantum Safe)
 try:
     import oqs
@@ -27,20 +30,8 @@ def get_node_id():
     return os.environ.get('NODE_ID', str(threading.get_ident()))
 
 
-class SignatureAlgorithm(abc.ABC):
+class SignatureAlgorithm(CryptoAlgorithm):
     """Abstract base class for digital signature algorithms."""
-    
-    @property
-    @abc.abstractmethod
-    def name(self) -> str:
-        """Get the name of the algorithm."""
-        pass
-    
-    @property
-    @abc.abstractmethod
-    def description(self) -> str:
-        """Get a description of the algorithm."""
-        pass
     
     @abc.abstractmethod
     def generate_keypair(self) -> Tuple[bytes, bytes]:
@@ -99,30 +90,49 @@ class DilithiumSignature(SignatureAlgorithm):
         
         self.security_level = security_level
         self.signer = None
+        self.variant = None
+        
+        # Attempt to get list of enabled signature mechanisms if OQS is available
+        self.enabled_sigs = []
+        if LIBOQS_AVAILABLE:
+            try:
+                self.enabled_sigs = oqs.get_enabled_sig_mechanisms()
+            except Exception as e:
+                logger.error(f"Error getting enabled signature mechanisms: {e}")
+                LIBOQS_AVAILABLE = False
         
         if not LIBOQS_AVAILABLE:
             logger.warning("Using deterministic mock implementation of Dilithium")
             return
         
         # Map security levels to Dilithium variants
+        # Using both ML-DSA (new names) and Dilithium (old names) for compatibility
         dilithium_variants = {
-            2: "Dilithium2",
-            3: "Dilithium3",
-            5: "Dilithium5"
+            2: ["ML-DSA-44", "Dilithium2"],
+            3: ["ML-DSA-65", "Dilithium3"],
+            5: ["ML-DSA-87", "Dilithium5"]
         }
         
         if security_level not in dilithium_variants:
             raise ValueError(f"Invalid security level: {security_level}. Must be 2, 3, or 5.")
         
-        self.variant = dilithium_variants[security_level]
+        # Try the new ML-DSA name first, then fall back to the old Dilithium name
+        variant_found = False
+        for variant in dilithium_variants[security_level]:
+            if variant in self.enabled_sigs:
+                self.variant = variant
+                variant_found = True
+                break
         
-        # Check if the algorithm is actually supported
+        if not variant_found:
+            logger.warning(f"No Dilithium variant found for security level {security_level}, using deterministic mock implementation")
+            LIBOQS_AVAILABLE = False
+            return
+        
+        # Try to create the Signature instance
         try:
-            if hasattr(oqs, 'Signature') and hasattr(oqs.Signature, 'get_enabled') and self.variant in oqs.Signature.get_enabled():
-                self.signer = oqs.Signature(self.variant)
-            else:
-                logger.warning(f"Dilithium variant {self.variant} not enabled in OQS library, using deterministic mock implementation")
-                LIBOQS_AVAILABLE = False
+            self.signer = oqs.Signature(self.variant)
+            logger.info(f"Successfully initialized Dilithium variant {self.variant}")
         except Exception as e:
             logger.error(f"Error initializing Dilithium: {e}")
             LIBOQS_AVAILABLE = False
@@ -132,7 +142,9 @@ class DilithiumSignature(SignatureAlgorithm):
     @property
     def name(self) -> str:
         """Get the name of the algorithm."""
-        return f"CRYSTALS-Dilithium (Level {self.security_level})"
+        if LIBOQS_AVAILABLE and self.signer is not None:
+            return f"CRYSTALS-Dilithium (Level {self.security_level})"
+        return f"CRYSTALS-Dilithium (Level {self.security_level}) [Mock]"
     
     @property
     def description(self) -> str:
@@ -167,13 +179,14 @@ class DilithiumSignature(SignatureAlgorithm):
             return public_key, private_key
         
         try:
-            # Use actual OQS implementation
-            public_key, secret_key = self.signer.keypair()
+            # Use actual OQS implementation with the current API pattern
+            public_key = self.signer.generate_keypair()
+            private_key = self.signer.export_secret_key()
             
             logger.debug(f"Generated Dilithium keypair: public key {len(public_key)} bytes, "
-                      f"private key {len(secret_key)} bytes")
+                      f"private key {len(private_key)} bytes")
             
-            return public_key, secret_key
+            return public_key, private_key
         except Exception as e:
             logger.error(f"Error generating Dilithium keypair: {e}")
             # Fall back to mock implementation
@@ -201,9 +214,9 @@ class DilithiumSignature(SignatureAlgorithm):
             return signature
         
         try:
-            # Use actual OQS implementation
-            signer = oqs.Signature(self.variant)
-            signature = signer.sign(message, private_key)
+            # Create a new signer with the private key
+            signer = oqs.Signature(self.variant, private_key)
+            signature = signer.sign(message)
             
             logger.debug(f"Created Dilithium signature: {len(signature)} bytes")
             
@@ -247,7 +260,7 @@ class DilithiumSignature(SignatureAlgorithm):
             return result
         
         try:
-            # Use actual OQS implementation
+            # Create a new verifier
             verifier = oqs.Signature(self.variant)
             result = verifier.verify(message, signature, public_key)
             
@@ -279,6 +292,16 @@ class SPHINCSSignature(SignatureAlgorithm):
         
         self.security_level = security_level
         self.signer = None
+        self.variant = None
+        
+        # Attempt to get list of enabled signature mechanisms if OQS is available
+        self.enabled_sigs = []
+        if LIBOQS_AVAILABLE:
+            try:
+                self.enabled_sigs = oqs.get_enabled_sig_mechanisms()
+            except Exception as e:
+                logger.error(f"Error getting enabled signature mechanisms: {e}")
+                LIBOQS_AVAILABLE = False
         
         if not LIBOQS_AVAILABLE:
             logger.warning("Using deterministic mock implementation of SPHINCS+")
@@ -286,23 +309,31 @@ class SPHINCSSignature(SignatureAlgorithm):
         
         # Map security levels to SPHINCS+ variants
         sphincs_variants = {
-            1: "SPHINCS+-SHA2-128f-simple",
-            3: "SPHINCS+-SHA2-192f-simple",
-            5: "SPHINCS+-SHA2-256f-simple"
+            1: ["SPHINCS+-SHA2-128f-simple"],
+            3: ["SPHINCS+-SHA2-192f-simple"],
+            5: ["SPHINCS+-SHA2-256f-simple"]
         }
         
         if security_level not in sphincs_variants:
             raise ValueError(f"Invalid security level: {security_level}. Must be 1, 3, or 5.")
         
-        self.variant = sphincs_variants[security_level]
+        # Try to find an available variant
+        variant_found = False
+        for variant in sphincs_variants[security_level]:
+            if variant in self.enabled_sigs:
+                self.variant = variant
+                variant_found = True
+                break
         
-        # Check if the algorithm is actually supported
+        if not variant_found:
+            logger.warning(f"No SPHINCS+ variant found for security level {security_level}, using deterministic mock implementation")
+            LIBOQS_AVAILABLE = False
+            return
+        
+        # Try to create the Signature instance
         try:
-            if hasattr(oqs, 'Signature') and hasattr(oqs.Signature, 'get_enabled') and self.variant in oqs.Signature.get_enabled():
-                self.signer = oqs.Signature(self.variant)
-            else:
-                logger.warning(f"SPHINCS+ variant {self.variant} not enabled in OQS library, using deterministic mock implementation")
-                LIBOQS_AVAILABLE = False
+            self.signer = oqs.Signature(self.variant)
+            logger.info(f"Successfully initialized SPHINCS+ variant {self.variant}")
         except Exception as e:
             logger.error(f"Error initializing SPHINCS+: {e}")
             LIBOQS_AVAILABLE = False
@@ -312,7 +343,9 @@ class SPHINCSSignature(SignatureAlgorithm):
     @property
     def name(self) -> str:
         """Get the name of the algorithm."""
-        return f"SPHINCS+ (Level {self.security_level})"
+        if LIBOQS_AVAILABLE and self.signer is not None:
+            return f"SPHINCS+ (Level {self.security_level})"
+        return f"SPHINCS+ (Level {self.security_level}) [Mock]"
     
     @property
     def description(self) -> str:
@@ -347,13 +380,14 @@ class SPHINCSSignature(SignatureAlgorithm):
             return public_key, private_key
         
         try:
-            # Use actual OQS implementation
-            public_key, secret_key = self.signer.keypair()
+            # Use actual OQS implementation with the current API pattern
+            public_key = self.signer.generate_keypair()
+            private_key = self.signer.export_secret_key()
             
             logger.debug(f"Generated SPHINCS+ keypair: public key {len(public_key)} bytes, "
-                      f"private key {len(secret_key)} bytes")
+                      f"private key {len(private_key)} bytes")
             
-            return public_key, secret_key
+            return public_key, private_key
         except Exception as e:
             logger.error(f"Error generating SPHINCS+ keypair: {e}")
             # Fall back to mock implementation
@@ -374,7 +408,6 @@ class SPHINCSSignature(SignatureAlgorithm):
         
         if not LIBOQS_AVAILABLE or self.signer is None:
             # Deterministic mock implementation with HMAC
-            # HMAC provides deterministic signatures that can be verified with the same key
             # For SPHINCS+, we'll use a different hash function to distinguish from Dilithium
             digest = hashlib.sha384()
             digest.update(private_key)
@@ -385,9 +418,9 @@ class SPHINCSSignature(SignatureAlgorithm):
             return signature
         
         try:
-            # Use actual OQS implementation
-            signer = oqs.Signature(self.variant)
-            signature = signer.sign(message, private_key)
+            # Create a new signer with the private key
+            signer = oqs.Signature(self.variant, private_key)
+            signature = signer.sign(message)
             
             logger.debug(f"Created SPHINCS+ signature: {len(signature)} bytes")
             
@@ -434,7 +467,7 @@ class SPHINCSSignature(SignatureAlgorithm):
             return result
         
         try:
-            # Use actual OQS implementation
+            # Create a new verifier
             verifier = oqs.Signature(self.variant)
             result = verifier.verify(message, signature, public_key)
             
