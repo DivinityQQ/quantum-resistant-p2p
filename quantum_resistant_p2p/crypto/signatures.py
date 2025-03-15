@@ -70,10 +70,10 @@ class SignatureAlgorithm(CryptoAlgorithm):
         pass
 
 
-class DilithiumSignature(SignatureAlgorithm):
-    """CRYSTALS-Dilithium digital signature algorithm.
+class MLDSASignature(SignatureAlgorithm):
+    """ML-DSA (previously CRYSTALS-Dilithium) digital signature algorithm.
     
-    Dilithium is a post-quantum signature scheme based on the
+    ML-DSA is a post-quantum signature scheme based on the
     hardness of lattice problems.
     """
     
@@ -81,7 +81,7 @@ class DilithiumSignature(SignatureAlgorithm):
     _mock_keypairs = {}  # public_key -> private_key
     
     def __init__(self, security_level: int = 3):
-        """Initialize Dilithium with the specified security level.
+        """Initialize ML-DSA with the specified security level.
         
         Args:
             security_level: Security level (2, 3, or 5)
@@ -91,91 +91,114 @@ class DilithiumSignature(SignatureAlgorithm):
         self.security_level = security_level
         self.signer = None
         self.variant = None
+        self._is_using_mock = False
         
-        # Attempt to get list of enabled signature mechanisms if OQS is available
-        self.enabled_sigs = []
+        # Map security levels to ML-DSA variants
+        ml_dsa_variants = {
+            2: "ML-DSA-44",
+            3: "ML-DSA-65",
+            5: "ML-DSA-87"
+        }
+        
+        # Also check older Dilithium names as fallback
+        dilithium_variants = {
+            2: "Dilithium2",
+            3: "Dilithium3",
+            5: "Dilithium5"
+        }
+        
+        if security_level not in ml_dsa_variants:
+            raise ValueError(f"Invalid security level: {security_level}. Must be 2, 3, or 5.")
+        
+        # Check if OQS is available and get enabled mechanisms
         if LIBOQS_AVAILABLE:
             try:
                 self.enabled_sigs = oqs.get_enabled_sig_mechanisms()
             except Exception as e:
                 logger.error(f"Error getting enabled signature mechanisms: {e}")
                 LIBOQS_AVAILABLE = False
+                self._is_using_mock = True
         
+        # If OQS is not available, use mock implementation
         if not LIBOQS_AVAILABLE:
-            logger.warning("Using deterministic mock implementation of Dilithium")
+            logger.warning(f"Using deterministic mock implementation of ML-DSA (Level {security_level})")
+            self._is_using_mock = True
+            # Still use the standard variant name for the mock
+            self.variant = ml_dsa_variants[security_level]
             return
         
-        # Map security levels to Dilithium variants
-        # Using both ML-DSA (new names) and Dilithium (old names) for compatibility
-        dilithium_variants = {
-            2: ["ML-DSA-44", "Dilithium2"],
-            3: ["ML-DSA-65", "Dilithium3"],
-            5: ["ML-DSA-87", "Dilithium5"]
-        }
-        
-        if security_level not in dilithium_variants:
-            raise ValueError(f"Invalid security level: {security_level}. Must be 2, 3, or 5.")
-        
-        # Try the new ML-DSA name first, then fall back to the old Dilithium name
-        variant_found = False
-        for variant in dilithium_variants[security_level]:
-            if variant in self.enabled_sigs:
-                self.variant = variant
-                variant_found = True
-                break
-        
-        if not variant_found:
-            logger.warning(f"No Dilithium variant found for security level {security_level}, using deterministic mock implementation")
-            LIBOQS_AVAILABLE = False
+        # Try to find an available variant
+        if ml_dsa_variants[security_level] in self.enabled_sigs:
+            self.variant = ml_dsa_variants[security_level]
+        elif dilithium_variants[security_level] in self.enabled_sigs:
+            # Use older Dilithium implementation if available
+            self.variant = dilithium_variants[security_level]
+        else:
+            logger.warning(f"No ML-DSA variant found for security level {security_level}, using deterministic mock implementation")
+            self._is_using_mock = True
+            # Still use the standard variant name for the mock
+            self.variant = ml_dsa_variants[security_level]
             return
         
         # Try to create the Signature instance
         try:
             self.signer = oqs.Signature(self.variant)
-            logger.info(f"Successfully initialized Dilithium variant {self.variant}")
+            logger.info(f"Successfully initialized ML-DSA variant {self.variant}")
         except Exception as e:
-            logger.error(f"Error initializing Dilithium: {e}")
-            LIBOQS_AVAILABLE = False
+            logger.error(f"Error initializing ML-DSA: {e}")
+            self._is_using_mock = True
+            # Still use the standard variant name for the mock
+            self.variant = ml_dsa_variants[security_level]
         
-        logger.info(f"Initialized Dilithium signature with security level {security_level}")
+        logger.info(f"Initialized ML-DSA signature with security level {security_level}")
     
     @property
     def name(self) -> str:
-        """Get the name of the algorithm."""
-        if LIBOQS_AVAILABLE and self.signer is not None:
-            return f"CRYSTALS-Dilithium (Level {self.security_level})"
-        return f"CRYSTALS-Dilithium (Level {self.security_level}) [Mock]"
+        """Get the internal name of the algorithm."""
+        return f"ML-DSA (Level {self.security_level}){' [Mock]' if self._is_using_mock else ''}"
+    
+    @property
+    def display_name(self) -> str:
+        """Get the user-friendly name for display."""
+        return f"ML-DSA (Level {self.security_level})"
     
     @property
     def description(self) -> str:
         """Get a description of the algorithm."""
-        return ("CRYSTALS-Dilithium is a lattice-based digital signature scheme. "
+        if self._is_using_mock:
+            return ("ML-DSA is a lattice-based digital signature scheme. "
+                    "It is one of the NIST post-quantum cryptography standards. "
+                    "[Mock implementation]")
+        return ("ML-DSA is a lattice-based digital signature scheme. "
                 "It is one of the NIST post-quantum cryptography standards.")
     
+    @property
+    def is_using_mock(self) -> bool:
+        """Check if this algorithm is using a mock implementation."""
+        return self._is_using_mock
+    
     def generate_keypair(self) -> Tuple[bytes, bytes]:
-        """Generate a new Dilithium keypair.
+        """Generate a new ML-DSA keypair.
         
         Returns:
             Tuple of (public_key, private_key)
         """
-        global LIBOQS_AVAILABLE
-        
-        if not LIBOQS_AVAILABLE or self.signer is None:
+        if self._is_using_mock:
             # Deterministic mock implementation
             node_id = get_node_id()
             
             # Generate deterministic private key
-            seed = f"dilithium-{self.security_level}-private-{node_id}"
+            seed = f"ml-dsa-{self.security_level}-private-{node_id}"
             private_key = hashlib.sha256(seed.encode()).digest()
             
             # Generate matching public key
-            pub_seed = f"dilithium-{self.security_level}-public-{private_key.hex()}"
+            pub_seed = f"ml-dsa-{self.security_level}-public-{private_key.hex()}"
             public_key = hashlib.sha256(pub_seed.encode()).digest()
             
             # Store keypair for verification
             self._mock_keypairs[public_key] = private_key
             
-            logger.debug("Generated deterministic mock Dilithium keypair")
+            logger.debug(f"Generated deterministic mock ML-DSA keypair (level {self.security_level})")
             return public_key, private_key
         
         try:
@@ -183,18 +206,18 @@ class DilithiumSignature(SignatureAlgorithm):
             public_key = self.signer.generate_keypair()
             private_key = self.signer.export_secret_key()
             
-            logger.debug(f"Generated Dilithium keypair: public key {len(public_key)} bytes, "
-                      f"private key {len(private_key)} bytes")
+            logger.debug(f"Generated ML-DSA keypair: public key {len(public_key)} bytes, "
+                       f"private key {len(private_key)} bytes")
             
             return public_key, private_key
         except Exception as e:
-            logger.error(f"Error generating Dilithium keypair: {e}")
+            logger.error(f"Error generating ML-DSA keypair: {e}")
             # Fall back to mock implementation
-            LIBOQS_AVAILABLE = False
+            self._is_using_mock = True
             return self.generate_keypair()  # Recursive call to use mock implementation
     
     def sign(self, private_key: bytes, message: bytes) -> bytes:
-        """Sign a message using Dilithium.
+        """Sign a message using ML-DSA.
         
         Args:
             private_key: The private key for signing
@@ -203,14 +226,12 @@ class DilithiumSignature(SignatureAlgorithm):
         Returns:
             The signature
         """
-        global LIBOQS_AVAILABLE
-        
-        if not LIBOQS_AVAILABLE or self.signer is None:
+        if self._is_using_mock:
             # Deterministic mock implementation with HMAC
             # HMAC provides deterministic signatures that can be verified with the same key
             signature = hmac.new(private_key, message, hashlib.sha256).digest()
             
-            logger.debug("Created deterministic mock Dilithium signature")
+            logger.debug(f"Created deterministic mock ML-DSA signature (level {self.security_level})")
             return signature
         
         try:
@@ -218,17 +239,17 @@ class DilithiumSignature(SignatureAlgorithm):
             signer = oqs.Signature(self.variant, private_key)
             signature = signer.sign(message)
             
-            logger.debug(f"Created Dilithium signature: {len(signature)} bytes")
+            logger.debug(f"Created ML-DSA signature: {len(signature)} bytes")
             
             return signature
         except Exception as e:
-            logger.error(f"Error signing with Dilithium: {e}")
+            logger.error(f"Error signing with ML-DSA: {e}")
             # Fall back to mock implementation
-            LIBOQS_AVAILABLE = False
+            self._is_using_mock = True
             return self.sign(private_key, message)  # Recursive call to use mock implementation
     
     def verify(self, public_key: bytes, message: bytes, signature: bytes) -> bool:
-        """Verify a Dilithium signature.
+        """Verify a ML-DSA signature.
         
         Args:
             public_key: The public key for verification
@@ -238,9 +259,7 @@ class DilithiumSignature(SignatureAlgorithm):
         Returns:
             True if the signature is valid, False otherwise
         """
-        global LIBOQS_AVAILABLE
-        
-        if not LIBOQS_AVAILABLE or self.signer is None:
+        if self._is_using_mock:
             # Deterministic mock verification
             
             # Get the private key corresponding to this public key
@@ -256,7 +275,7 @@ class DilithiumSignature(SignatureAlgorithm):
                 # we verify the signature structure is correct
                 result = len(signature) == 32  # SHA-256 HMAC is 32 bytes
             
-            logger.debug(f"Verified mock Dilithium signature: {'success' if result else 'failure'}")
+            logger.debug(f"Verified mock ML-DSA signature: {'success' if result else 'failure'}")
             return result
         
         try:
@@ -264,12 +283,12 @@ class DilithiumSignature(SignatureAlgorithm):
             verifier = oqs.Signature(self.variant)
             result = verifier.verify(message, signature, public_key)
             
-            logger.debug(f"Dilithium signature verification: {'success' if result else 'failure'}")
+            logger.debug(f"ML-DSA signature verification: {'success' if result else 'failure'}")
             
             return result
         except Exception as e:
-            logger.error(f"Error verifying Dilithium signature: {e}")
-            LIBOQS_AVAILABLE = False
+            logger.error(f"Error verifying ML-DSA signature: {e}")
+            self._is_using_mock = True
             return self.verify(public_key, message, signature)  # Recursive call to use mock implementation
 
 
@@ -293,19 +312,7 @@ class SPHINCSSignature(SignatureAlgorithm):
         self.security_level = security_level
         self.signer = None
         self.variant = None
-        
-        # Attempt to get list of enabled signature mechanisms if OQS is available
-        self.enabled_sigs = []
-        if LIBOQS_AVAILABLE:
-            try:
-                self.enabled_sigs = oqs.get_enabled_sig_mechanisms()
-            except Exception as e:
-                logger.error(f"Error getting enabled signature mechanisms: {e}")
-                LIBOQS_AVAILABLE = False
-        
-        if not LIBOQS_AVAILABLE:
-            logger.warning("Using deterministic mock implementation of SPHINCS+")
-            return
+        self._is_using_mock = False
         
         # Map security levels to SPHINCS+ variants
         sphincs_variants = {
@@ -317,6 +324,23 @@ class SPHINCSSignature(SignatureAlgorithm):
         if security_level not in sphincs_variants:
             raise ValueError(f"Invalid security level: {security_level}. Must be 1, 3, or 5.")
         
+        # Check if OQS is available and get enabled mechanisms
+        if LIBOQS_AVAILABLE:
+            try:
+                self.enabled_sigs = oqs.get_enabled_sig_mechanisms()
+            except Exception as e:
+                logger.error(f"Error getting enabled signature mechanisms: {e}")
+                LIBOQS_AVAILABLE = False
+                self._is_using_mock = True
+        
+        # If OQS is not available, use mock implementation
+        if not LIBOQS_AVAILABLE:
+            logger.warning(f"Using deterministic mock implementation of SPHINCS+ (Level {security_level})")
+            self._is_using_mock = True
+            # Still use the standard variant name for the mock
+            self.variant = sphincs_variants[security_level][0]
+            return
+        
         # Try to find an available variant
         variant_found = False
         for variant in sphincs_variants[security_level]:
@@ -327,7 +351,9 @@ class SPHINCSSignature(SignatureAlgorithm):
         
         if not variant_found:
             logger.warning(f"No SPHINCS+ variant found for security level {security_level}, using deterministic mock implementation")
-            LIBOQS_AVAILABLE = False
+            self._is_using_mock = True
+            # Still use the standard variant name for the mock
+            self.variant = sphincs_variants[security_level][0]
             return
         
         # Try to create the Signature instance
@@ -336,22 +362,36 @@ class SPHINCSSignature(SignatureAlgorithm):
             logger.info(f"Successfully initialized SPHINCS+ variant {self.variant}")
         except Exception as e:
             logger.error(f"Error initializing SPHINCS+: {e}")
-            LIBOQS_AVAILABLE = False
+            self._is_using_mock = True
+            # Still use the standard variant name for the mock
+            self.variant = sphincs_variants[security_level][0]
         
         logger.info(f"Initialized SPHINCS+ signature with security level {security_level}")
     
     @property
     def name(self) -> str:
-        """Get the name of the algorithm."""
-        if LIBOQS_AVAILABLE and self.signer is not None:
-            return f"SPHINCS+ (Level {self.security_level})"
-        return f"SPHINCS+ (Level {self.security_level}) [Mock]"
+        """Get the internal name of the algorithm."""
+        return f"SPHINCS+ (Level {self.security_level}){' [Mock]' if self._is_using_mock else ''}"
+    
+    @property
+    def display_name(self) -> str:
+        """Get the user-friendly name for display."""
+        return f"SPHINCS+ (Level {self.security_level})"
     
     @property
     def description(self) -> str:
         """Get a description of the algorithm."""
+        if self._is_using_mock:
+            return ("SPHINCS+ is a stateless hash-based digital signature scheme. "
+                    "Its security relies only on the security of the underlying hash functions. "
+                    "[Mock implementation]")
         return ("SPHINCS+ is a stateless hash-based digital signature scheme. "
                 "Its security relies only on the security of the underlying hash functions.")
+    
+    @property
+    def is_using_mock(self) -> bool:
+        """Check if this algorithm is using a mock implementation."""
+        return self._is_using_mock
     
     def generate_keypair(self) -> Tuple[bytes, bytes]:
         """Generate a new SPHINCS+ keypair.
@@ -359,9 +399,7 @@ class SPHINCSSignature(SignatureAlgorithm):
         Returns:
             Tuple of (public_key, private_key)
         """
-        global LIBOQS_AVAILABLE
-        
-        if not LIBOQS_AVAILABLE or self.signer is None:
+        if self._is_using_mock:
             # Deterministic mock implementation
             node_id = get_node_id()
             
@@ -376,7 +414,7 @@ class SPHINCSSignature(SignatureAlgorithm):
             # Store keypair for verification
             self._mock_keypairs[public_key] = private_key
             
-            logger.debug("Generated deterministic mock SPHINCS+ keypair")
+            logger.debug(f"Generated deterministic mock SPHINCS+ keypair (level {self.security_level})")
             return public_key, private_key
         
         try:
@@ -385,13 +423,13 @@ class SPHINCSSignature(SignatureAlgorithm):
             private_key = self.signer.export_secret_key()
             
             logger.debug(f"Generated SPHINCS+ keypair: public key {len(public_key)} bytes, "
-                      f"private key {len(private_key)} bytes")
+                       f"private key {len(private_key)} bytes")
             
             return public_key, private_key
         except Exception as e:
             logger.error(f"Error generating SPHINCS+ keypair: {e}")
             # Fall back to mock implementation
-            LIBOQS_AVAILABLE = False
+            self._is_using_mock = True
             return self.generate_keypair()  # Recursive call to use mock implementation
     
     def sign(self, private_key: bytes, message: bytes) -> bytes:
@@ -404,17 +442,15 @@ class SPHINCSSignature(SignatureAlgorithm):
         Returns:
             The signature
         """
-        global LIBOQS_AVAILABLE
-        
-        if not LIBOQS_AVAILABLE or self.signer is None:
+        if self._is_using_mock:
             # Deterministic mock implementation with HMAC
-            # For SPHINCS+, we'll use a different hash function to distinguish from Dilithium
+            # For SPHINCS+, we'll use a different hash function to distinguish from ML-DSA
             digest = hashlib.sha384()
             digest.update(private_key)
             digest.update(message)
             signature = digest.digest()
             
-            logger.debug("Created deterministic mock SPHINCS+ signature")
+            logger.debug(f"Created deterministic mock SPHINCS+ signature (level {self.security_level})")
             return signature
         
         try:
@@ -428,7 +464,7 @@ class SPHINCSSignature(SignatureAlgorithm):
         except Exception as e:
             logger.error(f"Error signing with SPHINCS+: {e}")
             # Fall back to mock implementation
-            LIBOQS_AVAILABLE = False
+            self._is_using_mock = True
             return self.sign(private_key, message)  # Recursive call to use mock implementation
     
     def verify(self, public_key: bytes, message: bytes, signature: bytes) -> bool:
@@ -442,9 +478,7 @@ class SPHINCSSignature(SignatureAlgorithm):
         Returns:
             True if the signature is valid, False otherwise
         """
-        global LIBOQS_AVAILABLE
-        
-        if not LIBOQS_AVAILABLE or self.signer is None:
+        if self._is_using_mock:
             # Deterministic mock verification
             
             # Get the private key corresponding to this public key
@@ -476,5 +510,5 @@ class SPHINCSSignature(SignatureAlgorithm):
             return result
         except Exception as e:
             logger.error(f"Error verifying SPHINCS+ signature: {e}")
-            LIBOQS_AVAILABLE = False
+            self._is_using_mock = True
             return self.verify(public_key, message, signature)  # Recursive call to use mock implementation

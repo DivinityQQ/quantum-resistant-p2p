@@ -12,9 +12,9 @@ from PyQt5.QtCore import Qt
 
 from ..app import SecureMessaging
 from ..crypto import (
-    KyberKeyExchange, NTRUKeyExchange,
+    MLKEMKeyExchange, HQCKeyExchange, FrodoKEMKeyExchange, NTRUKeyExchange,
     AES256GCM, ChaCha20Poly1305,
-    DilithiumSignature, SPHINCSSignature,
+    MLDSASignature, SPHINCSSignature,
     LIBOQS_AVAILABLE, LIBOQS_VERSION
 )
 
@@ -43,7 +43,7 @@ class SettingsDialog(QDialog):
     def _init_ui(self):
         """Initialize the user interface."""
         layout = QVBoxLayout()
-
+        
         # Add OQS status indicator
         if LIBOQS_AVAILABLE:
             oqs_label = QLabel(f"OQS Library: Available (version {LIBOQS_VERSION})")
@@ -107,21 +107,47 @@ class SettingsDialog(QDialog):
         
         # Key exchange algorithm
         self.key_exchange_combo = QComboBox()
-        self.key_exchange_combo.addItem("CRYSTALS-Kyber (Level 1)", 1)
-        self.key_exchange_combo.addItem("CRYSTALS-Kyber (Level 3)", 3)
-        self.key_exchange_combo.addItem("CRYSTALS-Kyber (Level 5)", 5)
-        self.key_exchange_combo.addItem("NTRU (Level 1)", 1)
-        self.key_exchange_combo.addItem("NTRU (Level 3)", 3)
-        self.key_exchange_combo.addItem("NTRU (Level 5)", 5)
+        
+        # ML-KEM (formerly Kyber) options
+        self.key_exchange_combo.addItem("ML-KEM (Level 1)", {"class": MLKEMKeyExchange, "level": 1})
+        self.key_exchange_combo.addItem("ML-KEM (Level 3)", {"class": MLKEMKeyExchange, "level": 3})
+        self.key_exchange_combo.addItem("ML-KEM (Level 5)", {"class": MLKEMKeyExchange, "level": 5})
+        
+        # HQC options
+        self.key_exchange_combo.addItem("HQC (Level 1)", {"class": HQCKeyExchange, "level": 1})
+        self.key_exchange_combo.addItem("HQC (Level 3)", {"class": HQCKeyExchange, "level": 3})
+        self.key_exchange_combo.addItem("HQC (Level 5)", {"class": HQCKeyExchange, "level": 5})
+        
+        # FrodoKEM options
+        self.key_exchange_combo.addItem("FrodoKEM (Level 1, AES)", 
+                                   {"class": FrodoKEMKeyExchange, "level": 1, "use_aes": True})
+        self.key_exchange_combo.addItem("FrodoKEM (Level 3, AES)", 
+                                   {"class": FrodoKEMKeyExchange, "level": 3, "use_aes": True})
+        self.key_exchange_combo.addItem("FrodoKEM (Level 5, AES)", 
+                                   {"class": FrodoKEMKeyExchange, "level": 5, "use_aes": True})
+        
+        # NTRU option (mock-only, for backward compatibility)
+        self.key_exchange_combo.addItem("NTRU (Level 3, Mock Only)", {"class": NTRUKeyExchange, "level": 3})
         
         # Set current key exchange algorithm
         current_algo = self.secure_messaging.key_exchange
-        if isinstance(current_algo, KyberKeyExchange):
-            index = 0 + (current_algo.security_level // 2)  # Map 1,3,5 to 0,1,2
-            self.key_exchange_combo.setCurrentIndex(index)
-        elif isinstance(current_algo, NTRUKeyExchange):
-            index = 3 + (current_algo.security_level // 2)  # Map 1,3,5 to 3,4,5
-            self.key_exchange_combo.setCurrentIndex(index)
+        current_level = getattr(current_algo, "security_level", 3)
+        
+        # Find the matching algorithm in the combo box
+        for i in range(self.key_exchange_combo.count()):
+            item_data = self.key_exchange_combo.itemData(i)
+            if (isinstance(current_algo, item_data["class"]) and 
+                current_level == item_data["level"]):
+                # Also check use_aes for FrodoKEM
+                if (isinstance(current_algo, FrodoKEMKeyExchange) and 
+                    hasattr(current_algo, "use_aes") and 
+                    "use_aes" in item_data):
+                    if current_algo.use_aes == item_data["use_aes"]:
+                        self.key_exchange_combo.setCurrentIndex(i)
+                        break
+                else:
+                    self.key_exchange_combo.setCurrentIndex(i)
+                    break
         
         crypto_layout.addRow("Key Exchange:", self.key_exchange_combo)
         
@@ -141,21 +167,28 @@ class SettingsDialog(QDialog):
         
         # Signature algorithm
         self.signature_combo = QComboBox()
-        self.signature_combo.addItem("CRYSTALS-Dilithium (Level 2)", 2)
-        self.signature_combo.addItem("CRYSTALS-Dilithium (Level 3)", 3)
-        self.signature_combo.addItem("CRYSTALS-Dilithium (Level 5)", 5)
-        self.signature_combo.addItem("SPHINCS+ (Level 1)", 1)
-        self.signature_combo.addItem("SPHINCS+ (Level 3)", 3)
-        self.signature_combo.addItem("SPHINCS+ (Level 5)", 5)
+        
+        # ML-DSA (formerly Dilithium) options
+        self.signature_combo.addItem("ML-DSA (Level 2)", {"class": MLDSASignature, "level": 2})
+        self.signature_combo.addItem("ML-DSA (Level 3)", {"class": MLDSASignature, "level": 3})
+        self.signature_combo.addItem("ML-DSA (Level 5)", {"class": MLDSASignature, "level": 5})
+        
+        # SPHINCS+ options
+        self.signature_combo.addItem("SPHINCS+ (Level 1)", {"class": SPHINCSSignature, "level": 1})
+        self.signature_combo.addItem("SPHINCS+ (Level 3)", {"class": SPHINCSSignature, "level": 3})
+        self.signature_combo.addItem("SPHINCS+ (Level 5)", {"class": SPHINCSSignature, "level": 5})
         
         # Set current signature algorithm
         current_algo = self.secure_messaging.signature
-        if isinstance(current_algo, DilithiumSignature):
-            index = 0 + ((current_algo.security_level - 2) // 1)  # Map 2,3,5 to 0,1,2
-            self.signature_combo.setCurrentIndex(index)
-        elif isinstance(current_algo, SPHINCSSignature):
-            index = 3 + (current_algo.security_level // 2)  # Map 1,3,5 to 3,4,5
-            self.signature_combo.setCurrentIndex(index)
+        current_level = getattr(current_algo, "security_level", 3)
+        
+        # Find the matching algorithm in the combo box
+        for i in range(self.signature_combo.count()):
+            item_data = self.signature_combo.itemData(i)
+            if (isinstance(current_algo, item_data["class"]) and 
+                current_level == item_data["level"]):
+                self.signature_combo.setCurrentIndex(i)
+                break
         
         crypto_layout.addRow("Digital Signature:", self.signature_combo)
         
@@ -205,28 +238,45 @@ class SettingsDialog(QDialog):
             success = self.secure_messaging.adopt_peer_settings(peer_id)
             
             if success:
-                # Update the UI to reflect the changes
-                current_algo = self.secure_messaging.key_exchange
-                if isinstance(current_algo, KyberKeyExchange):
-                    index = 0 + (current_algo.security_level // 2)
-                    self.key_exchange_combo.setCurrentIndex(index)
-                elif isinstance(current_algo, NTRUKeyExchange):
-                    index = 3 + (current_algo.security_level // 2)
-                    self.key_exchange_combo.setCurrentIndex(index)
+                # After this, current algorithms should have changed
+                # We need to update the combo boxes to reflect these changes
                 
+                # Update Key Exchange ComboBox
+                current_algo = self.secure_messaging.key_exchange
+                current_level = getattr(current_algo, "security_level", 3)
+                
+                for i in range(self.key_exchange_combo.count()):
+                    item_data = self.key_exchange_combo.itemData(i)
+                    if (isinstance(current_algo, item_data["class"]) and 
+                        current_level == item_data["level"]):
+                        # Also check use_aes for FrodoKEM
+                        if (isinstance(current_algo, FrodoKEMKeyExchange) and 
+                            hasattr(current_algo, "use_aes") and 
+                            "use_aes" in item_data):
+                            if current_algo.use_aes == item_data["use_aes"]:
+                                self.key_exchange_combo.setCurrentIndex(i)
+                                break
+                        else:
+                            self.key_exchange_combo.setCurrentIndex(i)
+                            break
+                
+                # Update Symmetric ComboBox
                 current_algo = self.secure_messaging.symmetric
                 if isinstance(current_algo, AES256GCM):
                     self.symmetric_combo.setCurrentIndex(0)
                 elif isinstance(current_algo, ChaCha20Poly1305):
                     self.symmetric_combo.setCurrentIndex(1)
                 
+                # Update Signature ComboBox
                 current_algo = self.secure_messaging.signature
-                if isinstance(current_algo, DilithiumSignature):
-                    index = 0 + ((current_algo.security_level - 2) // 1)
-                    self.signature_combo.setCurrentIndex(index)
-                elif isinstance(current_algo, SPHINCSSignature):
-                    index = 3 + (current_algo.security_level // 2)
-                    self.signature_combo.setCurrentIndex(index)
+                current_level = getattr(current_algo, "security_level", 3)
+                
+                for i in range(self.signature_combo.count()):
+                    item_data = self.signature_combo.itemData(i)
+                    if (isinstance(current_algo, item_data["class"]) and 
+                        current_level == item_data["level"]):
+                        self.signature_combo.setCurrentIndex(i)
+                        break
                 
                 QMessageBox.information(
                     self,
@@ -245,12 +295,17 @@ class SettingsDialog(QDialog):
         try:
             # Get selected key exchange algorithm
             key_exchange_idx = self.key_exchange_combo.currentIndex()
-            key_exchange_level = self.key_exchange_combo.currentData()
+            key_exchange_data = self.key_exchange_combo.itemData(key_exchange_idx)
             
-            if key_exchange_idx < 3:  # Kyber
-                new_key_exchange = KyberKeyExchange(security_level=key_exchange_level)
-            else:  # NTRU
-                new_key_exchange = NTRUKeyExchange(security_level=key_exchange_level)
+            # Create new algorithm instance
+            cls = key_exchange_data["class"]
+            level = key_exchange_data["level"]
+            
+            if cls == FrodoKEMKeyExchange:
+                use_aes = key_exchange_data.get("use_aes", True)
+                new_key_exchange = cls(security_level=level, use_aes=use_aes)
+            else:
+                new_key_exchange = cls(security_level=level)
             
             # Get selected symmetric algorithm
             symmetric_idx = self.symmetric_combo.currentIndex()
@@ -262,18 +317,18 @@ class SettingsDialog(QDialog):
             
             # Get selected signature algorithm
             signature_idx = self.signature_combo.currentIndex()
-            signature_level = self.signature_combo.currentData()
+            signature_data = self.signature_combo.itemData(signature_idx)
             
-            if signature_idx < 3:  # Dilithium
-                new_signature = DilithiumSignature(security_level=signature_level)
-            else:  # SPHINCS+
-                new_signature = SPHINCSSignature(security_level=signature_level)
+            # Create new algorithm instance
+            cls = signature_data["class"]
+            level = signature_data["level"]
+            new_signature = cls(security_level=level)
             
             # Check if anything has changed
             settings_changed = (
-                new_key_exchange.name != self.secure_messaging.key_exchange.name or
+                new_key_exchange.display_name != self.secure_messaging.key_exchange.display_name or
                 new_symmetric.name != self.secure_messaging.symmetric.name or
-                new_signature.name != self.secure_messaging.signature.name
+                new_signature.display_name != self.secure_messaging.signature.display_name
             )
             
             if settings_changed:

@@ -1260,13 +1260,55 @@ class SecureMessaging:
         
         # Adopt key exchange algorithm if needed
         key_exchange_algo = peer_settings.get("key_exchange")
-        if key_exchange_algo and key_exchange_algo != self.key_exchange.name:
+        if key_exchange_algo and key_exchange_algo != self.key_exchange.display_name:
             # Map algorithm name to actual algorithm
-            if "Kyber" in key_exchange_algo:
-                level = int(key_exchange_algo.split("Level")[1].strip()[0])
-                algorithm = KyberKeyExchange(security_level=level)
+            from ..crypto import MLKEMKeyExchange, HQCKeyExchange, FrodoKEMKeyExchange, NTRUKeyExchange
+            
+            if "ML-KEM" in key_exchange_algo:
+                # Get the security level from the name
+                if "Level 1" in key_exchange_algo:
+                    level = 1
+                elif "Level 3" in key_exchange_algo:
+                    level = 3
+                elif "Level 5" in key_exchange_algo:
+                    level = 5
+                else:
+                    level = 3  # Default
+                algorithm = MLKEMKeyExchange(security_level=level)
+            elif "HQC" in key_exchange_algo:
+                # Get the security level from the name
+                if "Level 1" in key_exchange_algo:
+                    level = 1
+                elif "Level 3" in key_exchange_algo:
+                    level = 3
+                elif "Level 5" in key_exchange_algo:
+                    level = 5
+                else:
+                    level = 3  # Default
+                algorithm = HQCKeyExchange(security_level=level)
+            elif "FrodoKEM" in key_exchange_algo:
+                # Get the security level from the name
+                if "Level 1" in key_exchange_algo:
+                    level = 1
+                elif "Level 3" in key_exchange_algo:
+                    level = 3
+                elif "Level 5" in key_exchange_algo:
+                    level = 5
+                else:
+                    level = 3  # Default
+                # Check if it's AES or SHAKE
+                use_aes = "AES" in key_exchange_algo
+                algorithm = FrodoKEMKeyExchange(security_level=level, use_aes=use_aes)
             elif "NTRU" in key_exchange_algo:
-                level = int(key_exchange_algo.split("Level")[1].strip()[0])
+                # Get the security level from the name
+                if "Level 1" in key_exchange_algo:
+                    level = 1
+                elif "Level 3" in key_exchange_algo:
+                    level = 3
+                elif "Level 5" in key_exchange_algo:
+                    level = 5
+                else:
+                    level = 3  # Default
                 algorithm = NTRUKeyExchange(security_level=level)
             else:
                 logger.warning(f"Unknown key exchange algorithm: {key_exchange_algo}")
@@ -1291,12 +1333,31 @@ class SecureMessaging:
         
         # Adopt signature algorithm if needed
         signature_algo = peer_settings.get("signature")
-        if signature_algo and signature_algo != self.signature.name:
-            if "Dilithium" in signature_algo:
-                level = int(signature_algo.split("Level")[1].strip()[0])
-                algorithm = DilithiumSignature(security_level=level)
+        if signature_algo and signature_algo != self.signature.display_name:
+            # Map algorithm name to actual algorithm
+            from ..crypto import MLDSASignature, SPHINCSSignature
+            
+            if "ML-DSA" in signature_algo:
+                # Get the security level from the name
+                if "Level 2" in signature_algo:
+                    level = 2
+                elif "Level 3" in signature_algo:
+                    level = 3
+                elif "Level 5" in signature_algo:
+                    level = 5
+                else:
+                    level = 3  # Default
+                algorithm = MLDSASignature(security_level=level)
             elif "SPHINCS+" in signature_algo:
-                level = int(signature_algo.split("Level")[1].strip()[0])
+                # Get the security level from the name
+                if "Level 1" in signature_algo:
+                    level = 1
+                elif "Level 3" in signature_algo:
+                    level = 3
+                elif "Level 5" in signature_algo:
+                    level = 5
+                else:
+                    level = 3  # Default
                 algorithm = SPHINCSSignature(security_level=level)
             else:
                 logger.warning(f"Unknown signature algorithm: {signature_algo}")
