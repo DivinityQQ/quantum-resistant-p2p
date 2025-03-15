@@ -159,11 +159,6 @@ class MessagingWidget(QWidget):
         self.crypto_panel.setLayout(crypto_layout)
         layout.addWidget(self.crypto_panel)
 
-        # Status label
-        self.status_label = QLabel("Select a peer to chat with")
-        self.status_label.setStyleSheet("color: gray;")
-        layout.addWidget(self.status_label)
-
         # Chat area
         self.chat_area = QTextEdit()
         self.chat_area.setReadOnly(True)
@@ -211,7 +206,6 @@ class MessagingWidget(QWidget):
         if not self.current_peer:
             return
 
-        self.status_label.setText("Refreshing peer settings...")
         self._add_system_message("Refreshing peer cryptography settings...")
 
         # Request crypto settings from the peer
@@ -227,8 +221,7 @@ class MessagingWidget(QWidget):
         if not self.current_peer:
             return
 
-        self.status_label.setText("Initiating key exchange...")
-        self._add_system_message("Manually initiating key exchange with peer...")
+        self._add_system_message("Initiating key exchange with peer...")
 
         # Initiate key exchange with the peer
         self.async_task.emit(
@@ -413,7 +406,7 @@ class MessagingWidget(QWidget):
     
     def initiate_connection(self, peer_id: str, host: str, port: int):
         """Initiate connection to a peer.
-        
+
         Args:
             peer_id: The ID of the peer
             host: The host address of the peer
@@ -422,15 +415,15 @@ class MessagingWidget(QWidget):
         # Check if this is the currently selected peer
         if peer_id != self.current_peer:
             return
-            
+
         # Check if already connecting
         if self.is_connecting:
             return
-            
+
         self.is_connecting = True
-        self.status_label.setText(f"Connecting to {host}:{port}...")
+
         self._add_system_message(f"Connecting to {host}:{port}...")
-        
+
         # Start connection task
         self.async_task.emit(self._connect_to_peer(host, port))
 
@@ -467,7 +460,7 @@ class MessagingWidget(QWidget):
 
     async def _connect_to_peer(self, host: str, port: int):
         """Connect to a peer asynchronously.
-        
+
         Args:
             host: The host address of the peer
             port: The port number of the peer
@@ -475,31 +468,28 @@ class MessagingWidget(QWidget):
         try:
             # Attempt to connect to the peer
             success = await self.secure_messaging.node.connect_to_peer(host, port)
-            
+
             if success:
-                self.status_label.setText("Connected")
                 self._add_system_message(f"Successfully connected to {host}:{port}")
                 self._enable_messaging()
-                
+
                 # Make crypto panel visible immediately
                 self.crypto_panel.setVisible(True)
-                
+
                 # Request crypto settings from the peer
                 await self.secure_messaging.request_crypto_settings_from_peer(self.current_peer)
-                
+
                 # Update the crypto settings display
                 self._update_crypto_display()
             else:
-                self.status_label.setText("Connection failed")
                 self._add_system_message(f"Failed to connect to {host}:{port}")
                 self._disable_messaging()
-                
+
         except Exception as e:
-            self.status_label.setText("Connection error")
             self._add_system_message(f"Error connecting to peer: {str(e)}")
             self._disable_messaging()
             logger.error(f"Error connecting to peer: {e}")
-        
+
         finally:
             self.is_connecting = False
 
@@ -588,6 +578,9 @@ class MessagingWidget(QWidget):
         # Set text color based on message type
         if is_warning:
             self.chat_area.append(f'<font color="red">[{timestamp}] * {message} *</font>')
+        elif message.startswith("Connecting") or message.startswith("Refreshing") or message.startswith("Initiating"):
+            # Use blue for status/progress messages
+            self.chat_area.append(f'<font color="blue">[{timestamp}] * {message} *</font>')
         else:
             self.chat_area.append(f"[{timestamp}] * {message} *")
         
