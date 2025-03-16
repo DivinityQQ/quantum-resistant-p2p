@@ -22,6 +22,23 @@ Key features:
 
 ## Installation
 
+### Setting Up a Virtual Environment (Recommended)
+
+It's recommended to install the application in a virtual environment to avoid conflicts with other Python packages:
+
+```bash
+# Create a virtual environment
+python -m venv venv
+
+# Activate the virtual environment
+# On Windows:
+venv\Scripts\activate
+# On macOS/Linux:
+source venv/bin/activate
+```
+
+Your command prompt should now show the name of the virtual environment, indicating it's active. All pip commands will now install packages into this isolated environment.
+
 ### Option 1: Install from Git (Recommended)
 
 ```bash
@@ -29,7 +46,7 @@ Key features:
 git clone https://github.com/DivinityQQ/quantum-resistant-p2p.git
 cd quantum_resistant_p2p
 
-# Install the package and its dependencies
+# Make sure your virtual environment is activated, then:
 pip install .
 ```
 
@@ -40,7 +57,7 @@ pip install .
 git clone https://github.com/DivinityQQ/quantum-resistant-p2p.git
 cd quantum_resistant_p2p
 
-# Install in development mode
+# Make sure your virtual environment is activated, then:
 pip install -e .
 ```
 
@@ -49,6 +66,7 @@ pip install -e .
 Once installed, you can run the application using:
 
 ```bash
+# Make sure your virtual environment is activated first
 # From the command line
 python -m quantum_resistant_p2p
 
@@ -167,9 +185,17 @@ cmake --build . --parallel 8
 If you want to contribute to the project:
 
 1. Fork the repository
-2. Install the package in development mode: `pip install -e .`
-3. Make your changes
-4. Submit a pull request
+2. Create and activate a virtual environment: 
+   ```bash
+   python -m venv venv
+   # On Windows:
+   venv\Scripts\activate
+   # On macOS/Linux:
+   source venv/bin/activate
+   ```
+3. Install the package in development mode: `pip install -e .`
+4. Make your changes
+5. Submit a pull request
 
 ## License
 
