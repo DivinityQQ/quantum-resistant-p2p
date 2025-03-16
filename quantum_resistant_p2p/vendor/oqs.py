@@ -116,63 +116,7 @@ def _install_liboqs(
     oqs_version_to_install: Union[str, None] = None,
 ) -> None:
     """Install liboqs version oqs_version (if None, installs latest at HEAD) in the target_directory."""  # noqa: E501
-    with tempfile.TemporaryDirectory() as tmpdirname:
-        oqs_install_cmd = [
-            "cd",
-            tmpdirname,
-            "&&",
-            "git",
-            "clone",
-            "https://github.com/open-quantum-safe/liboqs",
-        ]
-        if oqs_version_to_install:
-            oqs_install_cmd.extend(["--branch", oqs_version_to_install])
-
-        oqs_install_cmd.extend(
-            [
-                "--depth",
-                "1",
-                "&&",
-                "cmake",
-                "-S",
-                "liboqs",
-                "-B",
-                "liboqs/build",
-                "-DBUILD_SHARED_LIBS=ON",
-                "-DOQS_BUILD_ONLY_LIB=ON",
-                f"-DCMAKE_INSTALL_PREFIX={target_directory}",
-            ],
-        )
-
-        if platform.system() == "Windows":
-            oqs_install_cmd.append("-DCMAKE_WINDOWS_EXPORT_ALL_SYMBOLS=TRUE")
-
-        oqs_install_cmd.extend(
-            [
-                "&&",
-                "cmake",
-                "--build",
-                "liboqs/build",
-                "--parallel",
-                "4",
-                "&&",
-                "cmake",
-                "--build",
-                "liboqs/build",
-                "--target",
-                "install",
-            ],
-        )
-        logger.info("liboqs not found, installing it in %s", str(target_directory))
-        _countdown(5)
-
-        _retcode = subprocess.call(" ".join(oqs_install_cmd), shell=True)  # noqa: S602
-
-        if _retcode != 0:
-            logger.exception("Error installing liboqs.")
-            raise SystemExit(1)
-
-        logger.info("Done installing liboqs")
+    raise RuntimeError("Installation of liboqs is disabled in this vendored version")
 
 
 def _load_liboqs() -> ct.CDLL:
@@ -198,18 +142,8 @@ def _load_liboqs() -> ct.CDLL:
         )
         assert liboqs  # noqa: S101
     except RuntimeError:
-        # We don't have liboqs, so we try to install it automatically
-        _install_liboqs(target_directory=oqs_install_dir, oqs_version_to_install=OQS_VERSION)
-        # Try loading it again
-        try:
-            liboqs = _load_shared_obj(
-                name="oqs",
-                additional_searching_paths=[oqs_lib_dir],
-            )
-            assert liboqs  # noqa: S101
-        except RuntimeError:
-            msg = "Could not load liboqs shared library"
-            raise SystemExit(msg) from None
+        msg = "Could not load liboqs shared library"
+        raise RuntimeError(msg)
 
     return liboqs
 

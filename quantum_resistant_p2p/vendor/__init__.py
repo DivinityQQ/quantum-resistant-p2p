@@ -54,10 +54,12 @@ if "oqs_loaded" not in globals():
             print(f"Error loading vendored OQS library: {e}")
             print("Using mock implementations for post-quantum algorithms")
     else:
-        print(f"Vendored OQS library not found at {lib_path}")
+        print(f"OQS library not found at {lib_path}")
         print("Using mock implementations for post-quantum algorithms")
     
-    # Add the vendor directory to sys.path so oqs.py can be imported
+    # Always add the vendor directory to sys.path so oqs.py can be found
+    # even if the library couldn't be loaded - this ensures imports succeed
+    # even if we're using mock implementations
     vendor_path = str(vendor_dir)
     if vendor_path not in sys.path:
         sys.path.insert(0, vendor_path)
