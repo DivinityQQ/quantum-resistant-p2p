@@ -26,7 +26,7 @@ Key features:
 
 ```bash
 # Clone the repository
-git clone https://github.com/DivinityQQ/quantum_resistant_p2p.git
+git clone https://github.com/DivinityQQ/quantum-resistant-p2p.git
 cd quantum_resistant_p2p
 
 # Install the package and its dependencies
@@ -37,7 +37,7 @@ pip install .
 
 ```bash
 # Clone the repository
-git clone https://github.com/DivinityQQ/quantum_resistant_p2p.git
+git clone https://github.com/DivinityQQ/quantum-resistant-p2p.git
 cd quantum_resistant_p2p
 
 # Install in development mode
