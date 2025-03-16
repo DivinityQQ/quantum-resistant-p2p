@@ -132,12 +132,7 @@ If you see "OQS: ⚠ Mock" in the status bar, the application couldn't load the 
    - macOS: `quantum_resistant_p2p/vendor/lib/macos/liboqs.dylib`
    - Linux: `quantum_resistant_p2p/vendor/lib/linux/liboqs.so`
 
-2. Run the OQS verification tool:
-   ```bash
-   python -m quantum_resistant_p2p.verify_oqs
-   ```
-
-3. If needed, rebuild the OQS library for your platform (see the Advanced section below)
+2. If needed, rebuild the OQS library for your platform (see the Advanced section below)
 
 ### Connection Issues
 
