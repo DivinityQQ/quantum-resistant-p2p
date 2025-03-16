@@ -14,7 +14,7 @@ from .algorithm_base import CryptoAlgorithm
 
 # Try to import oqs (Open Quantum Safe)
 try:
-    import oqs
+    import oqs # type: ignore
     LIBOQS_AVAILABLE = True
 except ImportError:
     LIBOQS_AVAILABLE = False

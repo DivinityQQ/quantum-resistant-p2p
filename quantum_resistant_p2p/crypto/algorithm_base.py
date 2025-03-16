@@ -7,7 +7,7 @@ from typing import Optional
 
 # Check if OQS is available
 try:
-    import oqs
+    import oqs # type: ignore
     LIBOQS_AVAILABLE = True
 except ImportError:
     LIBOQS_AVAILABLE = False

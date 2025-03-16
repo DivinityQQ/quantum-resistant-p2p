@@ -21,7 +21,7 @@ DilithiumSignature = MLDSASignature
 
 # Try to import OQS to check if it's available
 try:
-    import oqs
+    import oqs # type: ignore
     LIBOQS_AVAILABLE = True
     LIBOQS_VERSION = oqs.oqs_version()
 except ImportError:

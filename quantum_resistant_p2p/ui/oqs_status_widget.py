@@ -38,14 +38,7 @@ class OQSStatusWidget(QWidget):
             self.status_label.setStyleSheet("color: orange; font-weight: bold;")
             self.setToolTip("Using mock implementations. Click the Setup button to install OQS.")
         
-        # Setup button (only shown when OQS is not available)
-        self.setup_button = QPushButton("Setup")
-        self.setup_button.setFixedSize(60, 24)
-        self.setup_button.clicked.connect(self.setup_clicked.emit)
-        self.setup_button.setVisible(not LIBOQS_AVAILABLE)
-        
         layout.addWidget(self.status_label)
-        layout.addWidget(self.setup_button)
         
         self.setLayout(layout)
         self.setFixedHeight(30)

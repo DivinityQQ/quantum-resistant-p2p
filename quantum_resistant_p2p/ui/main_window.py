@@ -146,7 +146,6 @@ class MainWindow(QMainWindow):
         self.status_bar.addPermanentWidget(self.connection_status)
         self.status_bar.addPermanentWidget(self.encryption_status)
         self.oqs_status = OQSStatusWidget()
-        self.oqs_status.setup_clicked.connect(self._show_oqs_setup)
         self.status_bar.addPermanentWidget(self.oqs_status)
 
         # Initial status message
@@ -234,27 +233,6 @@ class MainWindow(QMainWindow):
             )
             self.status_bar.showMessage("Cryptography settings updated", 3000)
             logger.debug("Updated cryptography status in UI")
-    
-    def _show_oqs_setup(self):
-        """Show the OQS setup script."""
-        try:
-            # Check if the setup script exists
-            setup_script = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "setup_oqs.py")
-            if not os.path.exists(setup_script):
-                QMessageBox.warning(self, "Setup Script Not Found", 
-                                   "The setup_oqs.py script could not be found.")
-                return
-                
-            # Execute the setup script in a new window
-            if sys.platform == "win32":
-                subprocess.Popen(["python", setup_script])
-            else:
-                subprocess.Popen(["python3", setup_script])
-                
-            QMessageBox.information(self, "Setup Started", 
-                                   "The OQS setup script has been started in a new window.")
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Error starting OQS setup: {str(e)}")
 
     async def _async_start_network(self):
         """Asynchronously start the network components."""

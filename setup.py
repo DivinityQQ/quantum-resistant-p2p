@@ -9,7 +9,6 @@ setup(
         "aiohttp>=3.8.1",
         "qasync>=0.22.0",
         "cryptography>=37.0.4",
-        "oqs>=0.10.2",
         "pynacl>=1.5.0",
         "PyQt5>=5.15.6",
         "pyyaml>=6.0",

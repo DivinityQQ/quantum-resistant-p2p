@@ -1,181 +1,182 @@
-# Kontrolní studie: P2P aplikace s postkvantovou kryptografií
+# Quantum-Resistant P2P
 
-## 1. Úvod a popis projektu
+A secure peer-to-peer communication application with post-quantum cryptography support.
 
-Tento projekt se zabývá návrhem a implementací peer-to-peer aplikace umožňující zabezpečenou komunikaci pomocí technik postkvantové kryptografie. S nástupem kvantových počítačů budou tradiční kryptografické algoritmy, jako jsou RSA a ECC, považovány za nedostatečně bezpečné, jelikož kvantové algoritmy (zejména Shorův algoritmus) mohou efektivně řešit problémy faktorizace celých čísel a diskrétního logaritmu, na kterých jsou tyto algoritmy založeny.
+## Overview
 
-Aplikace umožní uživatelům navazovat přímá spojení s jinými uživateli v síti, bez nutnosti centrálního serveru, a provádět tři základní kryptografické operace:
+This application provides secure messaging between peers using post-quantum cryptography algorithms. It protects against both current threats and future quantum computer attacks by implementing quantum-resistant encryption, key exchange, and digital signature algorithms.
 
-1. **Výměna tajného klíče** prostřednictvím postkvantových algoritmů založených na veřejném klíči
-2. **Důvěrný přenos dat** šifrovaný pomocí symetrických algoritmů 
-3. **Podepisování dat** s využitím postkvantových podpisových algoritmů
+Key features:
+- Post-quantum key exchange mechanisms (ML-KEM, HQC, FrodoKEM)
+- Post-quantum digital signatures (ML-DSA, SPHINCS+)
+- Secure symmetric encryption (AES-256-GCM, ChaCha20-Poly1305)
+- Intuitive user interface for peer discovery and messaging
+- End-to-end encrypted file transfer
+- Secure logging with encrypted audit trails
 
-Aplikace bude nabízet více algoritmů pro každou z těchto operací, takže uživatelé si budou moci vybrat konkrétní algoritmus podle svých potřeb. Operace budou logovány a logy i klíče budou bezpečně uloženy.
+## Requirements
 
-## 2. Cíle projektu
+- Python 3.8 or higher
+- PyQt5 for the user interface
+- A supported operating system: Windows, macOS, or Linux
 
-Hlavní cíle projektu jsou:
+## Installation
 
-1. **Vytvořit funkční P2P komunikační síť**, která umožní přímou komunikaci mezi uživateli bez centrálního serveru
-2. **Implementovat postkvantové algoritmy** pro výměnu klíčů a digitální podpisy
-3. **Umožnit důvěrnou komunikaci** prostřednictvím symetrických šifrovacích algoritmů
-4. **Poskytnout uživatelsky přívětivé rozhraní** pro výběr kryptografických algoritmů a správu komunikace
-5. **Implementovat bezpečné logování** kryptografických operací s důrazem na ochranu citlivých informací
-6. **Zajistit bezpečné ukládání klíčů a logů** na lokálním zařízení
+### Option 1: Install from Git (Recommended)
 
-Měřitelné cíle projektu:
-- Úspěšná implementace minimálně dvou algoritmů pro každou z kryptografických operací
-- Dosažení přenosové rychlosti dostatečné pro běžnou komunikaci a přenos souborů
-- Vytvoření intuitivního uživatelského rozhraní s možností volby algoritmů a parametrů zabezpečení
-- Implementace robustního systému logování s vhodnou granularitou informací
+```bash
+# Clone the repository
+git clone https://github.com/yourusername/quantum_resistant_p2p.git
+cd quantum_resistant_p2p
 
-## 3. Teoretická část
+# Install the package and its dependencies
+pip install .
+```
 
-### 3.1 Postkvantová kryptografie
+### Option 2: Install in Development Mode
 
-Postkvantová kryptografie (PQC) označuje kryptografické systémy, které jsou považovány za odolné vůči útokům pomocí kvantových počítačů. Tradiční kryptografické algoritmy, jako jsou RSA, DSA a ECC, jsou založeny na matematických problémech, které lze efektivně řešit pomocí kvantových algoritmů, zejména Shorova algoritmu. Aby byly kryptografické systémy bezpečné i v éře kvantových počítačů, je nutné je postavit na jiných matematických problémech, které jsou považovány za obtížné i pro kvantové počítače.
+```bash
+# Clone the repository
+git clone https://github.com/yourusername/quantum_resistant_p2p.git
+cd quantum_resistant_p2p
 
-Hlavní směry postkvantové kryptografie zahrnují:
+# Install in development mode
+pip install -e .
+```
 
-#### 3.1.1 Kryptografie založená na mřížkách (Lattice-based Cryptography)
+## Running the Application
 
-Kryptografické systémy založené na mřížkách využívají obtížnost problémů spojených s mřížkami v n-dimenzionálním prostoru. Mezi tyto problémy patří problém nejkratšího vektoru (SVP), problém nejbližšího vektoru (CVP) a Learning With Errors (LWE). Výhodou těchto systémů je jejich relativní efektivita a silná matematická základna. Algoritmy jako CRYSTALS-KYBER a NTRU patří do této kategorie.
+Once installed, you can run the application using:
 
-**CRYSTALS-KYBER** je algoritmus pro ustanovení klíče založený na problému Module Learning With Errors (MLWE). Tento problém je variantou problému LWE, která využívá modulární strukturu pro zlepšení efektivity. KYBER nabízí dobrou rovnováhu mezi velikostí klíčů, rychlostí a bezpečností.
+```bash
+# From the command line
+python -m quantum_resistant_p2p
 
-**NTRU** (N-th degree TRUncated polynomial ring) je jeden z nejstarších postkvantových kryptosystémů. Byl vyvinut v roce 1996 a je založen na problému hledání krátkých vektorů v mřížkách. NTRU je rychlý a má relativně malé veřejné klíče ve srovnání s jinými postkvantovými algoritmy.
+# Or if you installed in development mode, from the project directory:
+python quantum_resistant_p2p/__main__.py
+```
 
-**FrodoKEM** je konzervativnější přístup, který nepřidává další algebraickou strukturu k problému LWE. Tím se vyhýbá potenciálním slabinám strukturovaných variant, ale za cenu větších klíčů a nižší efektivity.
+## Post-Quantum Cryptography Support
 
-#### 3.1.2 Kryptografie založená na kódech (Code-based Cryptography)
+The application supports two modes of operation:
 
-Tyto systémy jsou založeny na obtížnosti dekódování náhodných lineárních kódů. Nejznámějším příkladem je McElieceův kryptosystém, který byl navržen již v roce 1978. Systémy založené na kódech mají obvykle velké veřejné klíče, ale nabízejí rychlé šifrování a dešifrování.
+### 1. Native Mode (Recommended)
 
-**Classic McEliece** je moderní implementace McElieceova kryptosystému, která používá Goppaovy kódy. Jedná se o jeden z nejdéle studovaných postkvantových algoritmů s velmi silnými bezpečnostními zárukami.
+Native mode uses the real post-quantum cryptography implementations through the Open Quantum Safe (OQS) library, which is bundled with the application. This provides genuine post-quantum security.
 
-#### 3.1.3 Kryptografie založená na hashovacích funkcích (Hash-based Cryptography)
+When the application starts, it will automatically attempt to use native mode. You can verify if it's running in native mode by checking the status bar at the bottom of the main window, which will display "OQS: ✓" if native mode is active.
 
-Podpisové systémy založené na hashovacích funkcích, jako jsou Lamportův jednorazový podpis, Merkleovy stromy a jejich modernější varianty (XMSS, SPHINCS+), nabízejí silné bezpečnostní záruky. Jejich bezpečnost je založena pouze na vlastnostech hashovacích funkcí, což je činí velmi důvěryhodnými.
+### 2. Mock Mode (Fallback)
 
-**SPHINCS+** je bezstavový hashovací podpisový systém, který kombinuje několik různých technik k vytvoření praktického podpisového schématu. Jeho bezpečnost závisí pouze na vlastnostech použitých hashovacích funkcí.
+If the native OQS library cannot be loaded for any reason, the application will automatically fall back to mock implementations. These mock implementations simulate the behavior of post-quantum algorithms but do not provide actual quantum resistance.
 
-#### 3.1.4 Kryptografie založená na multivariantních polynomech (Multivariate Cryptography)
+The status bar will show "OQS: ⚠ Mock" when running in mock mode.
 
-Tyto systémy jsou založeny na obtížnosti řešení systémů multivariantních polynomiálních rovnic nad konečnými tělesy. Jsou obecně efektivní pro ověřování podpisů, ale mají velké veřejné klíče.
+## Basic Usage
 
-**Rainbow** je multivariantní podpisové schéma, které nabízí velmi rychlé ověřování podpisů a krátké podpisy. Je založeno na struktuře olejovo-octových polynomů (Oil and Vinegar).
+1. **Start the application**
 
-#### 3.1.5 Kryptografie založená na izogeniích (Isogeny-based Cryptography)
+2. **Login**
+   - When first starting, you'll be prompted to create a password to secure your keys
+   - For subsequent launches, enter the same password
 
-Systémy založené na izogeniích mezi supersingulárními eliptickými křivkami představují novější směr v postkvantové kryptografii. Nabízejí nejmenší velikosti klíčů ze všech postkvantových kandidátů, ale jsou výpočetně náročnější.
+3. **Connect to Peers**
+   - The application will automatically search for peers on the local network
+   - Or click "Add Peer" to manually enter a peer's address
+   - Select a peer from the list and click "Connect"
 
-**SIKE** (Supersingular Isogeny Key Encapsulation) je algoritmus pro ustanovení klíče založený na problému hledání izogenií mezi supersingulárními eliptickými křivkami. Vyniká velmi malými veřejnými klíči, ale je výpočetně náročnější než jiné metody.
+4. **Establish Secure Connection**
+   - After connecting, click "Establish Shared Key" to perform a post-quantum key exchange
+   - This creates a secure channel protected against both classical and quantum attacks
 
-### 3.2 Symetrická kryptografie v post-kvantovém prostředí
+5. **Secure Messaging**
+   - Type messages in the input field and press Enter or click Send
+   - Use "Send File" to securely transfer files
 
-I když je symetrická kryptografie považována za relativně odolnou vůči kvantovým útokům, Groverův algoritmus může poskytnout kvadratické zrychlení při hledání klíčů hrubou silou. Proto je doporučeno zdvojnásobit délku klíčů pro symetrické algoritmy v postkvantovém prostředí.
+6. **Security Settings**
+   - Access "Crypto Settings" to customize which algorithms are used
+   - View logs and security metrics from the Settings menu
 
-**AES-256** (Advanced Encryption Standard) je široce používaný blokový šifrovací algoritmus s délkou klíče 256 bitů, který by měl poskytovat dostatečnou bezpečnost i proti kvantovým útokům.
+## Troubleshooting
 
-**ChaCha20-Poly1305** je kombinace proudové šifry ChaCha20 a autentizačního kódu Poly1305. Je to moderní, rychlá a bezpečná alternativa k AES, která je obzvláště vhodná pro softwarové implementace.
+### OQS Library Issues
 
-### 3.3 Standardizace postkvantové kryptografie
+If you see "OQS: ⚠ Mock" in the status bar, the application couldn't load the native OQS library. Possible solutions:
 
-Národní institut standardů a technologie USA (NIST) zahájil proces standardizace postkvantových kryptografických algoritmů v roce 2016. Tento proces je podobný předchozím soutěžím pro standardizaci AES a SHA-3. V červenci 2022 NIST oznámil první algoritmy vybrané pro standardizaci:
+1. Verify that the library files exist in the vendor directory:
+   - Windows: `quantum_resistant_p2p/vendor/lib/windows/oqs.dll`
+   - macOS: `quantum_resistant_p2p/vendor/lib/macos/liboqs.dylib`
+   - Linux: `quantum_resistant_p2p/vendor/lib/linux/liboqs.so`
 
-- CRYSTALS-KYBER pro ustanovení klíče
-- CRYSTALS-DILITHIUM, FALCON a SPHINCS+ pro digitální podpisy
+2. Run the OQS verification tool:
+   ```bash
+   python -m quantum_resistant_p2p.verify_oqs
+   ```
 
-Proces standardizace pokračuje pro další kandidáty, včetně algoritmů založených na kódech a dalších přístupech.
+3. If needed, rebuild the OQS library for your platform (see the Advanced section below)
 
-### 3.4 Peer-to-Peer sítě
+### Connection Issues
 
-Peer-to-peer (P2P) sítě jsou distribuované systémy, kde každý uzel může fungovat jako klient i jako server. Hlavní charakteristiky P2P sítí zahrnují:
+If you're having trouble connecting to peers:
 
-- **Decentralizace**: Neexistuje centrální server, který by řídil komunikaci
-- **Škálovatelnost**: Síť se může efektivně rozrůstat s počtem uzlů
-- **Robustnost**: Selhání jednoho uzlu neovlivní celou síť
-- **Autonomie**: Uzly mohou nezávisle rozhodovat o svých zdrojích
+1. Ensure both peers are on the same network
+2. Check if any firewall is blocking UDP port 8001 (discovery) or TCP port 8000 (communication)
+3. Try adding the peer manually with their IP address
 
-Výzvy při implementaci P2P sítí zahrnují:
-- Vyhledávání uzlů (peer discovery)
-- NAT traversal (překonávání překladů síťových adres)
-- Bezpečnost a důvěryhodnost
-- Efektivní směrování zpráv
+## Advanced: Building OQS Yourself
 
-## 4. Aktuální stav řešení
+If you need to build the OQS library yourself:
 
-### 4.1 Dosažené výsledky
+### Windows
 
-Projekt je v počáteční fázi analýzy a návrhu. Byly identifikovány klíčové komponenty a požadavky na systém:
+```bash
+git clone https://github.com/open-quantum-safe/liboqs
+cd liboqs
+mkdir build && cd build
+cmake .. -DBUILD_SHARED_LIBS=ON -DCMAKE_WINDOWS_EXPORT_ALL_SYMBOLS=TRUE
+cmake --build . --config Release --parallel 8
+# Copy build\bin\Release\oqs.dll to quantum_resistant_p2p\vendor\lib\windows\
+```
 
-1. Byly vybrány vhodné kryptografické algoritmy pro implementaci:
-   - Pro ustanovení klíče: CRYSTALS-KYBER, NTRU
-   - Pro symetrické šifrování: AES-256, ChaCha20-Poly1305
-   - Pro digitální podpisy: CRYSTALS-DILITHIUM, SPHINCS+
+### macOS
 
-2. Byla navržena základní architektura aplikace:
-   - Síťová vrstva pro P2P komunikaci
-   - Kryptografická vrstva pro implementaci kryptografických algoritmů
-   - Aplikační vrstva pro logiku aplikace
-   - Prezentační vrstva pro uživatelské rozhraní
+```bash
+brew install cmake ninja
+git clone https://github.com/open-quantum-safe/liboqs
+cd liboqs
+mkdir build && cd build
+cmake .. -DBUILD_SHARED_LIBS=ON -DOQS_BUILD_ONLY_LIB=ON
+cmake --build . --parallel 8
+# Copy build/lib/liboqs.dylib to quantum_resistant_p2p/vendor/lib/macos/
+```
 
-3. Byly identifikovány vhodné knihovny pro implementaci v Pythonu:
-   - `liboqs` (Open Quantum Safe) pro postkvantové algoritmy
-   - `pyca/cryptography` pro symetrické algoritmy
-   - `socket` a `asyncio` pro síťovou komunikaci
-   - `PyQt5` pro uživatelské rozhraní
+### Linux
 
-### 4.2 Plán dalšího postupu
+```bash
+sudo apt install cmake gcc ninja-build libssl-dev
+git clone https://github.com/open-quantum-safe/liboqs
+cd liboqs
+mkdir build && cd build
+cmake .. -DBUILD_SHARED_LIBS=ON -DOQS_BUILD_ONLY_LIB=ON
+cmake --build . --parallel 8
+# Copy build/lib/liboqs.so to quantum_resistant_p2p/vendor/lib/linux/
+```
 
-Další postup vývoje projektu zahrnuje následující kroky:
+## Development
 
-1. **Fáze I: Implementace základních komponent**
-   - Implementace síťové vrstvy pro P2P komunikaci
-   - Integrace vybraných kryptografických knihoven
-   - Návrh a implementace API pro kryptografickou vrstvu
-   - Vytvoření základního rozhraní pro testování
+If you want to contribute to the project:
 
-2. **Fáze II: Implementace kryptografických funkcí**
-   - Implementace mechanismů pro výměnu klíčů
-   - Implementace šifrovaného přenosu dat
-   - Implementace digitálních podpisů
-   - Implementace bezpečného ukládání klíčů a logů
+1. Fork the repository
+2. Install the package in development mode: `pip install -e .`
+3. Make your changes
+4. Submit a pull request
 
-3. **Fáze III: Vývoj uživatelského rozhraní**
-   - Návrh a implementace grafického uživatelského rozhraní
-   - Implementace interaktivních prvků pro výběr algoritmů
-   - Vizualizace informací o bezpečnosti a provedených operacích
+## License
 
-4. **Fáze IV: Testování a optimalizace**
-   - Testování funkčnosti a bezpečnosti
-   - Optimalizace výkonu a spotřeby zdrojů
-   - Identifikace a oprava chyb
-   - Zátěžové testování v simulovaném prostředí
+quantum-resistant-p2p is licensed under the MIT License; see
+[LICENSE](https://github.com/DivinityQQ/quantum-resistant-p2p/blob/main/LICENSE)
+for details.
 
-5. **Fáze V: Finalizace a dokumentace**
-   - Dokončení implementace
-   - Vytvoření uživatelské dokumentace
-   - Vytvoření vývojářské dokumentace
-   - Příprava na předání a zhodnocení projektu
+## Credits
 
-## 5. Autoři a jejich přínos
-
-**[Jméno autora]** - Hlavní vývojář projektu
-- Návrh celkové architektury aplikace
-- Výběr a implementace kryptografických algoritmů
-- Vývoj síťové vrstvy pro P2P komunikaci
-- Implementace bezpečného logování a ukládání klíčů
-- Koordinace vývoje a dokumentace projektu
-
----
-
-## Reference
-
-1. Bernstein, D. J., & Lange, T. (2017). Post-quantum cryptography. Nature, 549(7671), 188-194.
-2. NIST (2019). Status Report on the First Round of the NIST Post-Quantum Cryptography Standardization Process. NISTIR 8240.
-3. Alagic, G., et al. (2022). Status Report on the Third Round of the NIST Post-Quantum Cryptography Standardization Process. NISTIR 8413.
-4. Chen, L., et al. (2016). Report on Post-Quantum Cryptography. NISTIR 8105.
-5. Grassl, M., et al. (2016). Applying Grover's algorithm to AES: quantum resource estimates. In Post-Quantum Cryptography (pp. 29-43).
-6. Hoffstein, J., Pipher, J., & Silverman, J. H. (1998). NTRU: A ring-based public key cryptosystem. In Algorithmic number theory (pp. 267-288).
-7. Paquin, C., Stebila, D., & Tamvada, G. (2020). Benchmarking post-quantum cryptography in TLS. In Post-Quantum Cryptography (pp. 72-91).
+This project uses the [Open Quantum Safe (OQS)](https://openquantumsafe.org/) library for post-quantum cryptography.
