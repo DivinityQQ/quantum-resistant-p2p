@@ -22,12 +22,16 @@ Key features:
 
 ## Installation
 
-### Setting Up a Virtual Environment (Recommended)
+### Installation with Virtual Environment (Recommended)
 
-It's recommended to install the application in a virtual environment to avoid conflicts with other Python packages:
+It's recommended to use a virtual environment to avoid conflicts with other Python packages. Here's how to set up and install the application:
 
 ```bash
-# Create a virtual environment
+# First, clone the repository
+git clone https://github.com/DivinityQQ/quantum-resistant-p2p.git
+cd quantum_resistant_p2p
+
+# Create a virtual environment inside the project directory
 python -m venv venv
 
 # Activate the virtual environment
@@ -37,28 +41,28 @@ venv\Scripts\activate
 source venv/bin/activate
 ```
 
-Your command prompt should now show the name of the virtual environment, indicating it's active. All pip commands will now install packages into this isolated environment.
+Your command prompt should now show `(venv)` at the beginning, indicating the virtual environment is active. All pip commands will now install packages into this isolated environment.
 
-### Option 1: Install from Git (Recommended)
+### Option 1: Standard Installation
 
 ```bash
-# Clone the repository
-git clone https://github.com/DivinityQQ/quantum-resistant-p2p.git
-cd quantum_resistant_p2p
-
-# Make sure your virtual environment is activated, then:
+# With the virtual environment activated and while in the quantum_resistant_p2p directory:
 pip install .
 ```
 
-### Option 2: Install in Development Mode
+### Option 2: Development Mode Installation
 
 ```bash
-# Clone the repository
-git clone https://github.com/DivinityQQ/quantum-resistant-p2p.git
-cd quantum_resistant_p2p
-
-# Make sure your virtual environment is activated, then:
+# With the virtual environment activated and while in the quantum_resistant_p2p directory:
 pip install -e .
+```
+
+### Deactivating the Virtual Environment
+
+When you're done using the application, you can deactivate the virtual environment:
+
+```bash
+deactivate
 ```
 
 ## Running the Application
@@ -67,10 +71,12 @@ Once installed, you can run the application using:
 
 ```bash
 # Make sure your virtual environment is activated first
-# From the command line
+# (You should see (venv) at the beginning of your command prompt)
+
+# From the quantum_resistant_p2p directory:
 python -m quantum_resistant_p2p
 
-# Or if you installed in development mode, from the project directory:
+# Or if you installed in development mode:
 python quantum_resistant_p2p/__main__.py
 ```
 
@@ -185,7 +191,12 @@ cmake --build . --parallel 8
 If you want to contribute to the project:
 
 1. Fork the repository
-2. Create and activate a virtual environment: 
+2. Clone your fork locally:
+   ```bash
+   git clone https://github.com/YOUR_USERNAME/quantum-resistant-p2p.git
+   cd quantum-resistant-p2p
+   ```
+3. Create and activate a virtual environment within the project directory: 
    ```bash
    python -m venv venv
    # On Windows:
@@ -193,9 +204,12 @@ If you want to contribute to the project:
    # On macOS/Linux:
    source venv/bin/activate
    ```
-3. Install the package in development mode: `pip install -e .`
-4. Make your changes
-5. Submit a pull request
+4. Install the package in development mode: 
+   ```bash
+   pip install -e .
+   ```
+5. Make your changes
+6. Submit a pull request
 
 ## License
 
