@@ -1,5 +1,5 @@
 """
-Widget for messaging functionality.
+Widget for messaging functionality with file saving capabilities.
 """
 
 import logging
@@ -9,10 +9,10 @@ from datetime import datetime
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QLineEdit, 
     QPushButton, QLabel, QFileDialog, QProgressBar, QSplitter,
-    QGroupBox, QFormLayout, QMessageBox
+    QGroupBox, QFormLayout, QMessageBox, QAction, QMenu
 )
 from PyQt5.QtCore import Qt, pyqtSignal, pyqtSlot, QTimer
-from PyQt5.QtGui import QFont, QColor
+from PyQt5.QtGui import QFont, QColor, QTextCursor
 
 from ..app import SecureMessaging, Message
 
@@ -85,7 +85,7 @@ class MessagingWidget(QWidget):
         # Crypto settings info panel (initially hidden)
         self.crypto_panel = QGroupBox("Cryptography Settings")
         self.crypto_panel.setVisible(False)
-
+        
         # Use horizontal layout for local and peer settings
         crypto_main_layout = QHBoxLayout()
 
@@ -161,11 +161,19 @@ class MessagingWidget(QWidget):
         self.crypto_panel.setLayout(crypto_layout)
         layout.addWidget(self.crypto_panel)
 
-        # Chat area
+        # Chat area with context menu for saving files
         self.chat_area = QTextEdit()
         self.chat_area.setReadOnly(True)
-        self.chat_area.setFont(QFont("Courier New", 10))
-        layout.addWidget(self.chat_area)
+        self.chat_area.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.chat_area.customContextMenuRequested.connect(self._show_context_menu)
+        # Set larger font size for better readability
+        font = self.chat_area.font()
+        font.setPointSize(11)  # Increase from default (usually 9 or 10)
+        self.chat_area.setFont(font)
+        layout.addWidget(self.chat_area, 1)  # 1 = stretch factor
+        
+        # Store message info for context menu
+        self.file_messages = {}  # Maps positions to message data
 
         # Message input area
         input_layout = QHBoxLayout()
@@ -196,6 +204,79 @@ class MessagingWidget(QWidget):
         self.setLayout(layout)
 
         logger.debug("Messaging widget initialized")
+    
+    def _show_context_menu(self, position):
+        """Show context menu for chat area.
+        
+        Args:
+            position: The position where the context menu was requested
+        """
+        # Get the cursor at the clicked position
+        cursor = self.chat_area.cursorForPosition(position)
+        cursor_pos = cursor.position()
+        
+        # Check if this position corresponds to a file message
+        if cursor_pos in self.file_messages:
+            file_data = self.file_messages[cursor_pos]
+            
+            # Create a combined context menu with standard options and our save option
+            standard_menu = self.chat_area.createStandardContextMenu(position)
+            
+            # Add separator before our custom actions
+            standard_menu.addSeparator()
+            
+            # Add save action
+            save_action = QAction("Save File", self)
+            save_action.triggered.connect(lambda: self._save_file_from_menu(file_data))
+            standard_menu.addAction(save_action)
+            
+            # Show the menu
+            standard_menu.exec_(self.chat_area.mapToGlobal(position))
+        else:
+            # Use default context menu
+            standard_menu = self.chat_area.createStandardContextMenu(position)
+            standard_menu.exec_(self.chat_area.mapToGlobal(position))
+    
+    def _save_file_from_menu(self, file_data):
+        """Save a file from the context menu action.
+        
+        Args:
+            file_data: Dictionary with file information
+        """
+        message = file_data.get("message")
+        if not message or not message.is_file:
+            return
+        
+        # Get the suggested filename
+        filename = message.filename or "downloaded_file"
+        
+        # Ask user where to save the file
+        save_path, _ = QFileDialog.getSaveFileName(
+            self, "Save File", filename
+        )
+        
+        if not save_path:
+            return
+        
+        try:
+            # Save the file
+            with open(save_path, "wb") as f:
+                f.write(message.content)
+            
+            # Show success message
+            QMessageBox.information(
+                self, "File Saved", f"File saved successfully to:\n{save_path}"
+            )
+            
+            # Add system message
+            self._add_system_message(f"File saved to {save_path}")
+            
+        except Exception as e:
+            # Show error message
+            QMessageBox.critical(
+                self, "Error Saving File", f"Failed to save file: {str(e)}"
+            )
+            logger.error(f"Error saving file: {e}")
     
     def _on_crypto_settings_changed(self):
         """Handle crypto settings changes."""
@@ -400,8 +481,9 @@ class MessagingWidget(QWidget):
         self.settings_button.setEnabled(True)
         self.refresh_button.setEnabled(True)
 
-        # Clear the chat area
+        # Clear the chat area and file message map
         self.chat_area.clear()
+        self.file_messages.clear()
 
         # Add a system message
         self._add_system_message(f"Started chat with {peer_id[:8]}...")
@@ -492,7 +574,7 @@ class MessagingWidget(QWidget):
         # If connection status changed, update the UI
         if not was_connected and hasattr(self, 'previous_connection_state') and self.previous_connection_state:
             # Connection lost
-            self._add_system_message(f"Connection lost with peer {self.current_peer[:8]}...")
+            self._add_system_message(f"Connection lost with peer {self.current_peer[:8]}...", True)
             self.connection_status_label.setText("Not connected")
             self.connection_status_label.setStyleSheet("font-weight: bold; color: red;")
 
@@ -535,11 +617,11 @@ class MessagingWidget(QWidget):
                 # Update the crypto settings display
                 self._update_crypto_display()
             else:
-                self._add_system_message(f"Failed to connect to {host}:{port}")
+                self._add_system_message(f"Failed to connect to {host}:{port}", True)
                 self._disable_messaging()
 
         except Exception as e:
-            self._add_system_message(f"Error connecting to peer: {str(e)}")
+            self._add_system_message(f"Error connecting to peer: {str(e)}", True)
             self._disable_messaging()
             logger.error(f"Error connecting to peer: {e}")
 
@@ -584,7 +666,7 @@ class MessagingWidget(QWidget):
         self.send_button.setEnabled(False)
         self.file_button.setEnabled(False)
     
-    def _add_message(self, message: Message, is_outgoing: bool):
+    def _add_message(self, message, is_outgoing: bool):
         """Add a message to the chat area.
         
         Args:
@@ -594,24 +676,56 @@ class MessagingWidget(QWidget):
         # Format the timestamp
         timestamp = datetime.fromtimestamp(message.timestamp).strftime("%H:%M:%S")
         
-        # Determine the prefix
+        # Determine the prefix (no style differences)
         prefix = "You" if is_outgoing else f"{message.sender_id[:8]}..."
+        style = ""
+        
+        # Get the cursor position before adding content
+        cursor = self.chat_area.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        start_pos = cursor.position()
         
         # Add the message to the chat area
         if message.is_file:
             filename = message.filename or "Unknown file"
             file_size = len(message.content)
+            
+            # For file messages, include save instruction for received files
+            save_info = " (Right-click to save)" if not is_outgoing else ""
+            
+            # Store the cursor position before adding content
+            before_pos = self.chat_area.textCursor().position()
+            
+            # Add file message with a unique ID for easy location
+            message_id = f"file_{message.message_id}"
             self.chat_area.append(
-                f"[{timestamp}] {prefix} sent a file: {filename} ({file_size} bytes)"
+                f'<div id="{message_id}" style="{style}"><b>[{timestamp}] {prefix}:</b> '
+                f'📄 <span style="text-decoration: underline;">File: {filename} ({file_size:,} bytes){save_info}</span></div>'
             )
+            
+            # Get the end position after adding content
+            after_pos = self.chat_area.textCursor().position()
+            
+            # For received files, store positions for the entire message area
+            if not is_outgoing:
+                # Associate multiple positions in the range with this file
+                for pos in range(before_pos, after_pos + 1):
+                    self.file_messages[pos] = {
+                        "message": message,
+                        "position": (before_pos, after_pos)
+                    }
         else:
             try:
+                # Normal text message
                 content = message.content.decode("utf-8")
-                self.chat_area.append(f"[{timestamp}] {prefix}: {content}")
+                self.chat_area.append(
+                    f'<div style="{style}"><b>[{timestamp}] {prefix}:</b> {content}</div>'
+                )
             except UnicodeDecodeError:
                 # Binary data, just show the size
                 self.chat_area.append(
-                    f"[{timestamp}] {prefix} sent binary data ({len(message.content)} bytes)"
+                    f'<div style="{style}"><b>[{timestamp}] {prefix}:</b> '
+                    f'Binary data ({len(message.content)} bytes)</div>'
                 )
         
         # Scroll to the bottom
@@ -628,14 +742,10 @@ class MessagingWidget(QWidget):
         """
         timestamp = datetime.now().strftime("%H:%M:%S")
         
-        # Set text color based on message type
-        if is_warning:
-            self.chat_area.append(f'<font color="red">[{timestamp}] * {message} *</font>')
-        elif message.startswith("Connecting") or message.startswith("Refreshing") or message.startswith("Initiating"):
-            # Use blue for status/progress messages
-            self.chat_area.append(f'<font color="blue">[{timestamp}] * {message} *</font>')
-        else:
-            self.chat_area.append(f"[{timestamp}] * {message} *")
+        # Set text color based on message type - use more subtle colors
+        color = "#C62828" if is_warning else "#555555"  # Dark red for warnings, dark gray for info
+        
+        self.chat_area.append(f'<div style="color:{color};"><b>[{timestamp}]</b> * {message} *</div>')
         
         # Scroll to the bottom
         self.chat_area.verticalScrollBar().setValue(

@@ -5,10 +5,11 @@ Widget for displaying and managing the list of peers.
 import logging
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QListWidget, QListWidgetItem, QLabel, 
-    QPushButton, QHBoxLayout, QInputDialog, QMessageBox
+    QPushButton, QHBoxLayout, QInputDialog, QMessageBox, QHeaderView,
+    QTableWidget, QTableWidgetItem
 )
 from PyQt5.QtCore import Qt, pyqtSignal, pyqtSlot, QSize
-from PyQt5.QtGui import QColor
+from PyQt5.QtGui import QColor, QFont, QIcon
 
 from ..networking import P2PNode, NodeDiscovery
 
@@ -60,11 +61,22 @@ class PeerListWidget(QWidget):
         header_label.setStyleSheet("font-weight: bold;")
         layout.addWidget(header_label)
         
-        # Peer list
-        self.peer_list = QListWidget()
-        self.peer_list.setIconSize(QSize(16, 16))  # For status icons
-        self.peer_list.itemClicked.connect(self._on_peer_clicked)
-        layout.addWidget(self.peer_list)
+        # Use a table widget instead of list for better column control
+        self.peer_table = QTableWidget()
+        self.peer_table.setColumnCount(2)  # ID and Status columns
+        self.peer_table.setHorizontalHeaderLabels(["Peer", "Status"])
+        self.peer_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)  # ID column stretches
+        self.peer_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Status fits content
+        self.peer_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.peer_table.setSelectionMode(QTableWidget.SingleSelection)
+        self.peer_table.setEditTriggers(QTableWidget.NoEditTriggers)  # Make table read-only
+        self.peer_table.itemClicked.connect(self._on_peer_clicked)
+        
+        # Set row height to be a bit more compact
+        self.peer_table.verticalHeader().setDefaultSectionSize(24)
+        self.peer_table.verticalHeader().setVisible(False)  # Hide row numbers
+        
+        layout.addWidget(self.peer_table)
         
         # Buttons
         button_layout = QHBoxLayout()
@@ -101,30 +113,25 @@ class PeerListWidget(QWidget):
             connected: List of connected peer IDs
         """
         # Remember the currently selected peer ID
-        selected_items = self.peer_list.selectedItems()
-        if selected_items:
-            selected_peer_id = selected_items[0].data(Qt.UserRole)
+        selected_rows = self.peer_table.selectedItems()
+        if selected_rows and selected_rows[0].column() == 0:  # Make sure we get a peer ID column
+            selected_peer_id = selected_rows[0].data(Qt.UserRole)
         else:
             selected_peer_id = self.current_peer_id
         
         # Remember scroll position
-        scrollbar_pos = self.peer_list.verticalScrollBar().value()
+        scrollbar_pos = self.peer_table.verticalScrollBar().value()
         
-        # Clear and rebuild the list
-        self.peer_list.clear()
+        # Clear and rebuild the table
+        self.peer_table.setRowCount(0)  # Clear all rows
+        self.peer_table.setSortingEnabled(False)  # Disable sorting while updating
         
-        # Rebuild the list
-        new_selected_item = None
-        
-        # Add discovered peers
+        # Rebuild the table
+        row = 0
         for node_id, host, port in discovered:
-            # Basic item information
-            item = QListWidgetItem(f"{node_id[:8]}... ({host}:{port})")
-            item.setData(Qt.UserRole, node_id)
-            item.setData(Qt.UserRole + 1, host)
-            item.setData(Qt.UserRole + 2, port)
+            self.peer_table.insertRow(row)
             
-            # Determine state and styling
+            # Determine state
             is_connected = node_id in connected
             has_shared_key = False
             is_secure = False
@@ -134,103 +141,124 @@ class PeerListWidget(QWidget):
                 key_exchange_state = self.secure_messaging.key_exchange_states.get(node_id, 0)
                 is_secure = has_shared_key and key_exchange_state == 4  # ESTABLISHED
             
-            # Set text and color based on state
-            status_text = ""
-            text_color = Qt.black
+            # ID column (short peer ID + address)
+            id_item = QTableWidgetItem(f"{node_id[:8]}...")
+            id_item.setData(Qt.UserRole, node_id)  # Store full ID
+            id_item.setData(Qt.UserRole + 1, host)  # Store host
+            id_item.setData(Qt.UserRole + 2, port)  # Store port
+            
+            # Set tooltip with full information
+            tooltip = f"ID: {node_id}\nHost: {host}\nPort: {port}"
+            if self.secure_messaging and node_id in self.secure_messaging.peer_crypto_settings:
+                peer_settings = self.secure_messaging.peer_crypto_settings[node_id]
+                key_exchange = peer_settings.get("key_exchange", "Unknown")
+                symmetric = peer_settings.get("symmetric", "Unknown")
+                signature = peer_settings.get("signature", "Unknown")
+                tooltip += f"\n\nCrypto Settings:\nKey Exchange: {key_exchange}\nSymmetric: {symmetric}\nSignature: {signature}"
+            id_item.setToolTip(tooltip)
+            
+            # Status column
+            status_item = QTableWidgetItem()
+            
+            # Set text based on state
+            if is_connected:
+                if is_secure:
+                    status_text = "Secure"
+                else:
+                    if has_shared_key:
+                        status_text = "Connected, Key Issue"
+                    else:
+                        status_text = "Connected"
+                
+                # Add crypto compatibility indicator
+                if self.secure_messaging and node_id in self.secure_messaging.peer_crypto_settings:
+                    peer_settings = self.secure_messaging.peer_crypto_settings[node_id]
+                    my_settings = {
+                        "key_exchange": self.secure_messaging.key_exchange.name,
+                        "symmetric": self.secure_messaging.symmetric.name,
+                        "signature": self.secure_messaging.signature.name
+                    }
+                    
+                    # Check for mismatches
+                    has_mismatches = any(
+                        peer_settings.get(key, "").split(" [Mock]")[0] != my_settings[key].split(" [Mock]")[0]
+                        for key in my_settings
+                        if key in peer_settings
+                    )
+                    
+                    if has_mismatches:
+                        status_text += " ⚠️"
+                        
+            else:
+                status_text = "Discovered"
+            
+            status_item.setText(status_text)
+            
+            # Add to table
+            self.peer_table.setItem(row, 0, id_item)
+            self.peer_table.setItem(row, 1, status_item)
+            
+            # Apply color based on state
+            background_color = Qt.white  # Default white
+            text_color = Qt.black  # Default black
             
             if is_connected:
                 if is_secure:
-                    status_text = " [Secure]"
-                    text_color = Qt.darkGreen
+                    background_color = QColor(230, 255, 230)  # Light green
                 else:
-                    if has_shared_key:
-                        # We have a key, but it's not fully established
-                        status_text = " [Connected, Key Exchange Needed]"
-                        text_color = QColor(255, 140, 0)  # Dark orange
-                    else:
-                        status_text = " [Connected]"
-                        text_color = Qt.green
-                    
-                    # Add crypto compatibility indicator
-                    if self.secure_messaging and node_id in self.secure_messaging.peer_crypto_settings:
-                        peer_settings = self.secure_messaging.peer_crypto_settings[node_id]
-                        my_settings = {
-                            "key_exchange": self.secure_messaging.key_exchange.name,
-                            "symmetric": self.secure_messaging.symmetric.name,
-                            "signature": self.secure_messaging.signature.name
-                        }
-                        
-                        # Check for mismatches
-                        has_mismatches = any(
-                            peer_settings.get(key) != my_settings[key]
-                            for key in my_settings
-                            if key in peer_settings
-                        )
-                        
-                        if has_mismatches:
-                            status_text += " ⚠️ Settings Differ"
-                            text_color = QColor(255, 165, 0)  # Orange for warning
+                    background_color = QColor(240, 240, 255)  # Light blue
             
-            # Update the display text with status
-            if status_text:
-                item.setText(f"{node_id[:8]}... ({host}:{port}){status_text}")
+            # Apply colors to both columns
+            id_item.setBackground(background_color)
+            status_item.setBackground(background_color)
+            id_item.setForeground(text_color)
+            status_item.setForeground(text_color)
             
-            # Set the text color
-            item.setForeground(text_color)
+            # Separately handle unread messages
+            if self.message_store and self.message_store.has_unread_messages(node_id):
+                unread_count = self.message_store.get_unread_count(node_id)
+                
+                # Make text bold for unread messages
+                font = id_item.font()
+                font.setBold(True)
+                id_item.setFont(font)
+                status_item.setFont(font)
+                
+                # Update status text to include unread count
+                status_item.setText(f"{status_text} ({unread_count} unread)")
             
-            self.peer_list.addItem(item)
-            
-            # If this is the currently selected peer, remember this item
-            if node_id == selected_peer_id:
-                new_selected_item = item
+            row += 1
         
-        # Restore selection
-        if new_selected_item:
-            self.peer_list.setCurrentItem(new_selected_item)
+        # Restore selection if possible
+        if selected_peer_id:
+            for r in range(self.peer_table.rowCount()):
+                item = self.peer_table.item(r, 0)  # ID column
+                if item and item.data(Qt.UserRole) == selected_peer_id:
+                    self.peer_table.selectRow(r)
+                    break
             
         # Restore scroll position
-        self.peer_list.verticalScrollBar().setValue(scrollbar_pos)
+        self.peer_table.verticalScrollBar().setValue(scrollbar_pos)
         
-        # Add unread message indicators 
-        if self.message_store:
-            for i in range(self.peer_list.count()):
-                item = self.peer_list.item(i)
-                peer_id = item.data(Qt.UserRole)
-                
-                if self.message_store.has_unread_messages(peer_id):
-                    unread_count = self.message_store.get_unread_count(peer_id)
-                    
-                    # Add unread count to the displayed text
-                    current_text = item.text()
-                    # Remove existing unread indicator if present
-                    if " [Unread:" in current_text:
-                        current_text = current_text.split(" [Unread:")[0]
-                    
-                    # Add new unread indicator
-                    item.setText(f"{current_text} [Unread: {unread_count}]")
-                    
-                    # Highlight with bold text and different color for unread
-                    font = item.font()
-                    font.setBold(True)
-                    item.setFont(font)
-                    
-                    # Don't change colors for connected or secure peers
-                    current_color = item.foreground().color()
-                    if current_color == Qt.black:  # Only change if not already colored
-                        item.setForeground(QColor(0, 120, 215))  # Blue for unread
+        # Re-enable sorting
+        self.peer_table.setSortingEnabled(True)
         
-        logger.debug(f"Updated peer list with {len(discovered)} peers")
+        logger.debug(f"Updated peer table with {len(discovered)} peers")
     
     def _on_peer_clicked(self, item):
         """Handle clicking on a peer in the list.
         
         Args:
-            item: The clicked list item
+            item: The clicked table item
         """
-        # Get the peer ID from the item
-        peer_id = item.data(Qt.UserRole)
-        host = item.data(Qt.UserRole + 1)
-        port = item.data(Qt.UserRole + 2)
+        # Get the row
+        row = item.row()
+        
+        # Get the peer ID from the ID column
+        id_item = self.peer_table.item(row, 0)
+        peer_id = id_item.data(Qt.UserRole)
+        host = id_item.data(Qt.UserRole + 1)
+        port = id_item.data(Qt.UserRole + 2)
         
         # Store the current peer ID
         self.current_peer_id = peer_id
@@ -239,14 +267,8 @@ class PeerListWidget(QWidget):
         if self.message_store:
             self.message_store.mark_all_read(peer_id)
             
-            # Reset the visual appearance of this item (remove bold and color)
-            current_text = item.text()
-            if " [Unread:" in current_text:
-                item.setText(current_text.split(" [Unread:")[0])
-            font = item.font()
-            font.setBold(False)
-            item.setFont(font)
-            item.setForeground(Qt.black)
+            # Update display to reflect read state
+            self._refresh_peer_display(peer_id)
         
         # Emit the signal to select this peer
         self.peer_selected.emit(peer_id)
@@ -258,18 +280,47 @@ class PeerListWidget(QWidget):
         
         logger.debug(f"Selected peer {peer_id}")
     
+    def _refresh_peer_display(self, peer_id):
+        """Refresh the display for a specific peer.
+        
+        Args:
+            peer_id: The ID of the peer to refresh
+        """
+        # Find the row with this peer ID
+        for row in range(self.peer_table.rowCount()):
+            id_item = self.peer_table.item(row, 0)
+            if id_item and id_item.data(Qt.UserRole) == peer_id:
+                # Get status item
+                status_item = self.peer_table.item(row, 1)
+                
+                # Remove bold if this is the current peer (messages have been read)
+                font = id_item.font()
+                font.setBold(False)
+                id_item.setFont(font)
+                status_item.setFont(font)
+                
+                # Update status text to remove unread count
+                status_text = status_item.text()
+                if " (" in status_text:
+                    status_text = status_text.split(" (")[0]
+                    status_item.setText(status_text)
+                break
+    
     def _on_connect_clicked(self):
         """Handle clicking the connect button."""
         # Get the selected peer
-        selected_items = self.peer_list.selectedItems()
-        if not selected_items:
+        selected_rows = self.peer_table.selectedItems()
+        if not selected_rows:
             QMessageBox.warning(self, "No Peer Selected", "Please select a peer to connect to.")
             return
         
-        item = selected_items[0]
-        peer_id = item.data(Qt.UserRole)
-        host = item.data(Qt.UserRole + 1)
-        port = item.data(Qt.UserRole + 2)
+        # Get the peer data from the first column
+        row = selected_rows[0].row()
+        id_item = self.peer_table.item(row, 0)
+        
+        peer_id = id_item.data(Qt.UserRole)
+        host = id_item.data(Qt.UserRole + 1)
+        port = id_item.data(Qt.UserRole + 2)
         
         # Only attempt connection if not already connected
         if peer_id in self.node.get_peers():
