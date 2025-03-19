@@ -27,16 +27,18 @@ class MessagingWidget(QWidget):
     # Signal for opening settings dialog
     open_settings_dialog = pyqtSignal()
     
-    def __init__(self, secure_messaging: SecureMessaging, parent=None):
+    def __init__(self, secure_messaging: SecureMessaging, message_store=None, parent=None):
         """Initialize the messaging widget.
 
         Args:
             secure_messaging: The secure messaging service
+            message_store: The message store for persistent messages (optional)
             parent: The parent widget
         """
         super().__init__(parent)
 
         self.secure_messaging = secure_messaging
+        self.message_store = message_store
         self.current_peer = None
         self.is_connecting = False
 
@@ -232,76 +234,110 @@ class MessagingWidget(QWidget):
         """Update the cryptography settings display."""
         # Always show the crypto panel when a peer is selected
         self.crypto_panel.setVisible(self.current_peer is not None)
-
+    
         # Update our settings
         self.our_key_exchange_label.setText(self.secure_messaging.key_exchange.display_name)
         self.our_symmetric_label.setText(self.secure_messaging.symmetric.name)
         self.our_signature_label.setText(self.secure_messaging.signature.display_name)
-
+    
         # Update connection status and control buttons
         if self.current_peer:
             # Check if the peer is actually connected (in the active peers list)
             connected = self.current_peer in self.secure_messaging.node.get_peers()
             has_shared_key = self.current_peer in self.secure_messaging.shared_keys
-
+            key_exchange_state = self.secure_messaging.key_exchange_states.get(self.current_peer, 0)
+            secure_connection = has_shared_key and key_exchange_state == 4  # KeyExchangeState.ESTABLISHED
+    
             # Enable message controls if we have shared key and are connected
-            self.message_input.setEnabled(connected and has_shared_key)
-            self.send_button.setEnabled(connected and has_shared_key)
-            self.file_button.setEnabled(connected and has_shared_key)
-
+            self.message_input.setEnabled(connected and secure_connection)
+            self.send_button.setEnabled(connected and secure_connection)
+            self.file_button.setEnabled(connected and secure_connection)
+    
             # Get peer settings to check compatibility
             peer_settings = self.secure_messaging.get_peer_crypto_settings(self.current_peer)
             settings_compatible = False
-
+    
             if peer_settings:
                 # Check if key exchange algorithm matches
                 peer_key_exchange = peer_settings.get("key_exchange", "").split(" [Mock]")[0]
                 local_key_exchange = self.secure_messaging.key_exchange.display_name
                 settings_compatible = (peer_key_exchange == local_key_exchange)
-
-            # Only enable key exchange button if:
-            # 1. We're connected
-            # 2. We don't already have a shared key
-            # 3. The settings are compatible
-            self.key_exchange_button.setEnabled(connected and not has_shared_key and settings_compatible)
-
+    
+            # Key exchange button logic:
+            # 1. Only enable if connected
+            # 2. Only enable if we don't already have a verified shared key
+            # 3. Only enable if settings are compatible
+            # 4. Only enable if not currently in a key exchange process
+            in_key_exchange_process = key_exchange_state in [1, 2, 3]  # INITIATED, RESPONDED, CONFIRMED
+            
+            can_exchange_keys = (
+                connected and                # Must be connected
+                not secure_connection and    # Don't need another key exchange if already secure
+                settings_compatible and      # Algorithms must be compatible
+                not in_key_exchange_process  # Not already doing key exchange
+            )
+            
+            self.key_exchange_button.setEnabled(can_exchange_keys)
+            
+            # Update button text to show current state
+            if in_key_exchange_process:
+                self.key_exchange_button.setText("Key Exchange in Progress...")
+            elif secure_connection:
+                self.key_exchange_button.setText("Secure Connection Established")
+            else:
+                self.key_exchange_button.setText("Establish Shared Key")
+    
             # If settings are incompatible, show a tooltip explaining why
-            if not settings_compatible and connected and not has_shared_key:
+            if not settings_compatible and connected:
                 self.key_exchange_button.setToolTip(
                     "Cannot establish shared key: Cryptographic settings mismatch.\n"
                     "You must use matching key exchange algorithms."
                 )
+            elif in_key_exchange_process:
+                self.key_exchange_button.setToolTip(
+                    "Key exchange is currently in progress.\n"
+                    "Please wait for it to complete."
+                )
+            elif secure_connection:
+                self.key_exchange_button.setToolTip(
+                    "You already have a secure connection with this peer."
+                )
             else:
-                self.key_exchange_button.setToolTip("")
-
+                self.key_exchange_button.setToolTip(
+                    "Click to establish a secure connection with this peer."
+                )
+    
             # Update connection status label
             if not connected:
                 self.connection_status_label.setText("Not connected")
                 self.connection_status_label.setStyleSheet("font-weight: bold; color: red;")
-
+    
                 # Make sure to disable all controls
                 self.message_input.setEnabled(False)
                 self.send_button.setEnabled(False)
                 self.file_button.setEnabled(False)
                 self.key_exchange_button.setEnabled(False)
-            elif connected and has_shared_key:
-                self.connection_status_label.setText("Connected with shared key")
+            elif secure_connection:
+                self.connection_status_label.setText("Connected with secure channel")
                 self.connection_status_label.setStyleSheet("font-weight: bold; color: green;")
-            else:
-                self.connection_status_label.setText("Connected, no shared key")
+            elif in_key_exchange_process:
+                self.connection_status_label.setText("Key exchange in progress...")
                 self.connection_status_label.setStyleSheet("font-weight: bold; color: orange;")
-
+            else:
+                self.connection_status_label.setText("Connected, no secure channel")
+                self.connection_status_label.setStyleSheet("font-weight: bold; color: orange;")
+    
             # Update peer settings if available
             if peer_settings:
                 # Update peer settings
                 key_exchange = peer_settings.get("key_exchange", "-")
                 symmetric = peer_settings.get("symmetric", "-")
                 signature = peer_settings.get("signature", "-")
-
+    
                 self.peer_key_exchange_label.setText(key_exchange)
                 self.peer_symmetric_label.setText(symmetric)
                 self.peer_signature_label.setText(signature)
-
+    
                 # Highlight differences
                 self.peer_key_exchange_label.setStyleSheet(
                     "color: red;" if key_exchange.split(" [Mock]")[0] != self.secure_messaging.key_exchange.display_name else ""
@@ -312,7 +348,7 @@ class MessagingWidget(QWidget):
                 self.peer_signature_label.setStyleSheet(
                     "color: red;" if signature.split(" [Mock]")[0] != self.secure_messaging.signature.display_name else ""
                 )
-
+    
                 # Enable adopt settings button if there are differences and we're connected
                 has_differences = (
                     key_exchange.split(" [Mock]")[0] != self.secure_messaging.key_exchange.display_name or
@@ -320,7 +356,7 @@ class MessagingWidget(QWidget):
                     signature.split(" [Mock]")[0] != self.secure_messaging.signature.display_name
                 )
                 self.adopt_settings_button.setEnabled(connected and has_differences)
-
+    
                 # If there are differences, add a hint in the chat if not already notified
                 if has_differences and not hasattr(self, '_mismatch_notified'):
                     self._add_system_message("Cryptographic settings differ from peer. Consider using 'Use Peer Settings' button to adopt them.", True)
@@ -331,7 +367,7 @@ class MessagingWidget(QWidget):
                 self.peer_symmetric_label.setText("Requesting...")
                 self.peer_signature_label.setText("Requesting...")
                 self.adopt_settings_button.setEnabled(False)
-
+    
                 # Request settings from peer
                 if connected:
                     self.async_task.emit(
@@ -380,13 +416,19 @@ class MessagingWidget(QWidget):
         if is_connected:
             self._add_system_message("Connected to peer")
             has_shared_key = peer_id in self.secure_messaging.shared_keys
+            key_exchange_state = self.secure_messaging.key_exchange_states.get(peer_id, 0)
 
-            if has_shared_key:
-                self._add_system_message("Shared key established")
+            if has_shared_key and key_exchange_state == 4:  # KeyExchangeState.ESTABLISHED
+                self._add_system_message("Secure connection established")
                 self._enable_messaging()
             else:
-                self._add_system_message("No shared key established.")
+                self._add_system_message("No secure connection established. Use 'Establish Shared Key' button to create a secure channel.", True)
                 self._disable_messaging()
+
+                # Request crypto settings to prepare for key exchange
+                self.async_task.emit(
+                    self.secure_messaging.request_crypto_settings_from_peer(peer_id)
+                )
 
             # Make crypto panel visible immediately with "requesting" status
             self.crypto_panel.setVisible(True)
@@ -396,8 +438,19 @@ class MessagingWidget(QWidget):
                 self.secure_messaging.request_crypto_settings_from_peer(peer_id)
             )
         else:
-            self._add_system_message("Not connected to peer. Use the Connect button in the peer list.")
+            self._add_system_message("Not connected to peer. Use the Connect button in the peer list.", True)
             self._disable_messaging()
+
+        # Load previous messages if we have a message store
+        if self.message_store:
+            messages = self.message_store.get_messages(peer_id)
+            if messages:
+                self._add_system_message(f"Loading {len(messages)} previous messages...")
+
+                for message in messages:
+                    # Determine if this message is from us or the peer
+                    is_outgoing = message.sender_id == self.secure_messaging.node.node_id
+                    self._add_message(message, is_outgoing)
 
         # Update the crypto settings display
         self._update_crypto_display()
@@ -645,6 +698,10 @@ class MessagingWidget(QWidget):
             is_file=False
         )
         
+        # Store the message in our message store if available (mark as read)
+        if self.message_store:
+            self.message_store.add_message(message, mark_as_read=True)
+        
         # Add the message to the chat area
         self._add_message(message, is_outgoing=True)
         
@@ -687,31 +744,27 @@ class MessagingWidget(QWidget):
         self.async_task.emit(self._send_file(file_path))
     
     async def _send_file(self, file_path: str):
-        """Send a file to the current peer.
-        
-        Args:
-            file_path: Path to the file to send
-        """
+        """Send a file to the current peer."""
         try:
             # Get file info
             file_name = os.path.basename(file_path)
             file_size = os.path.getsize(file_path)
-            
+
             # Read the file
             with open(file_path, "rb") as f:
                 data = f.read()
-            
+
             # Update progress bar
             self.progress_bar.setValue(50)
-            
+
             # Send the file
             success = await self.secure_messaging.send_file(self.current_peer, file_path)
-            
+
             # Update progress bar and hide it
             self.progress_bar.setValue(100)
             await asyncio.sleep(0.5)  # Short delay before hiding
             self.progress_bar.setVisible(False)
-            
+
             if success:
                 # Create a message object for the UI
                 message = Message(
@@ -720,15 +773,19 @@ class MessagingWidget(QWidget):
                     is_file=True,
                     filename=file_name
                 )
-                
+
+                # Store the message in our message store if available (mark as read)
+                if self.message_store:
+                    self.message_store.add_message(message, mark_as_read=True)
+
                 # Add the message to the chat area
                 self._add_message(message, is_outgoing=True)
-                
+
                 logger.info(f"File sent successfully: {file_name} ({file_size} bytes)")
             else:
                 self._add_system_message(f"Failed to send file: {file_name}", True)
                 logger.error(f"Failed to send file: {file_name}")
-            
+
         except Exception as e:
             self.progress_bar.setVisible(False)
             self._add_system_message(f"Error sending file: {str(e)}", True)

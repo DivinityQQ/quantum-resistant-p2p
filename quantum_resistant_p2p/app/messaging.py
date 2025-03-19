@@ -1301,6 +1301,22 @@ class SecureMessaging:
         """
         logger.debug(f"Sending message to {peer_id}")
         
+        # First, verify that the key exchange is valid
+        if not self.verify_key_exchange_state(peer_id):
+            logger.warning(f"Key exchange with {peer_id} is not valid or complete")
+            
+            # Notify about the issue
+            for handler in self.global_message_handlers:
+                try:
+                    system_message = Message.system_message(
+                        f"Cannot send message to {peer_id}: Secure channel not established. Please initiate key exchange."
+                    )
+                    handler(system_message)
+                except Exception as e:
+                    logger.error(f"Error in system message handler: {e}")
+            
+            return False
+        
         # Make sure we have a shared key
         if peer_id not in self.shared_keys:
             logger.info(f"No shared key with {peer_id}, initiating key exchange")
@@ -1729,3 +1745,112 @@ class SecureMessaging:
         else:
             logger.info(f"No settings changes needed for peer {peer_id}")
             return False
+
+    def verify_key_exchange_state(self, peer_id: str) -> bool:
+        """Verify the key exchange state for a peer.
+
+        This function checks if a key exchange with a peer is actually valid
+        and properly established, not just assumed from a previous connection.
+
+        Args:
+            peer_id: The ID of the peer
+
+        Returns:
+            True if the key exchange is valid, False otherwise
+        """
+        # Check if we have a shared key
+        if peer_id not in self.shared_keys:
+            logger.debug(f"No shared key exists for peer {peer_id}")
+            return False
+
+        # Check if the key exchange is in a valid state
+        valid_states = [KeyExchangeState.CONFIRMED, KeyExchangeState.ESTABLISHED]
+        if peer_id not in self.key_exchange_states or self.key_exchange_states[peer_id] not in valid_states:
+            logger.warning(f"Key exchange with {peer_id} is in an invalid state: " +
+                          f"{self.key_exchange_states.get(peer_id, 'NONE')}")
+            return False
+
+        # Check if the peer is actually connected
+        if peer_id not in self.node.get_peers():
+            logger.warning(f"Peer {peer_id} has a shared key but is not connected")
+            return False
+
+        # All checks passed, key exchange is valid
+        return True
+
+class MessageStore:
+    """Store for secure messages to provide persistence and unread count tracking."""
+    
+    def __init__(self):
+        """Initialize a new message store."""
+        # Maps peer_id -> list of Message objects
+        self.messages = {}
+        # Maps peer_id -> count of unread messages
+        self.unread_counts = {}
+        # Maps peer_id -> timestamp of last message
+        self.last_activity = {}
+    
+    def add_message(self, message, mark_as_read=False):
+        """Add a message to the store.
+        
+        Args:
+            message: The message to store
+            mark_as_read: Whether to mark the message as read immediately
+        """
+        peer_id = message.sender_id
+        
+        # Initialize data structures for this peer if needed
+        if peer_id not in self.messages:
+            self.messages[peer_id] = []
+            self.unread_counts[peer_id] = 0
+        
+        # Add the message
+        self.messages[peer_id].append(message)
+        
+        # Update last activity timestamp
+        self.last_activity[peer_id] = message.timestamp
+        
+        # Increment unread count if not marked as read
+        if not mark_as_read:
+            self.unread_counts[peer_id] = self.unread_counts.get(peer_id, 0) + 1
+    
+    def get_messages(self, peer_id):
+        """Get all messages for a peer.
+        
+        Args:
+            peer_id: The ID of the peer
+            
+        Returns:
+            List of Message objects
+        """
+        return self.messages.get(peer_id, [])
+    
+    def mark_all_read(self, peer_id):
+        """Mark all messages from a peer as read.
+        
+        Args:
+            peer_id: The ID of the peer
+        """
+        self.unread_counts[peer_id] = 0
+    
+    def get_unread_count(self, peer_id):
+        """Get the number of unread messages from a peer.
+        
+        Args:
+            peer_id: The ID of the peer
+            
+        Returns:
+            The number of unread messages
+        """
+        return self.unread_counts.get(peer_id, 0)
+    
+    def has_unread_messages(self, peer_id):
+        """Check if a peer has any unread messages.
+        
+        Args:
+            peer_id: The ID of the peer
+            
+        Returns:
+            True if there are unread messages, False otherwise
+        """
+        return self.get_unread_count(peer_id) > 0

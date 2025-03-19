@@ -23,7 +23,7 @@ from .security_metrics_dialog import SecurityMetricsDialog
 from .log_viewer_dialog import LogViewerDialog
 from .oqs_status_widget import OQSStatusWidget
 from .login_dialog import LoginDialog
-from ..app import SecureMessaging, SecureLogger
+from ..app import SecureMessaging, SecureLogger, MessageStore
 from ..crypto import KeyStorage
 from ..networking import P2PNode, NodeDiscovery
 
@@ -88,6 +88,7 @@ class MainWindow(QMainWindow):
         
         # Then initialize the rest of the system
         self._init_network()
+        self.message_store = MessageStore()
         self._init_ui()
     
         # Register message handler BEFORE starting the network
@@ -126,11 +127,11 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(splitter)
 
         # Left panel - peer list
-        self.peer_list = PeerListWidget(self.node, self.node_discovery, self.secure_messaging)
+        self.peer_list = PeerListWidget(self.node, self.node_discovery, self.secure_messaging, message_store=self.message_store)
         splitter.addWidget(self.peer_list)
 
         # Right panel - messaging
-        self.messaging = MessagingWidget(self.secure_messaging)
+        self.messaging = MessagingWidget(self.secure_messaging, message_store=self.message_store)
         splitter.addWidget(self.messaging)
 
         # Set initial splitter sizes
@@ -303,9 +304,18 @@ class MainWindow(QMainWindow):
                 logger.info(f"System message: {content}")
             except Exception as e:
                 logger.error(f"Error displaying system message: {e}")
+            return
+
+        # Add the message to the message store, mark as read only if it's from the current peer
+        # and the messaging widget is visible
+        mark_as_read = (hasattr(self, 'messaging') and 
+                       self.messaging.current_peer == message.sender_id and
+                       self.messaging.isVisible())
+
+        self.message_store.add_message(message, mark_as_read=mark_as_read)
 
         # Check if message is from the currently selected peer
-        elif hasattr(self, 'messaging') and self.messaging.current_peer == message.sender_id:
+        if hasattr(self, 'messaging') and self.messaging.current_peer == message.sender_id:
             # Pass to messaging widget for display
             self.messaging.handle_message(message)
         else:
@@ -316,6 +326,13 @@ class MainWindow(QMainWindow):
                 self.status_bar.showMessage(f"Received file '{filename}' from {sender_id}", 5000)
             else:
                 self.status_bar.showMessage(f"New message from {sender_id}", 5000)
+
+        # Update the peer list to show unread indicators
+        if hasattr(self, 'peer_list'):
+            self.peer_list.update_peers(
+                self.node_discovery.get_discovered_nodes(), 
+                self.node.get_peers()
+            )
     
     async def _connect_to_peer(self, host: str, port: int):
         """Connect to a peer.

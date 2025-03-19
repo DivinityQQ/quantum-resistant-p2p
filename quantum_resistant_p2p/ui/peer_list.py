@@ -25,13 +25,14 @@ class PeerListWidget(QWidget):
     # Signal to indicate connection started
     connection_started = pyqtSignal(str, str, int)
     
-    def __init__(self, node: P2PNode, discovery: NodeDiscovery, secure_messaging=None, parent=None):
+    def __init__(self, node: P2PNode, discovery: NodeDiscovery, secure_messaging=None, message_store=None, parent=None):
         """Initialize the peer list widget.
         
         Args:
             node: The P2P node
             discovery: The node discovery service
             secure_messaging: The secure messaging service (optional)
+            message_store: The message store for persistent messages (optional)
             parent: The parent widget
         """
         super().__init__(parent)
@@ -39,6 +40,7 @@ class PeerListWidget(QWidget):
         self.node = node
         self.discovery = discovery
         self.secure_messaging = secure_messaging
+        self.message_store = message_store
         
         # Keep track of the currently selected peer
         self.current_peer_id = None
@@ -116,43 +118,65 @@ class PeerListWidget(QWidget):
         
         # Add discovered peers
         for node_id, host, port in discovered:
+            # Basic item information
             item = QListWidgetItem(f"{node_id[:8]}... ({host}:{port})")
             item.setData(Qt.UserRole, node_id)
-            # Store host and port as additional data
             item.setData(Qt.UserRole + 1, host)
             item.setData(Qt.UserRole + 2, port)
             
-            # Highlight connected peers
-            if node_id in connected:
-                item.setForeground(Qt.green)
-                
-                # Add crypto status indicator if available
-                status_text = " [Connected"
-                
-                if self.secure_messaging and node_id in self.secure_messaging.peer_crypto_settings:
-                    peer_settings = self.secure_messaging.peer_crypto_settings[node_id]
-                    my_settings = {
-                        "key_exchange": self.secure_messaging.key_exchange.name,
-                        "symmetric": self.secure_messaging.symmetric.name,
-                        "signature": self.secure_messaging.signature.name
-                    }
-                    
-                    # Check for mismatches
-                    has_mismatches = any(
-                        peer_settings.get(key) != my_settings[key]
-                        for key in my_settings
-                        if key in peer_settings
-                    )
-                    
-                    if has_mismatches:
-                        status_text += ", ⚠️ Settings differ]"
-                        item.setForeground(QColor(255, 165, 0))  # Orange for warning
-                    else:
-                        status_text += ", ✓ Compatible]"
+            # Determine state and styling
+            is_connected = node_id in connected
+            has_shared_key = False
+            is_secure = False
+            
+            if self.secure_messaging:
+                has_shared_key = node_id in self.secure_messaging.shared_keys
+                key_exchange_state = self.secure_messaging.key_exchange_states.get(node_id, 0)
+                is_secure = has_shared_key and key_exchange_state == 4  # ESTABLISHED
+            
+            # Set text and color based on state
+            status_text = ""
+            text_color = Qt.black
+            
+            if is_connected:
+                if is_secure:
+                    status_text = " [Secure]"
+                    text_color = Qt.darkGreen
                 else:
-                    status_text += "]"
-                
-                item.setText(f"{node_id[:8]}... ({host}:{port}) {status_text}")
+                    if has_shared_key:
+                        # We have a key, but it's not fully established
+                        status_text = " [Connected, Key Exchange Needed]"
+                        text_color = QColor(255, 140, 0)  # Dark orange
+                    else:
+                        status_text = " [Connected]"
+                        text_color = Qt.green
+                    
+                    # Add crypto compatibility indicator
+                    if self.secure_messaging and node_id in self.secure_messaging.peer_crypto_settings:
+                        peer_settings = self.secure_messaging.peer_crypto_settings[node_id]
+                        my_settings = {
+                            "key_exchange": self.secure_messaging.key_exchange.name,
+                            "symmetric": self.secure_messaging.symmetric.name,
+                            "signature": self.secure_messaging.signature.name
+                        }
+                        
+                        # Check for mismatches
+                        has_mismatches = any(
+                            peer_settings.get(key) != my_settings[key]
+                            for key in my_settings
+                            if key in peer_settings
+                        )
+                        
+                        if has_mismatches:
+                            status_text += " ⚠️ Settings Differ"
+                            text_color = QColor(255, 165, 0)  # Orange for warning
+            
+            # Update the display text with status
+            if status_text:
+                item.setText(f"{node_id[:8]}... ({host}:{port}){status_text}")
+            
+            # Set the text color
+            item.setForeground(text_color)
             
             self.peer_list.addItem(item)
             
@@ -166,6 +190,34 @@ class PeerListWidget(QWidget):
             
         # Restore scroll position
         self.peer_list.verticalScrollBar().setValue(scrollbar_pos)
+        
+        # Add unread message indicators 
+        if self.message_store:
+            for i in range(self.peer_list.count()):
+                item = self.peer_list.item(i)
+                peer_id = item.data(Qt.UserRole)
+                
+                if self.message_store.has_unread_messages(peer_id):
+                    unread_count = self.message_store.get_unread_count(peer_id)
+                    
+                    # Add unread count to the displayed text
+                    current_text = item.text()
+                    # Remove existing unread indicator if present
+                    if " [Unread:" in current_text:
+                        current_text = current_text.split(" [Unread:")[0]
+                    
+                    # Add new unread indicator
+                    item.setText(f"{current_text} [Unread: {unread_count}]")
+                    
+                    # Highlight with bold text and different color for unread
+                    font = item.font()
+                    font.setBold(True)
+                    item.setFont(font)
+                    
+                    # Don't change colors for connected or secure peers
+                    current_color = item.foreground().color()
+                    if current_color == Qt.black:  # Only change if not already colored
+                        item.setForeground(QColor(0, 120, 215))  # Blue for unread
         
         logger.debug(f"Updated peer list with {len(discovered)} peers")
     
@@ -182,6 +234,19 @@ class PeerListWidget(QWidget):
         
         # Store the current peer ID
         self.current_peer_id = peer_id
+        
+        # Mark all messages from this peer as read if we have a message store
+        if self.message_store:
+            self.message_store.mark_all_read(peer_id)
+            
+            # Reset the visual appearance of this item (remove bold and color)
+            current_text = item.text()
+            if " [Unread:" in current_text:
+                item.setText(current_text.split(" [Unread:")[0])
+            font = item.font()
+            font.setBold(False)
+            item.setFont(font)
+            item.setForeground(Qt.black)
         
         # Emit the signal to select this peer
         self.peer_selected.emit(peer_id)
