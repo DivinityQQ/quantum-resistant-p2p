@@ -107,6 +107,10 @@ class MainWindow(QMainWindow):
         self.node = P2PNode()
         # Create node discovery
         self.node_discovery = NodeDiscovery(self.node.node_id, port=self.node.port)
+        
+        # Set the reference to node_discovery in the node
+        self.node.node_discovery = self.node_discovery
+        
         # Create secure messaging
         self.secure_messaging = SecureMessaging(
             node=self.node,

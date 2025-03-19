@@ -189,7 +189,30 @@ class NodeDiscovery:
             logger.debug("Sent node announcement via broadcast")
         except Exception as e:
             logger.error(f"Failed to send broadcast: {e}")
-    
+
+    def _send_direct_announcement(self, host: str, port: int) -> None:
+        """Send an announcement message directly to a specific peer.
+        
+        Args:
+            host: The host address to send to
+            port: The port to send to (should be discovery_port, not regular port)
+        """
+        announcement = {
+            'type': 'node_announcement',
+            'node_id': self.node_id,
+            'host': self.advertised_host,
+            'port': self.port
+        }
+        
+        data = json.dumps(announcement).encode()
+        
+        # Send directly to the peer's discovery port
+        try:
+            self.transport.sendto(data, (host, self.discovery_port))
+            logger.debug(f"Sent direct node announcement to {host}:{self.discovery_port}")
+        except Exception as e:
+            logger.error(f"Failed to send direct announcement to {host}:{self.discovery_port}: {e}")
+
     async def _cleanup_old_nodes(self) -> None:
         """Periodically clean up nodes that haven't been seen recently."""
         while self.running:

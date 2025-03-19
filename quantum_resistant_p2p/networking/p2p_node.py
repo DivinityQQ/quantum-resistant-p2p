@@ -16,7 +16,7 @@ class P2PNode:
     """A peer-to-peer network node supporting direct communication between peers."""
     
     def __init__(self, host: str = '0.0.0.0', port: int = 8000, node_id: Optional[str] = None,
-                 max_chunk_size: int = 64*1024):  # 64KB default chunk size
+                 max_chunk_size: int = 64*1024, node_discovery=None):
         """Initialize a new P2P node.
         
         Args:
@@ -24,6 +24,7 @@ class P2PNode:
             port: The port number to listen on
             node_id: Unique identifier for this node. If None, a random UUID is generated.
             max_chunk_size: Maximum size of message chunks in bytes
+            node_discovery: Optional reference to the NodeDiscovery instance
         """
         self.host = host
         self.port = port
@@ -33,9 +34,9 @@ class P2PNode:
         self.connections: Dict[str, asyncio.StreamWriter] = {}  # node_id -> writer
         self.server = None
         self.message_handlers: Dict[str, List[Callable]] = {}
-        # New: Connection event handlers
         self.connection_handlers: Set[Callable[[str], None]] = set()
         self.running = False
+        self.node_discovery = node_discovery  # Store reference to NodeDiscovery
         
         logger.info(f"P2P Node initialized with ID: {self.node_id}")
     
@@ -175,36 +176,36 @@ class P2PNode:
     
     async def connect_to_peer(self, host: str, port: int) -> bool:
         """Connect to a peer at the specified host and port.
-
+    
         Args:
             host: The host IP address or hostname of the peer
             port: The port number the peer is listening on
-
+    
         Returns:
             bool: True if connection successful, False otherwise
         """
         logger.info(f"Attempting to connect to peer at {host}:{port}")
-
+    
         # First check if we're already connected to this peer by host and port
         for peer_id, (peer_host, peer_port) in self.peers.items():
             if peer_host == host and peer_port == port:
                 logger.info(f"Already connected to peer {peer_id} at {host}:{port}")
                 return True
-
+    
         try:
             reader, writer = await asyncio.open_connection(host, port)
-
+    
             # Send initial message with our node ID
             initial_message = {
                 'node_id': self.node_id,
                 'type': 'hello'
             }
             initial_json = json.dumps(initial_message).encode()
-
+    
             # Use chunked sending
             await self._send_chunked_message(writer, initial_json)
             logger.debug(f"Sent hello message to {host}:{port}")
-
+    
             # Read peer's response to get their node ID
             try:
                 data = await asyncio.wait_for(self._read_message(reader), timeout=5.0)
@@ -216,41 +217,48 @@ class P2PNode:
                 logger.error(f"Timeout waiting for response from {host}:{port}")
                 writer.close()
                 return False
-
+    
             try:
                 message = json.loads(data.decode())
             except json.JSONDecodeError:
                 logger.error(f"Invalid JSON response from peer at {host}:{port}")
                 writer.close()
                 return False
-
+    
             if 'node_id' not in message:
                 logger.error(f"Invalid response from peer at {host}:{port}, missing node_id")
                 writer.close()
                 return False
-
+    
             peer_id = message['node_id']
-
+    
             # Don't connect to ourselves
             if peer_id == self.node_id:
                 logger.warning(f"Attempted to connect to ourselves at {host}:{port}")
                 writer.close()
                 return False
-
+    
             # Store peer information
             self.peers[peer_id] = (host, port)
             self.connections[peer_id] = writer
-
+    
             logger.info(f"Connected to peer {peer_id} at {host}:{port}")
-
+    
             # Start a task to handle messages from this peer
             asyncio.create_task(self._handle_peer_messages(peer_id, reader))
-
+    
             # Notify connection handlers
             await self._notify_connection_handlers(peer_id)
-
+            
+            # NEW: If we have a node discovery instance, add the peer to it
+            # This ensures the peer immediately shows up in both sides' peer lists
+            if hasattr(self, 'node_discovery') and self.node_discovery:
+                self.node_discovery.add_known_node(peer_id, host, port)
+                # Also send a direct announcement to the new peer
+                self.node_discovery._send_direct_announcement(host, port)
+    
             return True
-
+    
         except (OSError, asyncio.TimeoutError) as e:
             logger.error(f"Failed to connect to peer at {host}:{port}: {e}")
             return False
