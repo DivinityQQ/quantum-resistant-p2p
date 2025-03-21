@@ -88,7 +88,11 @@ class MainWindow(QMainWindow):
         
         # Then initialize the rest of the system
         self._init_network()
+        
+        # Create the message store and set the current node ID
         self.message_store = MessageStore()
+        self.message_store.set_current_node_id(self.node.node_id)
+        
         self._init_ui()
     
         # Register message handler BEFORE starting the network

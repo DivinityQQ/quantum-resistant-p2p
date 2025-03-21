@@ -1345,7 +1345,7 @@ class SecureMessaging:
                 logger.error(f"Missing signature keypair for {self.signature.name}")
                 return False
 
-            # Create the message - now with recipient_id set
+            # Create the message with recipient_id set
             message = Message(
                 content=content,
                 sender_id=self.node.node_id,
@@ -1808,33 +1808,38 @@ class MessageStore:
             mark_as_read: Whether to mark the message as read immediately
         """
         # Determine the conversation peer_id based on message direction
-        if message.sender_id == self.current_node_id and message.recipient_id:
-            # Outgoing message - use recipient_id as the conversation key
-            peer_id = message.recipient_id
-        elif message.recipient_id == self.current_node_id:
-            # Incoming direct message - use sender_id as the conversation key
-            peer_id = message.sender_id
-        elif message.is_system:
-            # System messages don't belong to a specific conversation
-            return
-        else:
-            # Use sender_id as fallback (for incoming messages without explicit recipient)
-            peer_id = message.sender_id
+        store_peer_id = None
+        
+        if hasattr(message, 'recipient_id') and message.recipient_id:
+            if message.sender_id == self.current_node_id:
+                # Outgoing message - use recipient_id as the conversation key
+                store_peer_id = message.recipient_id
+            elif message.recipient_id == self.current_node_id:
+                # Incoming direct message - use sender_id as the conversation key
+                store_peer_id = message.sender_id
+        
+        if store_peer_id is None:
+            # Fallback to sender_id if direction can't be determined
+            store_peer_id = message.sender_id
+            
+            # Skip system messages that aren't part of a conversation
+            if message.is_system:
+                return
         
         # Initialize data structures for this peer if needed
-        if peer_id not in self.messages:
-            self.messages[peer_id] = []
-            self.unread_counts[peer_id] = 0
+        if store_peer_id not in self.messages:
+            self.messages[store_peer_id] = []
+            self.unread_counts[store_peer_id] = 0
         
         # Add the message
-        self.messages[peer_id].append(message)
+        self.messages[store_peer_id].append(message)
         
         # Update last activity timestamp
-        self.last_activity[peer_id] = message.timestamp
+        self.last_activity[store_peer_id] = message.timestamp
         
         # Increment unread count if not marked as read
         if not mark_as_read:
-            self.unread_counts[peer_id] = self.unread_counts.get(peer_id, 0) + 1
+            self.unread_counts[store_peer_id] = self.unread_counts.get(store_peer_id, 0) + 1
     
     def get_messages(self, peer_id):
         """Get all messages for a peer.
