@@ -25,6 +25,8 @@ class PeerListWidget(QWidget):
     async_task = pyqtSignal(object)
     # Signal to indicate connection started
     connection_started = pyqtSignal(str, str, int)
+    # Signal to indicate add peer requested
+    add_peer_requested = pyqtSignal()
     
     def __init__(self, node: P2PNode, discovery: NodeDiscovery, secure_messaging=None, message_store=None, parent=None):
         """Initialize the peer list widget.
@@ -344,32 +346,10 @@ class PeerListWidget(QWidget):
         logger.debug("Manually refreshed peer list")
     
     def _on_add_peer_clicked(self):
-        """Handle clicking the add peer button."""
-        # Show input dialog for host and port
-        host, ok = QInputDialog.getText(
-            self, "Add Peer", "Enter peer host:"
-        )
-        
-        if not ok or not host:
-            return
-        
-        port, ok = QInputDialog.getInt(
-            self, "Add Peer", "Enter peer port:", 8000, 1, 65535
-        )
-        
-        if not ok:
-            return
-        
-        # Add the peer to discovery
-        node_id = f"manual_{host}_{port}"
-        self.discovery.add_known_node(node_id, host, port)
-        
-        # Update the list
-        discovered = self.discovery.get_discovered_nodes()
-        connected = self.node.get_peers()
-        self.update_peers(discovered, connected)
-        
-        logger.info(f"Manually added peer {host}:{port}")
+        """Handle clicking the add peer button by delegating to MainWindow."""
+        # Simply emit the signal - MainWindow will handle the rest
+        self.add_peer_requested.emit()
+        logger.debug("Add peer button clicked, emitting add_peer_requested signal")
         
     def _refresh_crypto_indicators(self):
         """Refresh crypto status indicators in the peer list."""

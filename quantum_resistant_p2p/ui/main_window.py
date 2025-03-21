@@ -167,6 +167,7 @@ class MainWindow(QMainWindow):
         self.peer_list.connection_started.connect(self.messaging.initiate_connection)
         self.peer_list.async_task.connect(self._run_async_task)
         self.messaging.open_settings_dialog.connect(self._show_crypto_settings)
+        self.peer_list.add_peer_requested.connect(self._show_connect_dialog)
 
         # Register for crypto settings changes
         self.secure_messaging.register_settings_change_listener(self._update_crypto_status)
