@@ -422,11 +422,11 @@ class MainWindow(QMainWindow):
         """Show the about dialog."""
         QMessageBox.about(
             self,
-            "About Quantum P2P",
-            "<h2>Quantum P2P</h2>"
+            "About Quantum Resistant P2P",
+            "<h2>Quantum Resistant P2P</h2>"
             "<p>A secure peer-to-peer application using post-quantum cryptography.</p>"
-            "<p>Version: 0.1.0</p>"
-            "<p>© 2025 Your Name</p>"
+            "<p>Version: 0.2.0</p>"
+            "<p>© 2025 DivinityQQ</p>"
         )
     
     def closeEvent(self, event):
