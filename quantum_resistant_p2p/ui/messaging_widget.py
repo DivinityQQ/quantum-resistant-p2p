@@ -786,35 +786,36 @@ class MessagingWidget(QWidget):
         if not self.current_peer:
             logger.warning("No peer selected, cannot send message")
             return
-        
+
         # Check if connected
         if self.current_peer not in self.secure_messaging.node.get_peers():
             self._add_system_message("Not connected to peer. Connect first.", True)
             return
-        
+
         # Get the message
         text = self.message_input.text().strip()
         if not text:
             return
-        
+
         # Clear the input field
         self.message_input.clear()
-        
-        # Create a message
+
+        # Create a message with recipient_id set
         content = text.encode("utf-8")
         message = Message(
             content=content,
             sender_id=self.secure_messaging.node.node_id,
+            recipient_id=self.current_peer,  # Set recipient explicitly
             is_file=False
         )
-        
+
         # Store the message in our message store if available (mark as read)
         if self.message_store:
             self.message_store.add_message(message, mark_as_read=True)
-        
+
         # Add the message to the chat area
         self._add_message(message, is_outgoing=True)
-        
+
         # Send the message asynchronously
         self.async_task.emit(
             self.secure_messaging.send_message(self.current_peer, content)
@@ -876,10 +877,11 @@ class MessagingWidget(QWidget):
             self.progress_bar.setVisible(False)
 
             if success:
-                # Create a message object for the UI
+                # Create a message object for the UI with recipient_id set
                 message = Message(
                     content=data,
                     sender_id=self.secure_messaging.node.node_id,
+                    recipient_id=self.current_peer,  # Set recipient explicitly
                     is_file=True,
                     filename=file_name
                 )

@@ -33,6 +33,7 @@ class Message:
     
     content: bytes
     sender_id: str
+    recipient_id: Optional[str] = None  # Explicit recipient field
     message_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     timestamp: float = field(default_factory=time.time)
     is_file: bool = False
@@ -1210,6 +1211,12 @@ class SecureMessaging:
                 
                 # Parse the message
                 message_data = json.loads(plaintext.decode())
+                
+                # Set the recipient_id for the message (to this node)
+                # This ensures proper conversation tracking
+                if 'recipient_id' not in message_data:
+                    message_data['recipient_id'] = self.node.node_id
+                    
                 decrypted_message = Message.from_dict(message_data)
                 
                 # Check if we've already processed this message
@@ -1287,24 +1294,24 @@ class SecureMessaging:
             logger.error(f"Error handling secure message from {peer_id}: {e}")
     
     async def send_message(self, peer_id: str, content: bytes, 
-                    is_file: bool = False, filename: Optional[str] = None) -> bool:
+                        is_file: bool = False, filename: Optional[str] = None) -> bool:
         """Send a secure message to a peer.
-        
+
         Args:
             peer_id: The ID of the peer to send the message to
             content: The message content
             is_file: Whether the content is a file
             filename: The filename, if is_file is True
-            
+
         Returns:
             True if message sent successfully, False otherwise
         """
         logger.debug(f"Sending message to {peer_id}")
-        
+
         # First, verify that the key exchange is valid
         if not self.verify_key_exchange_state(peer_id):
             logger.warning(f"Key exchange with {peer_id} is not valid or complete")
-            
+
             # Notify about the issue
             for handler in self.global_message_handlers:
                 try:
@@ -1314,9 +1321,9 @@ class SecureMessaging:
                     handler(system_message)
                 except Exception as e:
                     logger.error(f"Error in system message handler: {e}")
-            
+
             return False
-        
+
         # Make sure we have a shared key
         if peer_id not in self.shared_keys:
             logger.info(f"No shared key with {peer_id}, initiating key exchange")
@@ -1324,24 +1331,25 @@ class SecureMessaging:
             if not success:
                 logger.error(f"Failed to establish shared key with {peer_id}")
                 return False
-        
+
         # Verify the key exchange is in a valid state
         valid_states = [KeyExchangeState.CONFIRMED, KeyExchangeState.ESTABLISHED]
         if peer_id not in self.key_exchange_states or self.key_exchange_states[peer_id] not in valid_states:
             logger.error(f"Key exchange with {peer_id} is not in a valid state for sending messages")
             return False
-        
+
         try:
             # Get our signature keypair
             signature_key = self.key_storage.get_key(f"signature_{self.signature.name}")
             if signature_key is None:
                 logger.error(f"Missing signature keypair for {self.signature.name}")
                 return False
-            
-            # Create the message
+
+            # Create the message - now with recipient_id set
             message = Message(
                 content=content,
                 sender_id=self.node.node_id,
+                recipient_id=peer_id,  # Set the recipient ID explicitly
                 is_file=is_file,
                 filename=filename,
                 # Include algorithm information in the message
@@ -1349,17 +1357,17 @@ class SecureMessaging:
                 symmetric_algo=self.symmetric.name,
                 signature_algo=self.signature.name
             )
-            
+
             # Convert to JSON
             message_json = json.dumps(message.to_dict()).encode()
-            
+
             # Sign the message
             private_key = signature_key["private_key"]
             signature = self.signature.sign(private_key, message_json)
-            
+
             # Encrypt the message
             ciphertext = self.symmetric.encrypt(self.shared_keys[peer_id], message_json)
-            
+
             # Log the message
             self.secure_logger.log_event(
                 event_type="message_sent",
@@ -1370,7 +1378,7 @@ class SecureMessaging:
                 is_file=is_file,
                 size=len(content)
             )
-            
+
             # Send the encrypted message
             success = await self.node.send_message(
                 peer_id=peer_id,
@@ -1379,14 +1387,14 @@ class SecureMessaging:
                 signature=base64.b64encode(signature).decode(),
                 public_key=base64.b64encode(signature_key["public_key"]).decode()
             )
-            
+
             if not success:
                 logger.error(f"Failed to send message to {peer_id}")
                 return False
-            
+
             logger.info(f"Sent secure message to {peer_id}")
             return True
-            
+
         except Exception as e:
             logger.error(f"Error sending message to {peer_id}: {e}")
             return False
@@ -1789,6 +1797,8 @@ class MessageStore:
         self.unread_counts = {}
         # Maps peer_id -> timestamp of last message
         self.last_activity = {}
+        # Current node ID to identify local messages
+        self.current_node_id = None
     
     def add_message(self, message, mark_as_read=False):
         """Add a message to the store.
@@ -1797,7 +1807,19 @@ class MessageStore:
             message: The message to store
             mark_as_read: Whether to mark the message as read immediately
         """
-        peer_id = message.sender_id
+        # Determine the conversation peer_id based on message direction
+        if message.sender_id == self.current_node_id and message.recipient_id:
+            # Outgoing message - use recipient_id as the conversation key
+            peer_id = message.recipient_id
+        elif message.recipient_id == self.current_node_id:
+            # Incoming direct message - use sender_id as the conversation key
+            peer_id = message.sender_id
+        elif message.is_system:
+            # System messages don't belong to a specific conversation
+            return
+        else:
+            # Use sender_id as fallback (for incoming messages without explicit recipient)
+            peer_id = message.sender_id
         
         # Initialize data structures for this peer if needed
         if peer_id not in self.messages:
@@ -1854,3 +1876,11 @@ class MessageStore:
             True if there are unread messages, False otherwise
         """
         return self.get_unread_count(peer_id) > 0
+        
+    def set_current_node_id(self, node_id):
+        """Set the current node ID for determining message direction.
+        
+        Args:
+            node_id: The ID of the current node
+        """
+        self.current_node_id = node_id
