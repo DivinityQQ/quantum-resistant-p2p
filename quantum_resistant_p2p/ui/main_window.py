@@ -108,7 +108,8 @@ class MainWindow(QMainWindow):
     def _init_network(self):
         """Initialize network components."""
         # Create the P2P node
-        self.node = P2PNode()
+        self.node = P2PNode(key_storage=self.key_storage)
+        
         # Create node discovery
         self.node_discovery = NodeDiscovery(self.node.node_id, port=self.node.port)
         

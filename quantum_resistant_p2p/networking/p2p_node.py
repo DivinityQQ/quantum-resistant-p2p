@@ -9,6 +9,8 @@ from typing import Dict, List, Optional, Callable, Any, Tuple, Set
 import uuid
 import struct
 
+from .node_identity import load_or_generate_node_id
+
 logger = logging.getLogger(__name__)
 
 
@@ -16,19 +18,22 @@ class P2PNode:
     """A peer-to-peer network node supporting direct communication between peers."""
     
     def __init__(self, host: str = '0.0.0.0', port: int = 8000, node_id: Optional[str] = None,
-                 max_chunk_size: int = 64*1024, node_discovery=None):
+                 max_chunk_size: int = 64*1024, node_discovery=None, key_storage=None):
         """Initialize a new P2P node.
         
         Args:
             host: The host IP address to bind to
             port: The port number to listen on
-            node_id: Unique identifier for this node. If None, a random UUID is generated.
+            node_id: Unique identifier for this node. If None, a persistent ID will be loaded or generated.
             max_chunk_size: Maximum size of message chunks in bytes
             node_discovery: Optional reference to the NodeDiscovery instance
+            key_storage: Optional reference to KeyStorage for secure node ID storage
         """
         self.host = host
         self.port = port
-        self.node_id = node_id or str(uuid.uuid4())
+        # Use the utility function to load or generate a persistent node ID
+        # KeyStorage is passed for secure storage if available
+        self.node_id = load_or_generate_node_id(key_storage, node_id)
         self.max_chunk_size = max_chunk_size
         self.peers: Dict[str, Tuple[str, int]] = {}  # node_id -> (host, port)
         self.connections: Dict[str, asyncio.StreamWriter] = {}  # node_id -> writer
@@ -38,7 +43,10 @@ class P2PNode:
         self.running = False
         self.node_discovery = node_discovery  # Store reference to NodeDiscovery
         
-        logger.info(f"P2P Node initialized with ID: {self.node_id}")
+        if key_storage:
+            logger.info(f"P2P Node initialized with secure persistent ID: {self.node_id[:8]}...")
+        else:
+            logger.info(f"P2P Node initialized with persistent ID: {self.node_id[:8]}...")
     
     async def start(self) -> None:
         """Start the P2P node server."""

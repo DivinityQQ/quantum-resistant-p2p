@@ -226,12 +226,12 @@ class SecureMessaging:
     
     def _generate_key_id(self, peer_id: str) -> str:
         """Generate a deterministic key ID for a peer.
-        
+
         Both peers should generate the same key ID regardless of who initiated.
-        
+
         Args:
             peer_id: The ID of the peer
-            
+
         Returns:
             A unique key ID
         """
@@ -284,6 +284,7 @@ class SecureMessaging:
 
         key_data = {
             "peer_id": peer_id,
+            "our_node_id": self.node.node_id,  # Store our node ID with the key
             "shared_key": shared_key,
             "algorithm": self.key_exchange.name,
             "symmetric_algorithm": self.symmetric.name,
@@ -310,7 +311,13 @@ class SecureMessaging:
                 peer_id = key_data.get("peer_id")
                 shared_key = key_data.get("shared_key")
                 original_secret = key_data.get("original_shared_secret")
-
+                stored_node_id = key_data.get("our_node_id")
+    
+                # Skip keys if our node ID has changed
+                if stored_node_id != self.node.node_id:
+                    logger.info(f"Skipping key for peer {peer_id}: our node ID has changed")
+                    continue
+                
                 # Convert from base64 if needed
                 if isinstance(shared_key, str):
                     import base64
@@ -329,7 +336,7 @@ class SecureMessaging:
                         self.key_exchange_originals[peer_id] = original_secret
                     except:
                         logger.error(f"Failed to decode original shared secret for peer {peer_id}")
-
+    
                 if peer_id and shared_key:
                     self.shared_keys[peer_id] = shared_key
                     self.key_exchange_states[peer_id] = KeyExchangeState.ESTABLISHED
@@ -1173,95 +1180,95 @@ class SecureMessaging:
     
     async def _handle_secure_message(self, peer_id: str, message: Dict[str, Any]) -> None:
         """Handle a secure message from a peer.
-        
+
         Args:
             peer_id: The ID of the peer who sent the message
             message: The message data
         """
         logger.debug(f"Received secure message from {peer_id}")
-        
+
         try:
             ciphertext = message.get("ciphertext")
             signature = message.get("signature")
             public_key = message.get("public_key")
-            
+
             if not ciphertext or not signature or not public_key:
                 logger.error(f"Invalid secure message from {peer_id}")
                 return
-            
+
             # Make sure we have a shared key
             if peer_id not in self.shared_keys:
                 logger.error(f"No shared key established with {peer_id}")
                 return
-            
+
             # Decrypt the message
             ciphertext_bytes = base64.b64decode(ciphertext)
             signature_bytes = base64.b64decode(signature)
             public_key_bytes = base64.b64decode(public_key)
-            
+
             try:
                 # Decrypt the message
                 plaintext = self.symmetric.decrypt(self.shared_keys[peer_id], ciphertext_bytes)
-                
+
                 # Verify the signature
                 verified = self.signature.verify(public_key_bytes, plaintext, signature_bytes)
                 if not verified:
                     logger.error(f"Signature verification failed for message from {peer_id}")
                     return
-                
+
                 # Parse the message
                 message_data = json.loads(plaintext.decode())
-                
+
                 # Set the recipient_id for the message (to this node)
                 # This ensures proper conversation tracking
                 if 'recipient_id' not in message_data:
                     message_data['recipient_id'] = self.node.node_id
-                    
+
                 decrypted_message = Message.from_dict(message_data)
-                
+
                 # Check if we've already processed this message
                 if decrypted_message.message_id in self.processed_message_ids:
                     logger.debug(f"Message {decrypted_message.message_id} already processed, skipping")
                     return
-                
+
                 # Add to processed IDs
                 self.processed_message_ids.add(decrypted_message.message_id)
-                
+
                 # Clean up processed IDs occasionally
                 if len(self.processed_message_ids) > 100:
                     old_ids = list(self.processed_message_ids)[:50]
                     for old_id in old_ids:
                         self.processed_message_ids.remove(old_id)
-                
+
                 # Update peer crypto settings from message metadata if available
                 if peer_id not in self.peer_crypto_settings:
                     self.peer_crypto_settings[peer_id] = {}
-                
+
                 if hasattr(decrypted_message, 'key_exchange_algo') and decrypted_message.key_exchange_algo:
                     self.peer_crypto_settings[peer_id]["key_exchange"] = decrypted_message.key_exchange_algo
-                    
+
                 if hasattr(decrypted_message, 'symmetric_algo') and decrypted_message.symmetric_algo:
                     self.peer_crypto_settings[peer_id]["symmetric"] = decrypted_message.symmetric_algo
-                    
+
                 if hasattr(decrypted_message, 'signature_algo') and decrypted_message.signature_algo:
                     self.peer_crypto_settings[peer_id]["signature"] = decrypted_message.signature_algo
-                
+
                 # Check for algorithm mismatch
                 if (hasattr(decrypted_message, 'key_exchange_algo') and 
                     decrypted_message.key_exchange_algo != self.key_exchange.name):
                     logger.warning(f"Key exchange algorithm mismatch with {peer_id}: " +
                                   f"they use {decrypted_message.key_exchange_algo}, we use {self.key_exchange.name}")
-                
+
                 if (hasattr(decrypted_message, 'symmetric_algo') and 
                     decrypted_message.symmetric_algo != self.symmetric.name):
                     logger.warning(f"Symmetric algorithm mismatch with {peer_id}: " +
                                   f"they use {decrypted_message.symmetric_algo}, we use {self.symmetric.name}")
-                
+
                 if (hasattr(decrypted_message, 'signature_algo') and 
                     decrypted_message.signature_algo != self.signature.name):
                     logger.warning(f"Signature algorithm mismatch with {peer_id}: " +
                                   f"they use {decrypted_message.signature_algo}, we use {self.signature.name}")
-                
+
                 # Log the message
                 self.secure_logger.log_event(
                     event_type="message_received",
@@ -1272,24 +1279,24 @@ class SecureMessaging:
                     is_file=decrypted_message.is_file,
                     size=len(plaintext)
                 )
-                
+
                 logger.info(f"Received and verified message from {peer_id}")
-                
+
                 # Notify global message handlers
                 for handler in self.global_message_handlers:
                     try:
                         handler(decrypted_message)
                     except Exception as e:
                         logger.error(f"Error in global message handler: {e}")
-                
+
                 # Call any registered callbacks for this message
                 if decrypted_message.message_id in self.message_callbacks:
                     self.message_callbacks[decrypted_message.message_id](decrypted_message)
                     del self.message_callbacks[decrypted_message.message_id]
-                
+
             except Exception as e:
                 logger.error(f"Failed to decrypt or verify message from {peer_id}: {e}")
-            
+
         except Exception as e:
             logger.error(f"Error handling secure message from {peer_id}: {e}")
     
