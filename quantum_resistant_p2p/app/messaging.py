@@ -225,7 +225,7 @@ class SecureMessaging:
                 logger.error(f"Error in crypto settings change listener: {e}")
     
     def _generate_key_id(self, peer_id: str) -> str:
-        """Generate a deterministic key ID for a peer.
+        """Generate a deterministic key ID for a peer and the current algorithm.
 
         Both peers should generate the same key ID regardless of who initiated.
 
@@ -237,9 +237,58 @@ class SecureMessaging:
         """
         # Sort the node IDs so both sides generate the same key ID
         node_ids = sorted([self.node.node_id, peer_id])
-        key_material = f"{node_ids[0]}:{node_ids[1]}:{self.key_exchange.name}"
+
+        # Strip any [Mock] suffix for consistent key generation
+        clean_algorithm = self.key_exchange.name.split(" [Mock]")[0]
+
+        # Generate a deterministic ID that includes both peer IDs and the algorithm type
+        key_material = f"{node_ids[0]}:{node_ids[1]}:{clean_algorithm}"
         key_hash = hashlib.sha256(key_material.encode()).hexdigest()[:16]
         return f"peer_shared_key_{key_hash}"
+
+    def _list_peer_key_ids(self, peer_id: str) -> List[str]:
+        """List all key IDs available for a specific peer across all algorithms.
+
+        Args:
+            peer_id: The ID of the peer
+
+        Returns:
+            A list of key IDs that match this peer
+        """
+        # Get all keys from storage
+        all_keys = self.key_storage.list_keys()
+        peer_keys = []
+
+        # Find keys that match this peer
+        for key_id, key_data in all_keys:
+            if key_id.startswith("peer_shared_key_") and key_data.get("peer_id") == peer_id:
+                peer_keys.append(key_id)
+
+        return peer_keys
+
+    def _get_stored_algorithms_for_peer(self, peer_id: str) -> List[str]:
+        """Get a list of algorithms for which we have stored keys for a peer.
+
+        Args:
+            peer_id: The ID of the peer
+
+        Returns:
+            A list of algorithm names
+        """
+        algorithms = []
+
+        # Get all keys for this peer
+        key_ids = self._list_peer_key_ids(peer_id)
+
+        # Extract algorithm info from key data
+        for key_id in key_ids:
+            key_data = self.key_storage.get_key(key_id)
+            if key_data and "algorithm" in key_data:
+                algorithm = key_data["algorithm"]
+                if algorithm not in algorithms:
+                    algorithms.append(algorithm)
+
+        return algorithms
     
     def _load_or_generate_keypair(self) -> None:
         """Load existing keypairs or generate new ones if they don't exist."""
@@ -276,7 +325,7 @@ class SecureMessaging:
             peer_id: The ID of the peer
             shared_key: The derived shared key
         """
-        # Generate a deterministic key ID based on both peer IDs
+        # Generate a deterministic key ID based on both peer IDs and algorithm
         key_id = self._generate_key_id(peer_id)
 
         # Get the original shared secret if available
@@ -284,7 +333,7 @@ class SecureMessaging:
 
         key_data = {
             "peer_id": peer_id,
-            "our_node_id": self.node.node_id,  # Store our node ID with the key
+            "our_node_id": self.node.node_id,
             "shared_key": shared_key,
             "algorithm": self.key_exchange.name,
             "symmetric_algorithm": self.symmetric.name,
@@ -297,7 +346,7 @@ class SecureMessaging:
 
         success = self.key_storage.store_key(key_id, key_data)
         if success:
-            logger.info(f"Saved shared key for peer {peer_id}")
+            logger.info(f"Saved shared key for peer {peer_id} with algorithm {self.key_exchange.name}")
             # Mark the key exchange as established
             self.key_exchange_states[peer_id] = KeyExchangeState.ESTABLISHED
         else:
@@ -413,6 +462,8 @@ class SecureMessaging:
             # Remove from active states but don't delete the stored key
             if disconnected_peer in self.key_exchange_states:
                 del self.key_exchange_states[disconnected_peer]
+            if disconnected_peer in self.shared_keys:
+                del self.shared_keys[disconnected_peer]
 
             # Notify listeners that a peer disconnected
             for handler in self.global_message_handlers:
@@ -437,19 +488,26 @@ class SecureMessaging:
             # Then request their settings
             await self.request_crypto_settings_from_peer(peer_id)
 
-            # Check if we have a valid stored key for this peer
+            # Check if we have a valid stored key for this peer with current algorithm
             has_valid_key = self._validate_stored_key(peer_id)
 
-            # If we have a valid key, restore it to the active state and verify it works
+            # Log key reuse attempt
             if has_valid_key:
-                # We already have the key in self.shared_keys from _validate_stored_key
-                self.key_exchange_states[peer_id] = KeyExchangeState.ESTABLISHED
-                logger.info(f"Potentially reusing existing shared key for peer {peer_id}")
+                logger.info(f"Attempting to reuse existing stored key for peer {peer_id} with algorithm {self.key_exchange.display_name}")
 
-                # Send a key verification message to confirm the key still works
-                await self._verify_existing_key(peer_id)
+                # Set the key as established, will be verified
+                self.key_exchange_states[peer_id] = KeyExchangeState.ESTABLISHED
+
+                # Start verification of the key
+                asyncio.create_task(self._verify_existing_key(peer_id))
             else:
-                logger.info(f"No valid stored key found for peer {peer_id}, will need new key exchange")
+                # Log what algorithms we have keys for
+                algorithms = self._get_stored_algorithms_for_peer(peer_id)
+                if algorithms:
+                    logger.info(f"Found keys for peer {peer_id} with algorithms: {', '.join(algorithms)}")
+                    logger.info(f"Current algorithm {self.key_exchange.name} does not match any stored keys")
+                else:
+                    logger.info(f"No stored keys found for peer {peer_id}, will need to establish first key")
 
             # Log the connection
             self.secure_logger.log_event(
@@ -470,34 +528,25 @@ class SecureMessaging:
         Returns:
             True if we have a valid key that can be reused, False otherwise
         """
-        # Generate the key ID
+        # Generate the key ID for the current algorithm
         key_id = self._generate_key_id(peer_id)
 
         # Check if the key exists in storage
         key_data = self.key_storage.get_key(key_id)
         if not key_data:
-            logger.debug(f"No stored key found for peer {peer_id}")
+            # Log the failure but with more useful info
+            algorithms = self._get_stored_algorithms_for_peer(peer_id)
+            if algorithms:
+                logger.info(f"No stored key found for peer {peer_id} with algorithm {self.key_exchange.name}")
+                logger.info(f"Peer has keys for other algorithms: {', '.join(algorithms)}")
+            else:
+                logger.debug(f"No stored keys found for peer {peer_id} with any algorithm")
             return False
 
         # Check that the key data contains what we need
-        if "shared_key" not in key_data or "algorithm" not in key_data:
+        if "shared_key" not in key_data:
             logger.warning(f"Incomplete key data for peer {peer_id}")
             return False
-
-        # Check if the algorithm matches our current algorithm
-        stored_algo = key_data["algorithm"].split(" [Mock]")[0]
-        current_algo = self.key_exchange.name.split(" [Mock]")[0]
-        if stored_algo != current_algo:
-            logger.info(f"Stored key algorithm ({stored_algo}) doesn't match current algorithm ({current_algo})")
-            return False
-
-        # Check if the symmetric algorithm matches (if it's recorded)
-        if "symmetric_algorithm" in key_data:
-            stored_sym = key_data["symmetric_algorithm"].split(" [Mock]")[0]
-            current_sym = self.symmetric.name.split(" [Mock]")[0]
-            if stored_sym != current_sym:
-                logger.info(f"Stored key used {stored_sym} but we now use {current_sym}")
-                return False
 
         # Retrieve the shared key
         shared_key = key_data["shared_key"]
@@ -507,8 +556,8 @@ class SecureMessaging:
             import base64
             try:
                 shared_key = base64.b64decode(shared_key)
-            except:
-                logger.error(f"Failed to decode shared key for peer {peer_id}")
+            except Exception as e:
+                logger.error(f"Failed to decode shared key for peer {peer_id}: {e}")
                 return False
 
         # Store the key in memory
@@ -521,11 +570,15 @@ class SecureMessaging:
                 try:
                     original_secret = base64.b64decode(original_secret)
                     self.key_exchange_originals[peer_id] = original_secret
-                except:
-                    logger.warning(f"Failed to decode original shared secret for peer {peer_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to decode original shared secret for peer {peer_id}: {e}")
                     # This is non-fatal, we can still use the derived key
 
-        logger.info(f"Valid stored key found and loaded for peer {peer_id}")
+        # Record creation time if available
+        if "created_at" in key_data:
+            logger.info(f"Key for peer {peer_id} was created at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(key_data['created_at']))}")
+
+        logger.info(f"Valid stored key found and loaded for peer {peer_id} with algorithm {self.key_exchange.display_name}")
         return True
 
     async def _verify_existing_key(self, peer_id: str) -> bool:
@@ -537,7 +590,7 @@ class SecureMessaging:
         Returns:
             True if verification was successful, False otherwise
         """
-        logger.debug(f"Verifying existing key with peer {peer_id}")
+        logger.debug(f"Verifying existing key with peer {peer_id} for algorithm {self.key_exchange.display_name}")
 
         try:
             # Create a test message with a unique ID
@@ -545,7 +598,9 @@ class SecureMessaging:
             test_data = {
                 "verify": True,
                 "timestamp": time.time(),
-                "message_id": message_id
+                "message_id": message_id,
+                "algorithm": self.key_exchange.name,
+                "challenge": base64.b64encode(os.urandom(16)).decode()  # Add a random challenge
             }
             test_data_json = json.dumps(test_data).encode()
 
@@ -562,12 +617,22 @@ class SecureMessaging:
             timeout_task = asyncio.create_task(_timeout())
 
             # Register a callback for the test response
-            def verification_callback(result):
+            def verification_callback(response):
                 if not verification_future.done():
-                    if isinstance(result, Exception):
+                    if isinstance(response, Exception):
                         verification_future.set_result(False)
                     else:
-                        verification_future.set_result(True)
+                        # Verify the response contains our challenge
+                        try:
+                            response_data = json.loads(response.content.decode())
+                            if response_data.get("challenge") == test_data["challenge"]:
+                                verification_future.set_result(True)
+                            else:
+                                logger.warning(f"Challenge mismatch in key verification response")
+                                verification_future.set_result(False)
+                        except Exception as e:
+                            logger.error(f"Error processing verification response: {e}")
+                            verification_future.set_result(False)
 
             # Register callback for response
             self.message_callbacks[message_id] = verification_callback
@@ -596,7 +661,8 @@ class SecureMessaging:
                 ciphertext=base64.b64encode(encrypted_test).decode(),
                 signature=base64.b64encode(signature).decode(),
                 public_key=base64.b64encode(signature_key["public_key"]).decode(),
-                verify=True
+                verify=True,
+                algorithm=self.key_exchange.name  # Send algorithm info
             )
 
             if not success:
@@ -614,13 +680,13 @@ class SecureMessaging:
             timeout_task.cancel()
 
             if verified:
-                logger.info(f"Successfully verified key with peer {peer_id}")
+                logger.info(f"Successfully verified key with peer {peer_id} for algorithm {self.key_exchange.name}")
 
                 # Notify about successful verification via system message
                 for handler in self.global_message_handlers:
                     try:
                         success_message = Message.system_message(
-                            f"Secure connection reestablished with {peer_id} using existing key"
+                            f"Secure connection reestablished with {peer_id} using existing key for {self.key_exchange.display_name}"
                         )
                         handler(success_message)
                     except Exception as e:
@@ -633,11 +699,21 @@ class SecureMessaging:
             else:
                 logger.warning(f"Key verification failed with peer {peer_id}, will need new key exchange")
 
-                # Remove the inactive key
+                # Remove the invalid key
                 if peer_id in self.shared_keys:
                     del self.shared_keys[peer_id]
                 if peer_id in self.key_exchange_states:
                     del self.key_exchange_states[peer_id]
+
+                # Notify about verification failure
+                for handler in self.global_message_handlers:
+                    try:
+                        error_message = Message.system_message(
+                            f"Stored key verification failed with {peer_id}. Establishing a new key."
+                        )
+                        handler(error_message)
+                    except Exception as e:
+                        logger.error(f"Error in key verification failure handler: {e}")
 
                 return False
 
@@ -1184,36 +1260,40 @@ class SecureMessaging:
                     logger.error(f"Error verifying signature on key test from {peer_id}: {e}")
                     return
 
-            # Check if this is a test message
-            if test_data.get("test") or test_data.get("verify"):
+            # Handle verification test - send a response with the same challenge
+            if test_data.get("verify") and "challenge" in test_data and "message_id" in test_data:
+                # This is a verification request - respond with the challenge
+                response = {
+                    "response": True,
+                    "challenge": test_data["challenge"],  # Echo back the challenge
+                    "message_id": test_data["message_id"],
+                    "timestamp": time.time()
+                }
+
+                # Send a response
+                await self.send_message(peer_id, json.dumps(response).encode())
+
+                # Mark the connection as established
+                self.key_exchange_states[peer_id] = KeyExchangeState.ESTABLISHED
+
+                # Log the successful verification
+                logger.info(f"Successfully verified existing key with peer {peer_id}")
+
+                # Notify UI
+                self._notify_settings_change()
+
+                return
+
+            # Handle regular key exchange test message
+            if test_data.get("test"):
                 logger.info(f"Key exchange test successful with {peer_id}")
 
-                # If this is a verification, make sure we set the state to established
-                if test_data.get("verify"):
-                    self.key_exchange_states[peer_id] = KeyExchangeState.ESTABLISHED
-
-                    # Send a response to the verification message
-                    if "message_id" in test_data:
-                        message_id = test_data["message_id"]
-                        response = {
-                            "response": True,
-                            "timestamp": time.time(),
-                            "message_id": message_id
-                        }
-                        response_json = json.dumps(response).encode()
-
-                        # Create a secure message to send back
-                        await self.send_message(
-                            peer_id=peer_id,
-                            content=response_json,
-                            is_file=False
-                        )
-
-                # Notify about successful key exchange or verification
+                # Notify about successful key exchange
                 for handler in self.global_message_handlers:
                     try:
-                        message_text = "Secure connection established with " if test_data.get("test") else "Key verified with "
-                        success_message = Message.system_message(f"{message_text}{peer_id}")
+                        success_message = Message.system_message(
+                            f"Secure connection established with {peer_id}"
+                        )
                         handler(success_message)
                     except Exception as e:
                         logger.error(f"Error in key exchange success handler: {e}")
@@ -1550,20 +1630,38 @@ class SecureMessaging:
         # First, verify that the key exchange is valid
         # This will try to load a stored key if one isn't already in memory
         if not self.verify_key_exchange_state(peer_id):
-            # If validation didn't automatically load a key, we need a new key exchange
-            logger.warning(f"Key exchange with {peer_id} is not valid or complete")
+            # If verification didn't automatically load a key, we need a new key exchange
+            logger.warning(f"No valid key for peer {peer_id}, initiating key exchange")
 
-            # Notify about the issue
-            for handler in self.global_message_handlers:
-                try:
-                    system_message = Message.system_message(
-                        f"Cannot send message to {peer_id}: Secure channel not established. Please initiate key exchange."
-                    )
-                    handler(system_message)
-                except Exception as e:
-                    logger.error(f"Error in system message handler: {e}")
+            # Try to start a key exchange
+            success = await self.initiate_key_exchange(peer_id)
+            if not success:
+                # Notify about the issue
+                for handler in self.global_message_handlers:
+                    try:
+                        system_message = Message.system_message(
+                            f"Cannot send message to {peer_id}: Failed to establish secure channel."
+                        )
+                        handler(system_message)
+                    except Exception as e:
+                        logger.error(f"Error in system message handler: {e}")
+                return False
 
-            return False
+            # Wait a bit for the key exchange to complete
+            await asyncio.sleep(1.0)
+
+            # Check again if we have a valid key exchange
+            if not self.verify_key_exchange_state(peer_id):
+                # Notify about the issue
+                for handler in self.global_message_handlers:
+                    try:
+                        system_message = Message.system_message(
+                            f"Cannot send message to {peer_id}: Key exchange failed. Check algorithm compatibility."
+                        )
+                        handler(system_message)
+                    except Exception as e:
+                        logger.error(f"Error in system message handler: {e}")
+                return False
 
         try:
             # Get our signature keypair
@@ -1688,7 +1786,7 @@ class SecureMessaging:
     
     def set_key_exchange_algorithm(self, algorithm: KeyExchangeAlgorithm) -> None:
         """Set the key exchange algorithm.
-        
+
         Args:
             algorithm: The algorithm to use
         """
@@ -1696,10 +1794,21 @@ class SecureMessaging:
         if self.key_exchange.name != algorithm.name:
             # Store old algorithm name for logging
             old_algorithm = self.key_exchange.name
-            
+
+            # Remember connected peers to check for key reuse
+            connected_peers = self.node.get_peers()
+            peers_to_check = list(connected_peers)
+
+            # Clear active keys for currently connected peers
+            for peer_id in connected_peers:
+                if peer_id in self.shared_keys:
+                    del self.shared_keys[peer_id]
+                if peer_id in self.key_exchange_states:
+                    del self.key_exchange_states[peer_id]
+
             # Update the algorithm
             self.key_exchange = algorithm
-            
+
             # Generate a keypair if we don't have one
             key_exchange_key = self.key_storage.get_key(f"key_exchange_{self.key_exchange.name}")
             if key_exchange_key is None:
@@ -1711,13 +1820,7 @@ class SecureMessaging:
                 }
                 self.key_storage.store_key(f"key_exchange_{self.key_exchange.name}", key_exchange_key)
                 logger.info(f"Generated new key exchange keypair for {self.key_exchange.name}")
-            
-            # Clear all shared keys and key exchange states
-            # This is important - we need to renegotiate with all peers
-            old_peer_ids = list(self.shared_keys.keys())
-            self.shared_keys = {}
-            self.key_exchange_states = {}
-            
+
             # Log the change
             logger.info(f"Changed key exchange algorithm from {old_algorithm} to {self.key_exchange.name}")
             self.secure_logger.log_event(
@@ -1726,17 +1829,35 @@ class SecureMessaging:
                 old_algorithm=old_algorithm,
                 new_algorithm=self.key_exchange.name
             )
-            
+
             # Notify cryptography settings change listeners
             self._notify_settings_change()
-            
-            # For all connected peers, start key exchange asynchronously
-            for peer_id in old_peer_ids:
-                if peer_id in self.node.get_peers():
-                    # Use create_task to start the key exchange asynchronously
+
+            # For all connected peers, check for existing stored keys with this algorithm
+            for peer_id in peers_to_check:
+                # Check if we have a stored key for this algorithm
+                if self._validate_stored_key(peer_id):
+                    # Successfully loaded previously established key
+                    self.key_exchange_states[peer_id] = KeyExchangeState.ESTABLISHED
+                    logger.info(f"Reusing previously established key with peer {peer_id} for algorithm {self.key_exchange.name}")
+
+                    # Notify about key reuse
+                    for handler in self.global_message_handlers:
+                        try:
+                            system_message = Message.system_message(
+                                f"Reusing existing key with peer {peer_id} for algorithm {self.key_exchange.display_name}"
+                            )
+                            handler(system_message)
+                        except Exception as e:
+                            logger.error(f"Error in key reuse handler: {e}")
+
+                    # Verify the key works
+                    asyncio.create_task(self._verify_existing_key(peer_id))
+                else:
+                    # No existing key found, need new key exchange
                     asyncio.create_task(self.initiate_key_exchange(peer_id))
                     logger.info(f"Triggered new key exchange with {peer_id} due to algorithm change")
-            
+
             # Notify peers about our settings change
             asyncio.create_task(self.notify_peers_of_settings_change())
     
