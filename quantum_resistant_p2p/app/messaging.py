@@ -590,7 +590,7 @@ class SecureMessaging:
         Returns:
             True if verification was successful, False otherwise
         """
-        logger.debug(f"Verifying existing key with peer {peer_id} for algorithm {self.key_exchange.display_name}")
+        logger.debug(f"Verifying existing key with peer {peer_id}")
 
         try:
             # Create a test message with a unique ID
@@ -599,8 +599,9 @@ class SecureMessaging:
                 "verify": True,
                 "timestamp": time.time(),
                 "message_id": message_id,
-                "algorithm": self.key_exchange.name,
-                "challenge": base64.b64encode(os.urandom(16)).decode()  # Add a random challenge
+                "algorithm": self.key_exchange.name,  # Include algorithm for debugging
+                "challenge": base64.b64encode(os.urandom(16)).decode(),  # Add a random challenge
+                "__internal_verification": True  # Mark as internal message
             }
             test_data_json = json.dumps(test_data).encode()
 
@@ -617,22 +618,15 @@ class SecureMessaging:
             timeout_task = asyncio.create_task(_timeout())
 
             # Register a callback for the test response
-            def verification_callback(response):
+            def verification_callback(result):
                 if not verification_future.done():
-                    if isinstance(response, Exception):
+                    if isinstance(result, Exception):
                         verification_future.set_result(False)
+                    elif isinstance(result, dict) and result.get("challenge") == test_data["challenge"]:
+                        # Successful verification only if challenge matches
+                        verification_future.set_result(True)
                     else:
-                        # Verify the response contains our challenge
-                        try:
-                            response_data = json.loads(response.content.decode())
-                            if response_data.get("challenge") == test_data["challenge"]:
-                                verification_future.set_result(True)
-                            else:
-                                logger.warning(f"Challenge mismatch in key verification response")
-                                verification_future.set_result(False)
-                        except Exception as e:
-                            logger.error(f"Error processing verification response: {e}")
-                            verification_future.set_result(False)
+                        verification_future.set_result(False)
 
             # Register callback for response
             self.message_callbacks[message_id] = verification_callback
@@ -686,7 +680,7 @@ class SecureMessaging:
                 for handler in self.global_message_handlers:
                     try:
                         success_message = Message.system_message(
-                            f"Secure connection reestablished with {peer_id} using existing key for {self.key_exchange.display_name}"
+                            f"Secure connection established with {peer_id} using existing key for {self.key_exchange.display_name}"
                         )
                         handler(success_message)
                     except Exception as e:
@@ -709,7 +703,7 @@ class SecureMessaging:
                 for handler in self.global_message_handlers:
                     try:
                         error_message = Message.system_message(
-                            f"Stored key verification failed with {peer_id}. Establishing a new key."
+                            f"Stored key verification failed with {peer_id}. Need to establish a new key."
                         )
                         handler(error_message)
                     except Exception as e:
@@ -1267,11 +1261,30 @@ class SecureMessaging:
                     "response": True,
                     "challenge": test_data["challenge"],  # Echo back the challenge
                     "message_id": test_data["message_id"],
-                    "timestamp": time.time()
+                    "timestamp": time.time(),
+                    # Add a flag to identify this as an internal verification message
+                    "__internal_verification": True
                 }
 
-                # Send a response
-                await self.send_message(peer_id, json.dumps(response).encode())
+                # Send a response - use direct messaging instead of secure messaging
+                # to avoid the response being displayed in the UI
+                response_json = json.dumps(response).encode()
+                encrypted_response = self.symmetric.encrypt(self.shared_keys[peer_id], response_json)
+
+                # Get our signature key
+                signature_key = self.key_storage.get_key(f"signature_{self.signature.name}")
+                if signature_key:
+                    signature = self.signature.sign(signature_key["private_key"], response_json)
+
+                    # Send the direct message
+                    await self.node.send_message(
+                        peer_id=peer_id,
+                        message_type="secure_message",
+                        ciphertext=base64.b64encode(encrypted_response).decode(),
+                        signature=base64.b64encode(signature).decode(),
+                        public_key=base64.b64encode(signature_key["public_key"]).decode(),
+                        is_verification_response=True  # Special flag for the message handler
+                    )
 
                 # Mark the connection as established
                 self.key_exchange_states[peer_id] = KeyExchangeState.ESTABLISHED
@@ -1499,6 +1512,9 @@ class SecureMessaging:
         """
         logger.debug(f"Received secure message from {peer_id}")
 
+        # Check if this is a verification response and should be handled specially
+        is_verification = message.get("is_verification_response", False)
+
         try:
             ciphertext = message.get("ciphertext")
             signature = message.get("signature")
@@ -1530,6 +1546,18 @@ class SecureMessaging:
 
                 # Parse the message
                 message_data = json.loads(plaintext.decode())
+
+                # Check if this is an internal verification message
+                # and should not be displayed to the user
+                if "__internal_verification" in message_data or is_verification:
+                    # Handle verification message internally
+                    message_id = message_data.get("message_id")
+                    if message_id and message_id in self.message_callbacks:
+                        # Call the verification callback
+                        self.message_callbacks[message_id](message_data)
+                        del self.message_callbacks[message_id]
+                    logger.debug(f"Processed internal verification message {message_id}")
+                    return
 
                 # Set the recipient_id for the message (to this node)
                 # This ensures proper conversation tracking
@@ -1795,9 +1823,8 @@ class SecureMessaging:
             # Store old algorithm name for logging
             old_algorithm = self.key_exchange.name
 
-            # Remember connected peers to check for key reuse
+            # Remember connected peers
             connected_peers = self.node.get_peers()
-            peers_to_check = list(connected_peers)
 
             # Clear active keys for currently connected peers
             for peer_id in connected_peers:
@@ -1830,14 +1857,11 @@ class SecureMessaging:
                 new_algorithm=self.key_exchange.name
             )
 
-            # Notify cryptography settings change listeners
-            self._notify_settings_change()
-
             # For all connected peers, check for existing stored keys with this algorithm
-            for peer_id in peers_to_check:
+            for peer_id in connected_peers:
                 # Check if we have a stored key for this algorithm
                 if self._validate_stored_key(peer_id):
-                    # Successfully loaded previously established key
+                    # We found an existing key for this algorithm - use it automatically!
                     self.key_exchange_states[peer_id] = KeyExchangeState.ESTABLISHED
                     logger.info(f"Reusing previously established key with peer {peer_id} for algorithm {self.key_exchange.name}")
 
@@ -1854,9 +1878,27 @@ class SecureMessaging:
                     # Verify the key works
                     asyncio.create_task(self._verify_existing_key(peer_id))
                 else:
-                    # No existing key found, need new key exchange
-                    asyncio.create_task(self.initiate_key_exchange(peer_id))
-                    logger.info(f"Triggered new key exchange with {peer_id} due to algorithm change")
+                    # No existing key found, let the user manually initiate exchange
+                    logger.info(f"No stored key found for peer {peer_id} with algorithm {self.key_exchange.name}")
+
+                    # User will need to click "Establish Shared Key" button
+                    if peer_id in self.shared_keys:
+                        del self.shared_keys[peer_id]
+                    if peer_id in self.key_exchange_states:
+                        del self.key_exchange_states[peer_id]
+
+                    # Notify user they need to establish a key
+                    for handler in self.global_message_handlers:
+                        try:
+                            system_message = Message.system_message(
+                                f"Algorithm changed to {self.key_exchange.display_name}. Please click 'Establish Shared Key' to create a secure channel."
+                            )
+                            handler(system_message)
+                        except Exception as e:
+                            logger.error(f"Error in algorithm change notification handler: {e}")
+
+            # Notify cryptography settings change listeners
+            self._notify_settings_change()
 
             # Notify peers about our settings change
             asyncio.create_task(self.notify_peers_of_settings_change())
