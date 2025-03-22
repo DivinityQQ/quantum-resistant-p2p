@@ -410,9 +410,7 @@ class SecureMessaging:
             disconnected_peer = peer_id.split(":", 1)[1]
             logger.info(f"Handling disconnect event for peer {disconnected_peer}")
 
-            # Remove shared keys and state for this peer
-            if disconnected_peer in self.shared_keys:
-                del self.shared_keys[disconnected_peer]
+            # Remove from active states but don't delete the stored key
             if disconnected_peer in self.key_exchange_states:
                 del self.key_exchange_states[disconnected_peer]
 
@@ -430,27 +428,223 @@ class SecureMessaging:
             self._notify_settings_change()
             return
 
-        logger.info(f"New connection established with {peer_id}, sharing crypto settings")
+        logger.info(f"New connection established with {peer_id}")
 
         try:
-            # First send our settings to the peer
+            # First send our settings to the peer regardless
             await self.send_crypto_settings_to_peer(peer_id)
 
             # Then request their settings
             await self.request_crypto_settings_from_peer(peer_id)
 
-            # Notify any listeners that might want to update UI
-            self._notify_settings_change()
+            # Check if we have a valid stored key for this peer
+            has_valid_key = self._validate_stored_key(peer_id)
+
+            # If we have a valid key, restore it to the active state and verify it works
+            if has_valid_key:
+                # We already have the key in self.shared_keys from _validate_stored_key
+                self.key_exchange_states[peer_id] = KeyExchangeState.ESTABLISHED
+                logger.info(f"Potentially reusing existing shared key for peer {peer_id}")
+
+                # Send a key verification message to confirm the key still works
+                await self._verify_existing_key(peer_id)
+            else:
+                logger.info(f"No valid stored key found for peer {peer_id}, will need new key exchange")
 
             # Log the connection
             self.secure_logger.log_event(
                 event_type="connection",
                 peer_id=peer_id,
-                direction="established"
+                direction="established",
+                reused_key=has_valid_key
             )
         except Exception as e:
             logger.error(f"Error handling new connection with {peer_id}: {e}")
-    
+
+    def _validate_stored_key(self, peer_id: str) -> bool:
+        """Check if we have a valid stored key for this peer that can be reused.
+
+        Args:
+            peer_id: The ID of the peer
+
+        Returns:
+            True if we have a valid key that can be reused, False otherwise
+        """
+        # Generate the key ID
+        key_id = self._generate_key_id(peer_id)
+
+        # Check if the key exists in storage
+        key_data = self.key_storage.get_key(key_id)
+        if not key_data:
+            logger.debug(f"No stored key found for peer {peer_id}")
+            return False
+
+        # Check that the key data contains what we need
+        if "shared_key" not in key_data or "algorithm" not in key_data:
+            logger.warning(f"Incomplete key data for peer {peer_id}")
+            return False
+
+        # Check if the algorithm matches our current algorithm
+        stored_algo = key_data["algorithm"].split(" [Mock]")[0]
+        current_algo = self.key_exchange.name.split(" [Mock]")[0]
+        if stored_algo != current_algo:
+            logger.info(f"Stored key algorithm ({stored_algo}) doesn't match current algorithm ({current_algo})")
+            return False
+
+        # Check if the symmetric algorithm matches (if it's recorded)
+        if "symmetric_algorithm" in key_data:
+            stored_sym = key_data["symmetric_algorithm"].split(" [Mock]")[0]
+            current_sym = self.symmetric.name.split(" [Mock]")[0]
+            if stored_sym != current_sym:
+                logger.info(f"Stored key used {stored_sym} but we now use {current_sym}")
+                return False
+
+        # Retrieve the shared key
+        shared_key = key_data["shared_key"]
+
+        # Convert from base64 if needed
+        if isinstance(shared_key, str):
+            import base64
+            try:
+                shared_key = base64.b64decode(shared_key)
+            except:
+                logger.error(f"Failed to decode shared key for peer {peer_id}")
+                return False
+
+        # Store the key in memory
+        self.shared_keys[peer_id] = shared_key
+
+        # Also retrieve and store the original shared secret if available
+        if "original_shared_secret" in key_data:
+            original_secret = key_data["original_shared_secret"]
+            if isinstance(original_secret, str):
+                try:
+                    original_secret = base64.b64decode(original_secret)
+                    self.key_exchange_originals[peer_id] = original_secret
+                except:
+                    logger.warning(f"Failed to decode original shared secret for peer {peer_id}")
+                    # This is non-fatal, we can still use the derived key
+
+        logger.info(f"Valid stored key found and loaded for peer {peer_id}")
+        return True
+
+    async def _verify_existing_key(self, peer_id: str) -> bool:
+        """Verify that an existing key works by sending a test message.
+
+        Args:
+            peer_id: The ID of the peer
+
+        Returns:
+            True if verification was successful, False otherwise
+        """
+        logger.debug(f"Verifying existing key with peer {peer_id}")
+
+        try:
+            # Create a test message with a unique ID
+            message_id = str(uuid.uuid4())
+            test_data = {
+                "verify": True,
+                "timestamp": time.time(),
+                "message_id": message_id
+            }
+            test_data_json = json.dumps(test_data).encode()
+
+            # Register a future for the response
+            verification_future = asyncio.Future()
+
+            # Add a timeout to the future
+            async def _timeout():
+                await asyncio.sleep(5.0)  # 5 second timeout
+                if not verification_future.done():
+                    verification_future.set_result(False)
+                    logger.warning(f"Key verification timeout for peer {peer_id}")
+
+            timeout_task = asyncio.create_task(_timeout())
+
+            # Register a callback for the test response
+            def verification_callback(result):
+                if not verification_future.done():
+                    if isinstance(result, Exception):
+                        verification_future.set_result(False)
+                    else:
+                        verification_future.set_result(True)
+
+            # Register callback for response
+            self.message_callbacks[message_id] = verification_callback
+
+            # Encrypt the test message
+            if peer_id not in self.shared_keys:
+                logger.error(f"No shared key for peer {peer_id}")
+                return False
+
+            encrypted_test = self.symmetric.encrypt(self.shared_keys[peer_id], test_data_json)
+
+            # Get our signature keypair
+            signature_key = self.key_storage.get_key(f"signature_{self.signature.name}")
+            if signature_key is None:
+                logger.error(f"Missing signature keypair for {self.signature.name}")
+                return False
+
+            # Sign the message
+            private_key = signature_key["private_key"]
+            signature = self.signature.sign(private_key, test_data_json)
+
+            # Send the verification message
+            success = await self.node.send_message(
+                peer_id=peer_id,
+                message_type="key_exchange_test",
+                ciphertext=base64.b64encode(encrypted_test).decode(),
+                signature=base64.b64encode(signature).decode(),
+                public_key=base64.b64encode(signature_key["public_key"]).decode(),
+                verify=True
+            )
+
+            if not success:
+                logger.error(f"Failed to send key verification message to {peer_id}")
+                if message_id in self.message_callbacks:
+                    del self.message_callbacks[message_id]
+                return False
+
+            # Wait for the result
+            verified = await verification_future
+
+            # Clean up the callback and timeout task
+            if message_id in self.message_callbacks:
+                del self.message_callbacks[message_id]
+            timeout_task.cancel()
+
+            if verified:
+                logger.info(f"Successfully verified key with peer {peer_id}")
+
+                # Notify about successful verification via system message
+                for handler in self.global_message_handlers:
+                    try:
+                        success_message = Message.system_message(
+                            f"Secure connection reestablished with {peer_id} using existing key"
+                        )
+                        handler(success_message)
+                    except Exception as e:
+                        logger.error(f"Error in key verification handler: {e}")
+
+                # Notify UI about the state
+                self._notify_settings_change()
+
+                return True
+            else:
+                logger.warning(f"Key verification failed with peer {peer_id}, will need new key exchange")
+
+                # Remove the inactive key
+                if peer_id in self.shared_keys:
+                    del self.shared_keys[peer_id]
+                if peer_id in self.key_exchange_states:
+                    del self.key_exchange_states[peer_id]
+
+                return False
+
+        except Exception as e:
+            logger.error(f"Error verifying key with peer {peer_id}: {e}")
+            return False
+
     async def send_crypto_settings_to_peer(self, peer_id: str) -> None:
         """Send our cryptography settings to a specific peer.
         
@@ -963,6 +1157,8 @@ class SecureMessaging:
 
         try:
             ciphertext = message.get("ciphertext")
+            is_verification = message.get("verify", False)
+
             if not ciphertext:
                 logger.error(f"Invalid key exchange test from {peer_id}")
                 return
@@ -973,15 +1169,51 @@ class SecureMessaging:
 
             # Parse the test data
             test_data = json.loads(plaintext.decode())
-            if test_data.get("test"):
+
+            # If this is a verification message, also verify the signature if provided
+            if is_verification and "signature" in message and "public_key" in message:
+                try:
+                    signature = base64.b64decode(message["signature"])
+                    public_key = base64.b64decode(message["public_key"])
+                    verified = self.signature.verify(public_key, plaintext, signature)
+
+                    if not verified:
+                        logger.warning(f"Signature verification failed for key test from {peer_id}")
+                        return
+                except Exception as e:
+                    logger.error(f"Error verifying signature on key test from {peer_id}: {e}")
+                    return
+
+            # Check if this is a test message
+            if test_data.get("test") or test_data.get("verify"):
                 logger.info(f"Key exchange test successful with {peer_id}")
 
-                # Notify about successful key exchange
+                # If this is a verification, make sure we set the state to established
+                if test_data.get("verify"):
+                    self.key_exchange_states[peer_id] = KeyExchangeState.ESTABLISHED
+
+                    # Send a response to the verification message
+                    if "message_id" in test_data:
+                        message_id = test_data["message_id"]
+                        response = {
+                            "response": True,
+                            "timestamp": time.time(),
+                            "message_id": message_id
+                        }
+                        response_json = json.dumps(response).encode()
+
+                        # Create a secure message to send back
+                        await self.send_message(
+                            peer_id=peer_id,
+                            content=response_json,
+                            is_file=False
+                        )
+
+                # Notify about successful key exchange or verification
                 for handler in self.global_message_handlers:
                     try:
-                        success_message = Message.system_message(
-                            f"Secure connection established with {peer_id}"
-                        )
+                        message_text = "Secure connection established with " if test_data.get("test") else "Key verified with "
+                        success_message = Message.system_message(f"{message_text}{peer_id}")
                         handler(success_message)
                     except Exception as e:
                         logger.error(f"Error in key exchange success handler: {e}")
@@ -999,7 +1231,7 @@ class SecureMessaging:
                 for handler in self.global_message_handlers:
                     try:
                         error_message = Message.system_message(
-                            f"Key exchange test failed with {peer_id}: {str(e)}"
+                            f"Key verification failed with {peer_id}: {str(e)}"
                         )
                         handler(error_message)
                     except Exception as ex:
@@ -1316,7 +1548,9 @@ class SecureMessaging:
         logger.debug(f"Sending message to {peer_id}")
 
         # First, verify that the key exchange is valid
+        # This will try to load a stored key if one isn't already in memory
         if not self.verify_key_exchange_state(peer_id):
+            # If validation didn't automatically load a key, we need a new key exchange
             logger.warning(f"Key exchange with {peer_id} is not valid or complete")
 
             # Notify about the issue
@@ -1329,20 +1563,6 @@ class SecureMessaging:
                 except Exception as e:
                     logger.error(f"Error in system message handler: {e}")
 
-            return False
-
-        # Make sure we have a shared key
-        if peer_id not in self.shared_keys:
-            logger.info(f"No shared key with {peer_id}, initiating key exchange")
-            success = await self.initiate_key_exchange(peer_id)
-            if not success:
-                logger.error(f"Failed to establish shared key with {peer_id}")
-                return False
-
-        # Verify the key exchange is in a valid state
-        valid_states = [KeyExchangeState.CONFIRMED, KeyExchangeState.ESTABLISHED]
-        if peer_id not in self.key_exchange_states or self.key_exchange_states[peer_id] not in valid_states:
-            logger.error(f"Key exchange with {peer_id} is not in a valid state for sending messages")
             return False
 
         try:
@@ -1773,21 +1993,30 @@ class SecureMessaging:
         Returns:
             True if the key exchange is valid, False otherwise
         """
+        # Check if the peer is actually connected
+        if peer_id not in self.node.get_peers():
+            logger.warning(f"Peer {peer_id} is not connected")
+            return False
+
         # Check if we have a shared key
         if peer_id not in self.shared_keys:
-            logger.debug(f"No shared key exists for peer {peer_id}")
-            return False
+            # Try to load a stored key if available
+            if self._validate_stored_key(peer_id):
+                # Set the state to established since we loaded a valid key
+                self.key_exchange_states[peer_id] = KeyExchangeState.ESTABLISHED
+                logger.info(f"Loaded stored key for peer {peer_id}")
+
+                # Start key verification in the background (don't wait for result)
+                asyncio.create_task(self._verify_existing_key(peer_id))
+            else:
+                logger.debug(f"No shared key exists for peer {peer_id}")
+                return False
 
         # Check if the key exchange is in a valid state
         valid_states = [KeyExchangeState.CONFIRMED, KeyExchangeState.ESTABLISHED]
         if peer_id not in self.key_exchange_states or self.key_exchange_states[peer_id] not in valid_states:
             logger.warning(f"Key exchange with {peer_id} is in an invalid state: " +
                           f"{self.key_exchange_states.get(peer_id, 'NONE')}")
-            return False
-
-        # Check if the peer is actually connected
-        if peer_id not in self.node.get_peers():
-            logger.warning(f"Peer {peer_id} has a shared key but is not connected")
             return False
 
         # All checks passed, key exchange is valid
