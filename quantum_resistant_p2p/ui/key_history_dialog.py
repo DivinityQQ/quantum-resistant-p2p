@@ -31,6 +31,7 @@ class KeyHistoryDialog(QDialog):
         self.current_key_id = None      # Store key_id instead of decrypted key
         self.current_key = None         # Only set when explicitly decrypted
         self.decrypted_keys = set()     # Track which keys have been decrypted in this session
+        self.decrypted_key_cache = {}   # Cache of decrypted keys (key_id -> decrypted_key)
 
         self.setWindowTitle("Key Exchange History")
         self.setMinimumSize(900, 600)
@@ -265,28 +266,59 @@ class KeyHistoryDialog(QDialog):
 
         # Check if this is a different key than before
         if new_key_id != self.current_key_id:
-            # It's a new key, clear any previous key data
-            self.current_key = None
+            # It's a new key, update current key ID
             self.current_key_id = new_key_id
-
-            # Reset the view - don't decrypt the key automatically
-            self.key_details.setPlainText(
-                f"Key selected: {self.current_key_id}\n"
-                f"Peer: {key_data.get('peer_id')}\n"
-                f"Algorithm: {key_data.get('algorithm')}\n"
-                f"Created: {datetime.datetime.fromtimestamp(key_data.get('created_at', 0)).strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-                f"Click 'Decrypt & View Key' to decrypt and view the key material."
-            )
 
             # Check if this key was previously decrypted in this session
             if new_key_id in self.decrypted_keys:
-                # It was decrypted before, so we need to decrypt it again
-                self._decrypt_and_show_key()
+                # It was decrypted before, so we can restore it from cache
+                if new_key_id in self.decrypted_key_cache:
+                    # Restore from cache and update UI
+                    self.current_key = self.decrypted_key_cache[new_key_id]
+                    self.decrypt_button.setText("Hide && Clear Key")
+                    
+                    # Enable format options and copy button 
+                    self.show_hex_radio.setEnabled(True)
+                    self.show_base64_radio.setEnabled(True)
+                    self.show_decimal_radio.setEnabled(True)
+                    self.copy_button.setEnabled(True)
+                    
+                    # Update the display with the cached key
+                    self._update_key_display()
+                else:
+                    # This shouldn't happen, but handle it gracefully
+                    self.key_details.setPlainText(
+                        f"Key selected: {self.current_key_id}\n"
+                        f"Peer: {key_data.get('peer_id')}\n"
+                        f"Algorithm: {key_data.get('algorithm')}\n"
+                        f"Created: {datetime.datetime.fromtimestamp(key_data.get('created_at', 0)).strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                        f"Click 'Decrypt & View Key' to decrypt and view the key material."
+                    )
+                    
+                    # Set up for decryption
+                    self.decrypt_button.setText("Decrypt && View Key")
+                    self.decrypt_button.setEnabled(True)
+                    
+                    # Disable format options and copy button until decrypted
+                    self.show_hex_radio.setEnabled(False)
+                    self.show_base64_radio.setEnabled(False)
+                    self.show_decimal_radio.setEnabled(False)
+                    self.copy_button.setEnabled(False)
             else:
+                # New key that hasn't been decrypted yet
+                self.current_key = None
+                self.key_details.setPlainText(
+                    f"Key selected: {self.current_key_id}\n"
+                    f"Peer: {key_data.get('peer_id')}\n"
+                    f"Algorithm: {key_data.get('algorithm')}\n"
+                    f"Created: {datetime.datetime.fromtimestamp(key_data.get('created_at', 0)).strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                    f"Click 'Decrypt & View Key' to decrypt and view the key material."
+                )
+                
                 # Set up for initial decryption
                 self.decrypt_button.setText("Decrypt && View Key")
                 self.decrypt_button.setEnabled(True)
-
+                
                 # Disable format options and copy button until key is decrypted
                 self.show_hex_radio.setEnabled(False)
                 self.show_base64_radio.setEnabled(False)
@@ -338,9 +370,12 @@ class KeyHistoryDialog(QDialog):
                     action="hide_clear"
                 )
 
-            # Remove from decrypted keys list
+            # Remove from decrypted keys list and cache
             if self.current_key_id in self.decrypted_keys:
                 self.decrypted_keys.remove(self.current_key_id)
+                
+            if self.current_key_id in self.decrypted_key_cache:
+                del self.decrypted_key_cache[self.current_key_id]
 
             # Clear the decrypted key from memory
             self.current_key = None
@@ -354,6 +389,26 @@ class KeyHistoryDialog(QDialog):
     def _decrypt_and_show_key(self):
         """Decrypt the key and display it."""
         if not self.current_key_id:
+            return
+            
+        # Check if key is already in cache before decrypting again
+        if self.current_key_id in self.decrypted_key_cache:
+            # Use cached version
+            self.current_key = self.decrypted_key_cache[self.current_key_id]
+            self.decrypt_button.setText("Hide && Clear Key")
+            
+            # Enable format options and copy button
+            self.show_hex_radio.setEnabled(True)
+            self.show_base64_radio.setEnabled(True)
+            self.show_decimal_radio.setEnabled(True)
+            self.copy_button.setEnabled(True)
+            
+            # Update display with cached key
+            self._update_key_display()
+            
+            # Add to decrypted keys set if not already there
+            self.decrypted_keys.add(self.current_key_id)
+            
             return
 
         # Get associated peer ID for logging
@@ -379,8 +434,9 @@ class KeyHistoryDialog(QDialog):
                 )
             return
 
-        # Store the decrypted key and show it
+        # Store the decrypted key and cache it
         self.current_key = decrypted_key
+        self.decrypted_key_cache[self.current_key_id] = decrypted_key
         self.decrypt_button.setText("Hide && Clear Key")
 
         # Add to the set of decrypted keys
@@ -605,6 +661,7 @@ class KeyHistoryDialog(QDialog):
         self.current_key = None
         self.key_details.clear()
         self.decrypted_keys.clear()  # Clear the tracked decrypted keys
+        self.decrypted_key_cache.clear()  # Clear the decrypted key cache
 
         # Accept the close event
         super().closeEvent(event)
