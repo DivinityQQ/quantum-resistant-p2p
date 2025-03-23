@@ -217,15 +217,15 @@ class MainWindow(QMainWindow):
         metrics_action.triggered.connect(self._show_security_metrics)
         settings_menu.addAction(metrics_action)
 
-        # View logs action
-        logs_action = QAction("View Logs...", self)
-        logs_action.triggered.connect(self._show_logs)
-        settings_menu.addAction(logs_action)
-
         # Key history action
         key_history_action = QAction("Key Exchange History...", self)
         key_history_action.triggered.connect(self._show_key_history)
         settings_menu.addAction(key_history_action)
+
+        # View logs action
+        logs_action = QAction("View Logs...", self)
+        logs_action.triggered.connect(self._show_logs)
+        settings_menu.addAction(logs_action)
 
         # Help menu
         help_menu = menu_bar.addMenu("Help")
