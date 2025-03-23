@@ -13,6 +13,7 @@ from .security_metrics_dialog import SecurityMetricsDialog
 from .log_viewer_dialog import LogViewerDialog
 from .log_diagnostics import LogDiagnosticsDialog
 from .oqs_status_widget import OQSStatusWidget
+from .key_history_dialog import KeyHistoryDialog
 
 __all__ = [
     'MainWindow', 
@@ -23,5 +24,6 @@ __all__ = [
     'SecurityMetricsDialog',
     'LogViewerDialog',
     'LogDiagnosticsDialog',
-    'OQSStatusWidget'
+    'OQSStatusWidget',
+    'KeyHistoryDialog'
 ]

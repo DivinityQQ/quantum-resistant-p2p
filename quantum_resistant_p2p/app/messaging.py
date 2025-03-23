@@ -165,7 +165,7 @@ class SecureMessaging:
         self._load_or_generate_keypair()
 
         # Load saved peer keys
-        self._load_peer_keys()
+        # self._load_peer_keys()
 
         # Log initialization
         self.secure_logger.log_event(
@@ -271,35 +271,38 @@ class SecureMessaging:
     
     def _save_peer_key(self, peer_id: str, shared_key: bytes) -> None:
         """Save a shared key for a peer in KeyStorage.
-
+    
         Args:
             peer_id: The ID of the peer
             shared_key: The derived shared key
         """
-        # Generate a deterministic key ID based on both peer IDs
-        key_id = self._generate_key_id(peer_id)
-
+        # Always update in-memory shared keys
+        self.shared_keys[peer_id] = shared_key
+        self.key_exchange_states[peer_id] = KeyExchangeState.ESTABLISHED
+        
+        # Generate a timestamped key ID for history
+        timestamp = int(time.time())
+        key_id = f"peer_shared_key_{peer_id}_{timestamp}"
+    
         # Get the original shared secret if available
         original_secret = self.key_exchange_originals.get(peer_id)
-
+    
         key_data = {
             "peer_id": peer_id,
             "our_node_id": self.node.node_id,  # Store our node ID with the key
             "shared_key": shared_key,
             "algorithm": self.key_exchange.name,
             "symmetric_algorithm": self.symmetric.name,
-            "created_at": time.time()
+            "created_at": timestamp
         }
-
+    
         # Store the original secret if available
         if original_secret:
             key_data["original_shared_secret"] = original_secret
-
+    
         success = self.key_storage.store_key(key_id, key_data)
         if success:
-            logger.info(f"Saved shared key for peer {peer_id}")
-            # Mark the key exchange as established
-            self.key_exchange_states[peer_id] = KeyExchangeState.ESTABLISHED
+            logger.info(f"Saved shared key history for peer {peer_id}")
         else:
             logger.error(f"Failed to save shared key for peer {peer_id}")
     
@@ -438,6 +441,24 @@ class SecureMessaging:
 
             # Then request their settings
             await self.request_crypto_settings_from_peer(peer_id)
+
+            # Clear any existing keys to ensure they aren't reused between sessions
+            # but DON'T automatically initiate a key exchange
+            if peer_id in self.shared_keys:
+                del self.shared_keys[peer_id]
+            if peer_id in self.key_exchange_states:
+                self.key_exchange_states[peer_id] = KeyExchangeState.NONE
+
+            # Notify that a secure channel needs to be established
+            for handler in self.global_message_handlers:
+                try:
+                    message = Message.system_message(
+                        f"Connection established with peer {peer_id}. "
+                        f"Use 'Establish Shared Key' button to create a secure channel."
+                    )
+                    handler(message)
+                except Exception as e:
+                    logger.error(f"Error in message handler: {e}")
 
             # Notify any listeners that might want to update UI
             self._notify_settings_change()

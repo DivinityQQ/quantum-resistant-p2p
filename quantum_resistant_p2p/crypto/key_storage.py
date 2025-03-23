@@ -342,6 +342,116 @@ class KeyStorage:
         
         return [(key_id, key_data) for key_id, key_data in self.keys.items()]
     
+    def get_key_history(self, decrypt_keys=False) -> List[Dict[str, Any]]:
+        """Get a list of all saved key history.
+
+        Args:
+            decrypt_keys: Whether to decrypt the key data (default: False)
+
+        Returns:
+            List of dictionaries containing key history information
+        """
+        if self.master_key is None:
+            logger.error("Cannot get key history, storage not unlocked")
+            return []
+
+        history = []
+        for key_id, key_data in self.keys.items():
+            if key_id.startswith("peer_shared_key_"):
+                # Extract and convert relevant information
+                # Convert binary data to displayable format
+                display_data = key_data.copy()
+
+                # Only include encrypted_key_data for later decryption
+                encrypted_data = None
+
+                # Store the raw encrypted data for later decryption if needed
+                if "shared_key" in display_data:
+                    # Remember if it's already bytes or needs to be decoded from base64
+                    if isinstance(display_data["shared_key"], str):
+                        try:
+                            import base64
+                            encrypted_data = {"type": "base64", "data": display_data["shared_key"]}
+                        except:
+                            encrypted_data = {"type": "string", "data": display_data["shared_key"]}
+                    else:
+                        encrypted_data = {"type": "bytes", "data": display_data["shared_key"]}
+
+                    # Generate a preview if it's going to be displayed
+                    if decrypt_keys and isinstance(display_data["shared_key"], bytes):
+                        display_data["shared_key_preview"] = display_data["shared_key"][:16].hex()
+                    else:
+                        display_data["shared_key_preview"] = "(encrypted)"
+
+                entry = {
+                    "key_id": key_id,
+                    "peer_id": display_data.get("peer_id", "Unknown"),
+                    "algorithm": display_data.get("algorithm", "Unknown"),
+                    "symmetric_algorithm": display_data.get("symmetric_algorithm", "Unknown"),
+                    "created_at": display_data.get("created_at", 0),
+                    "key_preview": display_data.get("shared_key_preview", ""),
+                    "encrypted_key_data": encrypted_data  # Store encrypted data instead of decrypted
+                }
+
+                # Only include full_key if explicitly requested
+                if decrypt_keys and "shared_key" in display_data:
+                    if isinstance(display_data["shared_key"], bytes):
+                        entry["full_key"] = display_data["shared_key"]
+                    elif isinstance(display_data["shared_key"], str):
+                        try:
+                            import base64
+                            entry["full_key"] = base64.b64decode(display_data["shared_key"])
+                        except:
+                            entry["full_key"] = display_data["shared_key"]
+
+                history.append(entry)
+
+        # Sort by creation time, newest first
+        history.sort(key=lambda x: x["created_at"], reverse=True)
+        return history
+
+    def decrypt_key(self, key_id: str) -> Optional[bytes]:
+        """Decrypt a specific key by ID.
+
+        Args:
+            key_id: The ID of the key to decrypt
+
+        Returns:
+            The decrypted key as bytes, or None if not found/cannot decrypt
+        """
+        if self.master_key is None:
+            logger.error("Cannot decrypt key, storage not unlocked")
+            return None
+
+        # Log the decryption attempt
+        logger.info(f"Decrypting key {key_id} from secure storage")
+
+        # Retrieve the encrypted key data
+        key_data = self.get_key(key_id)
+        if not key_data or "shared_key" not in key_data:
+            logger.error(f"Key {key_id} not found or has no shared_key")
+            return None
+
+        # Return the already-decrypted data
+        shared_key = key_data["shared_key"]
+        if isinstance(shared_key, bytes):
+            logger.info(f"Successfully decrypted key {key_id}")
+            return shared_key
+        elif isinstance(shared_key, str):
+            # Try to decode if it's base64 encoded
+            try:
+                import base64
+                decoded_key = base64.b64decode(shared_key)
+                logger.info(f"Successfully decrypted key {key_id} (from base64)")
+                return decoded_key
+            except:
+                # Not base64, use as is
+                logger.info(f"Successfully decrypted key {key_id} (from string)")
+                return shared_key.encode('utf-8')
+
+        logger.error(f"Failed to decode key {key_id} (unknown format)")
+        return None
+
     def close(self) -> None:
         """Close the key storage and clear sensitive data from memory."""
         self.keys = {}

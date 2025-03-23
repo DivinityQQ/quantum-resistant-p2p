@@ -21,6 +21,7 @@ from .messaging_widget import MessagingWidget
 from .settings_dialog import SettingsDialog
 from .security_metrics_dialog import SecurityMetricsDialog
 from .log_viewer_dialog import LogViewerDialog
+from .key_history_dialog import KeyHistoryDialog
 from .oqs_status_widget import OQSStatusWidget
 from .login_dialog import LoginDialog
 from ..app import SecureMessaging, SecureLogger, MessageStore
@@ -182,48 +183,53 @@ class MainWindow(QMainWindow):
     def _setup_menu(self):
         """Set up the menu bar."""
         menu_bar = self.menuBar()
-        
+
         # File menu
         file_menu = menu_bar.addMenu("File")
-        
+
         # Connect to peer action
         connect_action = QAction("Connect to Peer...", self)
         connect_action.triggered.connect(self._show_connect_dialog)
         file_menu.addAction(connect_action)
-        
+
         # Send file action
         send_file_action = QAction("Send File...", self)
         send_file_action.triggered.connect(self._show_send_file_dialog)
         file_menu.addAction(send_file_action)
-        
+
         file_menu.addSeparator()
-        
+
         # Exit action
         exit_action = QAction("Exit", self)
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
-        
+
         # Settings menu
         settings_menu = menu_bar.addMenu("Settings")
-        
+
         # Crypto settings action
         crypto_settings_action = QAction("Cryptography Settings...", self)
         crypto_settings_action.triggered.connect(self._show_crypto_settings)
         settings_menu.addAction(crypto_settings_action)
-        
+
         # Security metrics action
         metrics_action = QAction("Security Metrics...", self)
         metrics_action.triggered.connect(self._show_security_metrics)
         settings_menu.addAction(metrics_action)
-        
+
         # View logs action
         logs_action = QAction("View Logs...", self)
         logs_action.triggered.connect(self._show_logs)
         settings_menu.addAction(logs_action)
-        
+
+        # Key history action
+        key_history_action = QAction("Key Exchange History...", self)
+        key_history_action.triggered.connect(self._show_key_history)
+        settings_menu.addAction(key_history_action)
+
         # Help menu
         help_menu = menu_bar.addMenu("Help")
-        
+
         # About action
         about_action = QAction("About", self)
         about_action.triggered.connect(self._show_about_dialog)
@@ -423,7 +429,12 @@ class MainWindow(QMainWindow):
         """Show the logs view."""
         dialog = LogViewerDialog(self.secure_logger, self)
         dialog.exec_()
-    
+
+    def _show_key_history(self):
+        """Show the key history dialog."""
+        dialog = KeyHistoryDialog(self.key_storage, self.secure_logger, self)
+        dialog.exec_()
+
     def _show_about_dialog(self):
         """Show the about dialog."""
         QMessageBox.about(
