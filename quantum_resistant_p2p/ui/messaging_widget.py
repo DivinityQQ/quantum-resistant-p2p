@@ -340,7 +340,7 @@ class MessagingWidget(QWidget):
     
             if peer_settings:
                 # Check if key exchange algorithm matches
-                peer_key_exchange = peer_settings.get("key_exchange", "").split(" [Mock]")[0]
+                peer_key_exchange = peer_settings.get("key_exchange", "")
                 local_key_exchange = self.secure_messaging.key_exchange.display_name
                 settings_compatible = (peer_key_exchange == local_key_exchange)
     
@@ -414,27 +414,27 @@ class MessagingWidget(QWidget):
                 key_exchange = peer_settings.get("key_exchange", "-")
                 symmetric = peer_settings.get("symmetric", "-")
                 signature = peer_settings.get("signature", "-")
-    
+
                 self.peer_key_exchange_label.setText(key_exchange)
                 self.peer_symmetric_label.setText(symmetric)
                 self.peer_signature_label.setText(signature)
-    
+
                 # Highlight differences
                 self.peer_key_exchange_label.setStyleSheet(
-                    "color: red;" if key_exchange.split(" [Mock]")[0] != self.secure_messaging.key_exchange.display_name else ""
+                    "color: red;" if key_exchange != self.secure_messaging.key_exchange.name else ""
                 )
                 self.peer_symmetric_label.setStyleSheet(
                     "color: red;" if symmetric != self.secure_messaging.symmetric.name else ""
                 )
                 self.peer_signature_label.setStyleSheet(
-                    "color: red;" if signature.split(" [Mock]")[0] != self.secure_messaging.signature.display_name else ""
+                    "color: red;" if signature != self.secure_messaging.signature.name else ""
                 )
-    
+
                 # Enable adopt settings button if there are differences and we're connected
                 has_differences = (
-                    key_exchange.split(" [Mock]")[0] != self.secure_messaging.key_exchange.display_name or
+                    key_exchange != self.secure_messaging.key_exchange.name or
                     symmetric != self.secure_messaging.symmetric.name or
-                    signature.split(" [Mock]")[0] != self.secure_messaging.signature.display_name
+                    signature != self.secure_messaging.signature.name
                 )
                 self.adopt_settings_button.setEnabled(connected and has_differences)
     

@@ -183,7 +183,7 @@ class PeerListWidget(QWidget):
                     
                     # Check for mismatches
                     has_mismatches = any(
-                        peer_settings.get(key, "").split(" [Mock]")[0] != my_settings[key].split(" [Mock]")[0]
+                        peer_settings.get(key, "") != my_settings[key]
                         for key in my_settings
                         if key in peer_settings
                     )

@@ -17,7 +17,6 @@ Key features:
 ## Requirements
 
 - Python 3.8 or higher
-- PyQt5 for the user interface
 - A supported operating system: Windows, macOS, or Linux
 
 ## Installation
@@ -80,22 +79,6 @@ python -m quantum_resistant_p2p
 python quantum_resistant_p2p/__main__.py
 ```
 
-## Post-Quantum Cryptography Support
-
-The application supports two modes of operation:
-
-### 1. Native Mode (Recommended)
-
-Native mode uses the real post-quantum cryptography implementations through the Open Quantum Safe (OQS) library, which is bundled with the application. This provides genuine post-quantum security.
-
-When the application starts, it will automatically attempt to use native mode. You can verify if it's running in native mode by checking the status bar at the bottom of the main window, which will display "OQS: ✓" if native mode is active.
-
-### 2. Mock Mode (Fallback)
-
-If the native OQS library cannot be loaded for any reason, the application will automatically fall back to mock implementations. These mock implementations simulate the behavior of post-quantum algorithms but do not provide actual quantum resistance.
-
-The status bar will show "OQS: ⚠ Mock" when running in mock mode.
-
 ## Basic Usage
 
 1. **Start the application**
@@ -122,17 +105,6 @@ The status bar will show "OQS: ⚠ Mock" when running in mock mode.
    - View logs and security metrics from the Settings menu
 
 ## Troubleshooting
-
-### OQS Library Issues
-
-If you see "OQS: ⚠ Mock" in the status bar, the application couldn't load the native OQS library. Possible solutions:
-
-1. Verify that the library files exist in the vendor directory:
-   - Windows: `quantum_resistant_p2p/vendor/lib/windows/oqs.dll`
-   - macOS: `quantum_resistant_p2p/vendor/lib/macos/liboqs.dylib`
-   - Linux: `quantum_resistant_p2p/vendor/lib/linux/liboqs.so`
-
-2. If needed, rebuild the OQS library for your platform (see the Advanced section below)
 
 ### Connection Issues
 

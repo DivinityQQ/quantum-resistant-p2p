@@ -15,9 +15,9 @@ from dataclasses import dataclass, asdict, field
 
 from ..networking import P2PNode
 from ..crypto import (
-    KeyExchangeAlgorithm, KyberKeyExchange, NTRUKeyExchange,
+    KeyExchangeAlgorithm, MLKEMKeyExchange, HQCKeyExchange, FrodoKEMKeyExchange,
     SymmetricAlgorithm, AES256GCM, ChaCha20Poly1305,
-    SignatureAlgorithm, DilithiumSignature, SPHINCSSignature,
+    SignatureAlgorithm, MLDSASignature, SPHINCSSignature,
     KeyStorage
 )
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
@@ -123,9 +123,9 @@ class SecureMessaging:
         self.secure_logger = logger  # Rename to avoid conflict with global logger
 
         # Use default algorithms if not specified
-        self.key_exchange = key_exchange_algorithm or KyberKeyExchange()
+        self.key_exchange = key_exchange_algorithm or MLKEMKeyExchange()
         self.symmetric = symmetric_algorithm or AES256GCM()
-        self.signature = signature_algorithm or DilithiumSignature()
+        self.signature = signature_algorithm or MLDSASignature()
 
         # Dictionary mapping peer IDs to shared symmetric keys
         self.shared_keys: Dict[str, bytes] = {}
@@ -391,8 +391,8 @@ class SecureMessaging:
 
         peer_settings = self.peer_crypto_settings[peer_id]
 
-        # Check if the key exchange algorithms match exactly (excluding [Mock] suffixes)
-        peer_key_exchange = peer_settings.get("key_exchange", "").split(" [Mock]")[0]
+        # Check if the key exchange algorithms match exactly
+        peer_key_exchange = peer_settings.get("key_exchange", "")
         our_key_exchange = self.key_exchange.display_name
 
         # Must be the same algorithm type for compatibility
@@ -608,8 +608,7 @@ class SecureMessaging:
                 peer_id=peer_id,
                 message_type="key_exchange_init",
                 message_id=message_id,
-                algorithm=self.key_exchange.display_name,  # Send only the display name without [Mock]
-                is_mock=self.key_exchange.is_using_mock,   # Add explicit mock flag
+                algorithm=self.key_exchange.display_name,
                 public_key=base64.b64encode(public_key).decode()
             )
 
@@ -652,7 +651,6 @@ class SecureMessaging:
 
         try:
             algorithm_name = message.get("algorithm")
-            is_mock = message.get("is_mock", False)
             public_key = message.get("public_key")
 
             if not algorithm_name or not public_key:
@@ -663,10 +661,8 @@ class SecureMessaging:
             if peer_id not in self.peer_crypto_settings:
                 self.peer_crypto_settings[peer_id] = {}
 
-            # Store algorithm name, adding [Mock] suffix if is_mock is True
-            self.peer_crypto_settings[peer_id]["key_exchange"] = (
-                f"{algorithm_name}{' [Mock]' if is_mock else ''}"
-            )
+            # Store algorithm name directly
+            self.peer_crypto_settings[peer_id]["key_exchange"] = algorithm_name
 
             # Notify UI about settings update
             self._notify_settings_change()
@@ -695,8 +691,7 @@ class SecureMessaging:
                     message_type="key_exchange_rejected",
                     message_id=message.get("message_id"),
                     reason="algorithm_mismatch",
-                    our_algorithm=our_algo_display,
-                    is_mock=self.key_exchange.is_using_mock
+                    our_algorithm=our_algo_display
                 )
 
                 return
@@ -755,7 +750,6 @@ class SecureMessaging:
                 peer_id=peer_id,
                 message_type="key_exchange_response",
                 algorithm=self.key_exchange.display_name,
-                is_mock=self.key_exchange.is_using_mock,
                 message_id=message.get("message_id"),
                 ciphertext=base64.b64encode(ciphertext).decode()
             )
@@ -788,7 +782,6 @@ class SecureMessaging:
 
         try:
             algorithm_name = message.get("algorithm")
-            is_mock = message.get("is_mock", False)
             ciphertext = message.get("ciphertext")
             message_id = message.get("message_id")
 
@@ -807,10 +800,8 @@ class SecureMessaging:
             if peer_id not in self.peer_crypto_settings:
                 self.peer_crypto_settings[peer_id] = {}
 
-            # Store algorithm name, adding [Mock] suffix if is_mock is True
-            self.peer_crypto_settings[peer_id]["key_exchange"] = (
-                f"{algorithm_name}{' [Mock]' if is_mock else ''}"
-            )
+            # Store algorithm name directly
+            self.peer_crypto_settings[peer_id]["key_exchange"] = algorithm_name
 
             # Notify UI about settings update
             self._notify_settings_change()
@@ -887,8 +878,7 @@ class SecureMessaging:
             await self.node.send_message(
                 peer_id=peer_id,
                 message_type="key_exchange_confirm",
-                algorithm=self.key_exchange.display_name,
-                is_mock=self.key_exchange.is_using_mock
+                algorithm=self.key_exchange.display_name
             )
 
             # Send a test message to verify the key works
@@ -935,13 +925,13 @@ class SecureMessaging:
     
     async def _handle_key_exchange_confirm(self, peer_id: str, message: Dict[str, Any]) -> None:
         """Handle a key exchange confirmation message from a peer.
-        
+
         Args:
             peer_id: The ID of the peer who sent the message
             message: The message data
         """
         logger.debug(f"Received key exchange confirmation from {peer_id}")
-        
+
         # If we have a shared key, save it permanently
         if peer_id in self.shared_keys and self.key_exchange_states.get(peer_id) == KeyExchangeState.RESPONDED:
             self._save_peer_key(peer_id, self.shared_keys[peer_id])
@@ -1018,10 +1008,7 @@ class SecureMessaging:
         # Update peer's crypto settings if provided
         if "our_algorithm" in message and peer_id in self.peer_crypto_settings:
             algorithm = message.get("our_algorithm")
-            is_mock = message.get("is_mock", False)
-            self.peer_crypto_settings[peer_id]["key_exchange"] = (
-                f"{algorithm}{' [Mock]' if is_mock else ''}"
-            )
+            self.peer_crypto_settings[peer_id]["key_exchange"] = algorithm
             # Notify settings listeners
             self._notify_settings_change()
 
@@ -1038,10 +1025,6 @@ class SecureMessaging:
 
         if reason == "algorithm_mismatch":
             peer_algo = message.get("our_algorithm", "unknown")
-            is_mock = message.get("is_mock", False)
-            if is_mock:
-                peer_algo += " [Mock]"
-
             message_text += (
                 f"Algorithm mismatch: you're using {self.key_exchange.display_name}, " +
                 f"peer is using {peer_algo}. Both peers must use the same algorithm type."
@@ -1071,24 +1054,24 @@ class SecureMessaging:
 
     async def _handle_crypto_settings_update(self, peer_id: str, message: Dict[str, Any]) -> None:
         """Handle a cryptography settings update from a peer.
-        
+
         Args:
             peer_id: The ID of the peer who sent the message
             message: The message data
         """
         logger.debug(f"Received crypto settings update from {peer_id}")
-        
+
         try:
             settings_data = message.get("settings")
             signature_data = message.get("signature")
-            
+
             if not settings_data:
                 logger.error(f"Invalid crypto settings update from {peer_id}")
                 return
-            
+
             # Decode the settings
             settings_json = base64.b64decode(settings_data)
-            
+
             # Verify signature if provided
             if signature_data:
                 # Get the peer's signature public key (if available)
@@ -1098,51 +1081,51 @@ class SecureMessaging:
                     verified = self.signature.verify(peer_key["public_key"], settings_json, signature)
                     if not verified:
                         logger.warning(f"Invalid signature on crypto settings update from {peer_id}")
-            
+
             # Parse the settings
             settings = json.loads(settings_json.decode())
-            
+
             # Store the peer's settings
             settings_changed = False
-            
+
             if peer_id not in self.peer_crypto_settings:
                 self.peer_crypto_settings[peer_id] = {}
                 settings_changed = True
-            
+
             # Check if settings have actually changed
             if (self.peer_crypto_settings[peer_id].get("key_exchange") != settings.get("key_exchange") or
                 self.peer_crypto_settings[peer_id].get("symmetric") != settings.get("symmetric") or
                 self.peer_crypto_settings[peer_id].get("signature") != settings.get("signature")):
                 settings_changed = True
-            
-            # Update stored settings
+
+            # Update stored settings - store settings exactly as received, no [Mock] suffix handling
             self.peer_crypto_settings[peer_id]["key_exchange"] = settings.get("key_exchange")
             self.peer_crypto_settings[peer_id]["symmetric"] = settings.get("symmetric")
             self.peer_crypto_settings[peer_id]["signature"] = settings.get("signature")
             self.peer_crypto_settings[peer_id]["last_updated"] = time.time()
-            
+
             # Log the update
             logger.info(f"Peer {peer_id} uses cryptography settings: "
                        f"key_exchange={settings.get('key_exchange')}, "
                        f"symmetric={settings.get('symmetric')}, "
                        f"signature={settings.get('signature')}")
-            
+
             # Check for mismatches with our settings
             our_settings = {
                 "key_exchange": self.key_exchange.name,
                 "symmetric": self.symmetric.name,
                 "signature": self.signature.name
             }
-            
+
             mismatches = []
             for key in our_settings:
                 if settings.get(key) != our_settings[key]:
                     mismatches.append(f"{key}: {settings.get(key)} vs {our_settings[key]}")
-            
+
             if mismatches:
                 # Log the mismatch
                 logger.warning(f"Cryptography settings mismatch with peer {peer_id}: {', '.join(mismatches)}")
-                
+
                 # Notify listeners about the mismatch
                 for handler in self.global_message_handlers:
                     try:
@@ -1156,7 +1139,7 @@ class SecureMessaging:
                         handler(mismatch_message)
                     except Exception as e:
                         logger.error(f"Error in settings mismatch handler: {e}")
-                
+
                 # If the key exchange algorithm differs, start a new key exchange
                 if settings.get("key_exchange") != our_settings["key_exchange"]:
                     # Remove any existing shared key
@@ -1164,17 +1147,17 @@ class SecureMessaging:
                         del self.shared_keys[peer_id]
                     if peer_id in self.key_exchange_states:
                         del self.key_exchange_states[peer_id]
-                    
+
                     # Initiate a new key exchange if peer is connected
                     if peer_id in self.node.get_peers():
                         asyncio.create_task(self.initiate_key_exchange(peer_id))
                         logger.info(f"Initiated new key exchange with {peer_id} due to algorithm mismatch")
-            
+
             # Only notify if settings have actually changed
             if settings_changed:
                 # Notify settings change listeners for UI updates
                 self._notify_settings_change()
-            
+
         except Exception as e:
             logger.error(f"Error handling crypto settings update from {peer_id}: {e}")
     
@@ -1629,29 +1612,29 @@ class SecureMessaging:
             },
             "peers_with_shared_keys": len(self.shared_keys)
         }
-    
+
     def adopt_peer_settings(self, peer_id: str) -> bool:
         """Adopt the cryptography settings of a peer.
-        
+
         Args:
             peer_id: The ID of the peer whose settings to adopt
-            
+
         Returns:
             True if settings were adopted, False otherwise
         """
         if peer_id not in self.peer_crypto_settings:
             logger.error(f"No settings available for peer {peer_id}")
             return False
-        
+
         peer_settings = self.peer_crypto_settings[peer_id]
         settings_changed = False
-        
+
         # Adopt key exchange algorithm if needed
         key_exchange_algo = peer_settings.get("key_exchange")
-        if key_exchange_algo and key_exchange_algo != self.key_exchange.display_name:
+        if key_exchange_algo and key_exchange_algo != self.key_exchange.name:
             # Map algorithm name to actual algorithm
-            from ..crypto import MLKEMKeyExchange, HQCKeyExchange, FrodoKEMKeyExchange, NTRUKeyExchange
-            
+            from ..crypto import MLKEMKeyExchange, HQCKeyExchange, FrodoKEMKeyExchange
+
             if "ML-KEM" in key_exchange_algo:
                 # Get the security level from the name
                 if "Level 1" in key_exchange_algo:
@@ -1687,24 +1670,13 @@ class SecureMessaging:
                 # Check if it's AES or SHAKE
                 use_aes = "AES" in key_exchange_algo
                 algorithm = FrodoKEMKeyExchange(security_level=level, use_aes=use_aes)
-            elif "NTRU" in key_exchange_algo:
-                # Get the security level from the name
-                if "Level 1" in key_exchange_algo:
-                    level = 1
-                elif "Level 3" in key_exchange_algo:
-                    level = 3
-                elif "Level 5" in key_exchange_algo:
-                    level = 5
-                else:
-                    level = 3  # Default
-                algorithm = NTRUKeyExchange(security_level=level)
             else:
                 logger.warning(f"Unknown key exchange algorithm: {key_exchange_algo}")
                 return False
-            
+
             self.set_key_exchange_algorithm(algorithm)
             settings_changed = True
-        
+
         # Adopt symmetric algorithm if needed
         symmetric_algo = peer_settings.get("symmetric")
         if symmetric_algo and symmetric_algo != self.symmetric.name:
@@ -1715,16 +1687,16 @@ class SecureMessaging:
             else:
                 logger.warning(f"Unknown symmetric algorithm: {symmetric_algo}")
                 return False
-            
+
             self.set_symmetric_algorithm(algorithm)
             settings_changed = True
-        
+
         # Adopt signature algorithm if needed
         signature_algo = peer_settings.get("signature")
-        if signature_algo and signature_algo != self.signature.display_name:
+        if signature_algo and signature_algo != self.signature.name:
             # Map algorithm name to actual algorithm
             from ..crypto import MLDSASignature, SPHINCSSignature
-            
+
             if "ML-DSA" in signature_algo:
                 # Get the security level from the name
                 if "Level 2" in signature_algo:
@@ -1750,10 +1722,10 @@ class SecureMessaging:
             else:
                 logger.warning(f"Unknown signature algorithm: {signature_algo}")
                 return False
-            
+
             self.set_signature_algorithm(algorithm)
             settings_changed = True
-        
+
         if settings_changed:
             logger.info(f"Successfully adopted settings from peer {peer_id}")
             return True

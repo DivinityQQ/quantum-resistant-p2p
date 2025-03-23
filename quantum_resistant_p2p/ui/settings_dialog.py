@@ -12,7 +12,7 @@ from PyQt5.QtCore import Qt
 
 from ..app import SecureMessaging
 from ..crypto import (
-    MLKEMKeyExchange, HQCKeyExchange, FrodoKEMKeyExchange, NTRUKeyExchange,
+    MLKEMKeyExchange, HQCKeyExchange, FrodoKEMKeyExchange,
     AES256GCM, ChaCha20Poly1305,
     MLDSASignature, SPHINCSSignature,
     LIBOQS_AVAILABLE, LIBOQS_VERSION
@@ -45,12 +45,8 @@ class SettingsDialog(QDialog):
         layout = QVBoxLayout()
         
         # Add OQS status indicator
-        if LIBOQS_AVAILABLE:
-            oqs_label = QLabel(f"OQS Library: Available (version {LIBOQS_VERSION})")
-            oqs_label.setStyleSheet("color: green; font-weight: bold;")
-        else:
-            oqs_label = QLabel("OQS Library: Not Available (using mock implementations)")
-            oqs_label.setStyleSheet("color: orange; font-weight: bold;")
+        oqs_label = QLabel(f"OQS Library: Available (version {LIBOQS_VERSION})")
+        oqs_label.setStyleSheet("color: green; font-weight: bold;")
         layout.addWidget(oqs_label)
         
         # Peer synchronization group
@@ -125,9 +121,6 @@ class SettingsDialog(QDialog):
                                    {"class": FrodoKEMKeyExchange, "level": 3, "use_aes": True})
         self.key_exchange_combo.addItem("FrodoKEM (Level 5, AES)", 
                                    {"class": FrodoKEMKeyExchange, "level": 5, "use_aes": True})
-        
-        # NTRU option (mock-only, for backward compatibility)
-        self.key_exchange_combo.addItem("NTRU (Level 3, Mock Only)", {"class": NTRUKeyExchange, "level": 3})
         
         # Set current key exchange algorithm
         current_algo = self.secure_messaging.key_exchange
