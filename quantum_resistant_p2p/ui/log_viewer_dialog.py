@@ -7,10 +7,11 @@ import datetime
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QTableWidget, QTableWidgetItem, QHeaderView, QComboBox,
-    QDateTimeEdit, QGroupBox, QFormLayout, QCheckBox, QSplitter
+    QDateTimeEdit, QGroupBox, QFormLayout, QCheckBox, QSplitter,
+    QApplication
 )
 from PyQt5.QtCore import Qt, QDateTime
-from PyQt5.QtGui import QColor, QFont
+from PyQt5.QtGui import QColor, QFont, QPalette
 
 from ..app import SecureLogger
 
@@ -213,22 +214,77 @@ class LogViewerDialog(QDialog):
             size_item = QTableWidgetItem(f"{size:,}" if size > 0 else "")
             self.logs_table.setItem(row, 4, size_item)
             
-            # Color-code by event type
-            color = QColor(255, 255, 255)  # Default white
+            # Detect if we're using a dark theme by checking palette
+            app = QApplication.instance()
+            palette = app.palette()
+            text_color = palette.color(QPalette.Text)
+            base_color = palette.color(QPalette.Base)
+            
+            # Determine if dark theme based on text vs background contrast
+            text_luminance = (0.299 * text_color.red() + 0.587 * text_color.green() + 0.114 * text_color.blue()) / 255
+            base_luminance = (0.299 * base_color.red() + 0.587 * base_color.green() + 0.114 * base_color.blue()) / 255
+            is_dark_theme = text_luminance > base_luminance
+            
+            # Choose colors based on theme
+            if is_dark_theme:
+                # Dark theme color scheme
+                color_schemes = {
+                    "default": QColor(40, 40, 40),  # Dark gray
+                    "key_exchange": QColor(0, 60, 0),  # Dark green
+                    "message_sent": QColor(0, 0, 60),  # Dark blue
+                    "message_received": QColor(0, 0, 60),  # Dark blue
+                    "crypto_settings_changed": QColor(60, 50, 0),  # Dark amber
+                    "initialization": QColor(50, 50, 50)  # Darker gray
+                }
+                text_colors = {
+                    "default": QColor(220, 220, 220),  # Light gray text
+                    "key_exchange": QColor(200, 255, 200),  # Light green text
+                    "message_sent": QColor(200, 200, 255),  # Light blue text
+                    "message_received": QColor(200, 200, 255),  # Light blue text
+                    "crypto_settings_changed": QColor(255, 240, 200),  # Light amber text
+                    "initialization": QColor(220, 220, 220)  # Light gray text
+                }
+            else:
+                # Light theme color scheme - original colors
+                color_schemes = {
+                    "default": QColor(255, 255, 255),  # White
+                    "key_exchange": QColor(230, 255, 230),  # Light green
+                    "message_sent": QColor(230, 230, 255),  # Light blue
+                    "message_received": QColor(230, 230, 255),  # Light blue
+                    "crypto_settings_changed": QColor(255, 240, 200),  # Light yellow
+                    "initialization": QColor(240, 240, 240)  # Light gray
+                }
+                text_colors = {
+                    "default": QColor(0, 0, 0),  # Black text
+                    "key_exchange": QColor(0, 0, 0),  # Black text
+                    "message_sent": QColor(0, 0, 0),  # Black text
+                    "message_received": QColor(0, 0, 0),  # Black text
+                    "crypto_settings_changed": QColor(0, 0, 0),  # Black text
+                    "initialization": QColor(0, 0, 0)  # Black text
+                }
+            
+            # Determine color based on event type
+            bg_color = color_schemes.get("default")
+            fg_color = text_colors.get("default")
             
             if event["type"] == "key_exchange":
-                color = QColor(230, 255, 230)  # Light green
+                bg_color = color_schemes.get("key_exchange")
+                fg_color = text_colors.get("key_exchange")
             elif event["type"] in ["message_sent", "message_received"]:
-                color = QColor(230, 230, 255)  # Light blue
+                bg_color = color_schemes.get("message_sent")
+                fg_color = text_colors.get("message_sent")
             elif event["type"] == "crypto_settings_changed":
-                color = QColor(255, 240, 200)  # Light yellow
+                bg_color = color_schemes.get("crypto_settings_changed")
+                fg_color = text_colors.get("crypto_settings_changed")
             elif event["type"] == "initialization":
-                color = QColor(240, 240, 240)  # Light gray
+                bg_color = color_schemes.get("initialization")
+                fg_color = text_colors.get("initialization")
             
-            # Apply color to all cells in the row
+            # Apply colors to all cells in the row
             for col in range(5):
                 if self.logs_table.item(row, col):
-                    self.logs_table.item(row, col).setBackground(color)
+                    self.logs_table.item(row, col).setBackground(bg_color)
+                    self.logs_table.item(row, col).setForeground(fg_color)
     
     def _apply_filter(self):
         """Apply the current filter settings and refresh logs."""

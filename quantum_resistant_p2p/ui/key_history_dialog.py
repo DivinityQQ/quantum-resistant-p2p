@@ -12,7 +12,7 @@ from PyQt5.QtWidgets import (
     QRadioButton, QButtonGroup
 )
 from PyQt5.QtCore import Qt, pyqtSlot
-from PyQt5.QtGui import QColor, QFont, QCursor
+from PyQt5.QtGui import QColor, QFont, QCursor, QPalette
 
 from ..crypto import KeyStorage
 
@@ -233,10 +233,40 @@ class KeyHistoryDialog(QDialog):
             preview_item.setFont(QFont("Courier New"))
             self.history_table.setItem(i, 5, preview_item)
             
-            # Apply alternating row colors
-            if i % 2 == 0:
-                for col in range(6):
-                    self.history_table.item(i, col).setBackground(QColor(240, 240, 255))
+            # Detect if we're using a dark theme by checking palette
+            app = QApplication.instance()
+            palette = app.palette()
+            text_color = palette.color(QPalette.Text)
+            base_color = palette.color(QPalette.Base)
+
+            # Determine if dark theme based on text vs background contrast
+            text_luminance = (0.299 * text_color.red() + 0.587 * text_color.green() + 0.114 * text_color.blue()) / 255
+            base_luminance = (0.299 * base_color.red() + 0.587 * base_color.green() + 0.114 * base_color.blue()) / 255
+            is_dark_theme = text_luminance > base_luminance
+
+            # Set alternating row colors based on theme
+            if is_dark_theme:
+                # Dark theme alternating colors
+                if i % 2 == 0:
+                    bg_color = QColor(30, 30, 30)  # Darker
+                    fg_color = QColor(220, 220, 220)  # Light text
+                else:
+                    bg_color = QColor(40, 40, 40)  # Slightly lighter
+                    fg_color = QColor(220, 220, 220)  # Light text
+            else:
+                # Light theme alternating colors - original colors
+                if i % 2 == 0:
+                    bg_color = QColor(255, 255, 255)  # White
+                    fg_color = QColor(0, 0, 0)  # Black text
+                else:
+                    bg_color = QColor(240, 240, 240)  # Light gray
+                    fg_color = QColor(0, 0, 0)  # Black text
+
+            # Apply colors to all cells in the row
+            for col in range(6):
+                if self.history_table.item(i, col):
+                    self.history_table.item(i, col).setBackground(bg_color)
+                    self.history_table.item(i, col).setForeground(fg_color)
     
     def _selection_changed(self):
         """Handle selection change in the history table."""
