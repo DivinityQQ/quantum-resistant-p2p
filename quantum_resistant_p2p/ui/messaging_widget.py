@@ -520,7 +520,7 @@ class MessagingWidget(QWidget):
                 self.secure_messaging.request_crypto_settings_from_peer(peer_id)
             )
         else:
-            self._add_system_message("Not connected to peer. Use the Connect button in the peer list.", True)
+            self._add_system_message("Not connected to peer. Attempting to autoconnect...", True)
             self._disable_messaging()
 
         # Load previous messages if we have a message store

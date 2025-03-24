@@ -54,8 +54,8 @@ def main():
         # Create the application
         app = QApplication(sys.argv)
         app.setApplicationName("Quantum Resistant P2P")
-        app.setOrganizationName("YourName")
-        app.setOrganizationDomain("yourname.com")
+        app.setOrganizationName("DivinityQQ")
+        app.setOrganizationDomain("DivinityQQ@gmail.com")
         
         # Create the event loop
         loop = QEventLoop(app)
