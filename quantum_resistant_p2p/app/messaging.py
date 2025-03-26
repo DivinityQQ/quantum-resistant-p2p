@@ -1433,9 +1433,9 @@ class SecureMessaging:
 
         except Exception as e:
             logger.error(f"Error handling crypto settings update from {peer_id}: {e}")
-    
+
     async def _handle_secure_message(self, peer_id: str, message: Dict[str, Any]) -> None:
-        """Handle a secure message from a peer following the sign-then-encrypt standard.
+        """Handle a secure message from a peer.
 
         Args:
             peer_id: The ID of the peer who sent the message
@@ -1444,101 +1444,122 @@ class SecureMessaging:
         logger.debug(f"Received secure message from {peer_id}")
 
         try:
-            # Step 1: Get the encrypted package
+            # Step 1: Get the encrypted package and associated data
             ciphertext = message.get("ciphertext")
-            if not ciphertext:
-                logger.error(f"Invalid secure message from {peer_id}")
+            associated_data_b64 = message.get("associated_data")
+
+            if not ciphertext or not associated_data_b64:
+                logger.error(f"Invalid secure message from {peer_id}, missing ciphertext or associated data")
                 return
+
+            # We require associated data
+            associated_data = base64.b64decode(associated_data_b64)
 
             # Make sure we have a shared key
             if peer_id not in self.shared_keys:
                 logger.error(f"No shared key established with {peer_id}")
                 return
 
-            try:
-                # Step 2: Decrypt the package
-                ciphertext_bytes = base64.b64decode(ciphertext)
-                decrypted_package_json = self.symmetric.decrypt(self.shared_keys[peer_id], ciphertext_bytes)
+            # Step 2: Decrypt the package using AEAD
+            ciphertext_bytes = base64.b64decode(ciphertext)
+            decrypted_package_json = self.symmetric.decrypt(
+                self.shared_keys[peer_id], 
+                ciphertext_bytes,
+                associated_data=associated_data
+            )
 
-                # Step 3: Parse the signed package
-                signed_package = json.loads(decrypted_package_json.decode())
+            # Step 3: Parse the signed package
+            signed_package = json.loads(decrypted_package_json.decode())
 
-                # Step 4: Extract the components
-                message_json = base64.b64decode(signed_package["message"])
-                signature_bytes = base64.b64decode(signed_package["signature"])
-                public_key_bytes = base64.b64decode(signed_package["public_key"])
+            # Step 4: Extract the components
+            message_json = base64.b64decode(signed_package["message"])
+            signature_bytes = base64.b64decode(signed_package["signature"])
+            public_key_bytes = base64.b64decode(signed_package["public_key"])
 
-                # Step 5: Verify the signature
-                verified = self.signature.verify(public_key_bytes, message_json, signature_bytes)
-                if not verified:
-                    logger.error(f"Signature verification failed for message from {peer_id}")
-                    return
+            # Step 5: Verify the signature
+            verified = self.signature.verify(public_key_bytes, message_json, signature_bytes)
+            if not verified:
+                logger.error(f"Signature verification failed for message from {peer_id}")
+                return
 
-                # Step 6: Parse the verified message
-                message_data = json.loads(message_json.decode())
-                decrypted_message = Message.from_dict(message_data)
+            # Step 6: Parse the verified message
+            message_data = json.loads(message_json.decode())
+            decrypted_message = Message.from_dict(message_data)
 
-                # Check if we've already processed this message
-                if decrypted_message.message_id in self.processed_message_ids:
-                    logger.debug(f"Message {decrypted_message.message_id} already processed, skipping")
-                    return
+            # Step 7: Verify associated data matches message content
+            ad_data = json.loads(associated_data.decode())
 
-                # Add to processed IDs
-                self.processed_message_ids.add(decrypted_message.message_id)
+            # Verify critical metadata matches
+            if ad_data.get("message_id") != decrypted_message.message_id:
+                logger.error(f"Message ID mismatch in associated data from {peer_id}")
+                return
 
-                # Clean up processed IDs occasionally
-                if len(self.processed_message_ids) > 100:
-                    old_ids = list(self.processed_message_ids)[:50]
-                    for old_id in old_ids:
-                        self.processed_message_ids.remove(old_id)
+            if ad_data.get("sender_id") != peer_id:
+                logger.error(f"Sender ID mismatch in associated data from {peer_id}")
+                return
 
-                # Update peer crypto settings from message metadata if available
-                if peer_id not in self.peer_crypto_settings:
-                    self.peer_crypto_settings[peer_id] = {}
+            if ad_data.get("recipient_id") != self.node.node_id:
+                logger.error(f"Recipient ID mismatch in associated data from {peer_id}")
+                return
 
-                if hasattr(decrypted_message, 'key_exchange_algo') and decrypted_message.key_exchange_algo:
-                    self.peer_crypto_settings[peer_id]["key_exchange"] = decrypted_message.key_exchange_algo
+            # Step 8: Check for duplicate message
+            if decrypted_message.message_id in self.processed_message_ids:
+                logger.debug(f"Message {decrypted_message.message_id} already processed, skipping")
+                return
 
-                if hasattr(decrypted_message, 'symmetric_algo') and decrypted_message.symmetric_algo:
-                    self.peer_crypto_settings[peer_id]["symmetric"] = decrypted_message.symmetric_algo
+            # Add to processed IDs
+            self.processed_message_ids.add(decrypted_message.message_id)
 
-                if hasattr(decrypted_message, 'signature_algo') and decrypted_message.signature_algo:
-                    self.peer_crypto_settings[peer_id]["signature"] = decrypted_message.signature_algo
+            # Clean up processed IDs occasionally
+            if len(self.processed_message_ids) > 100:
+                old_ids = list(self.processed_message_ids)[:50]
+                for old_id in old_ids:
+                    self.processed_message_ids.remove(old_id)
 
-                # Log the message
-                self.secure_logger.log_event(
-                    event_type="message_received",
-                    peer_id=peer_id,
-                    message_id=decrypted_message.message_id,
-                    encryption_algorithm=self.symmetric.name,
-                    signature_algorithm=self.signature.name,
-                    is_file=decrypted_message.is_file,
-                    size=len(message_json)
-                )
+            # Update peer crypto settings from message metadata
+            if peer_id not in self.peer_crypto_settings:
+                self.peer_crypto_settings[peer_id] = {}
 
-                logger.info(f"Received and verified message from {peer_id}")
+            if hasattr(decrypted_message, 'key_exchange_algo') and decrypted_message.key_exchange_algo:
+                self.peer_crypto_settings[peer_id]["key_exchange"] = decrypted_message.key_exchange_algo
 
-                # Notify global message handlers
-                for handler in self.global_message_handlers:
-                    try:
-                        handler(decrypted_message)
-                    except Exception as e:
-                        logger.error(f"Error in global message handler: {e}")
+            if hasattr(decrypted_message, 'symmetric_algo') and decrypted_message.symmetric_algo:
+                self.peer_crypto_settings[peer_id]["symmetric"] = decrypted_message.symmetric_algo
 
-                # Call any registered callbacks for this message
-                if decrypted_message.message_id in self.message_callbacks:
-                    self.message_callbacks[decrypted_message.message_id](decrypted_message)
-                    del self.message_callbacks[decrypted_message.message_id]
+            if hasattr(decrypted_message, 'signature_algo') and decrypted_message.signature_algo:
+                self.peer_crypto_settings[peer_id]["signature"] = decrypted_message.signature_algo
 
-            except Exception as e:
-                logger.error(f"Failed to decrypt or verify message from {peer_id}: {e}")
+            # Log the message
+            self.secure_logger.log_event(
+                event_type="message_received",
+                peer_id=peer_id,
+                message_id=decrypted_message.message_id,
+                encryption_algorithm=self.symmetric.name,
+                signature_algorithm=self.signature.name,
+                is_file=decrypted_message.is_file,
+                size=len(message_json)
+            )
+
+            logger.info(f"Received and verified message from {peer_id}")
+
+            # Notify global message handlers
+            for handler in self.global_message_handlers:
+                try:
+                    handler(decrypted_message)
+                except Exception as e:
+                    logger.error(f"Error in global message handler: {e}")
+
+            # Call any registered callbacks for this message
+            if decrypted_message.message_id in self.message_callbacks:
+                self.message_callbacks[decrypted_message.message_id](decrypted_message)
+                del self.message_callbacks[decrypted_message.message_id]
 
         except Exception as e:
             logger.error(f"Error handling secure message from {peer_id}: {e}")
-    
+
     async def send_message(self, peer_id: str, content: bytes, 
                        is_file: bool = False, filename: Optional[str] = None) -> bool:
-        """Send a secure message to a peer following the sign-then-encrypt standard.
+        """Send a secure message to a peer.
 
         Args:
             peer_id: The ID of the peer to send the message to
@@ -1572,12 +1593,6 @@ class SecureMessaging:
             if not success:
                 logger.error(f"Failed to establish shared key with {peer_id}")
                 return False
-
-        # Verify the key exchange is in a valid state
-        valid_states = [KeyExchangeState.CONFIRMED, KeyExchangeState.ESTABLISHED]
-        if peer_id not in self.key_exchange_states or self.key_exchange_states[peer_id] not in valid_states:
-            logger.error(f"Key exchange with {peer_id} is not in a valid state for sending messages")
-            return False
 
         try:
             # Get our signature keypair
@@ -1616,8 +1631,22 @@ class SecureMessaging:
             # Step 5: Serialize the signed package to JSON
             signed_package_json = json.dumps(signed_package).encode()
 
-            # Step 6: Encrypt the entire signed package
-            ciphertext = self.symmetric.encrypt(self.shared_keys[peer_id], signed_package_json)
+            # Step 6: Create AEAD associated data from critical metadata
+            associated_data = json.dumps({
+                "type": "secure_message",
+                "message_id": message.message_id,
+                "sender_id": self.node.node_id,
+                "recipient_id": peer_id,
+                "timestamp": message.timestamp,
+                "is_file": is_file,
+            }).encode()
+
+            # Step 7: Encrypt the signed package with AEAD
+            ciphertext = self.symmetric.encrypt(
+                self.shared_keys[peer_id], 
+                signed_package_json,
+                associated_data=associated_data
+            )
 
             # Log the message
             self.secure_logger.log_event(
@@ -1630,11 +1659,12 @@ class SecureMessaging:
                 size=len(content)
             )
 
-            # Step 7: Send only the encrypted package
+            # Step 8: Send the encrypted package and associated data
             success = await self.node.send_message(
                 peer_id=peer_id,
                 message_type="secure_message",
-                ciphertext=base64.b64encode(ciphertext).decode()
+                ciphertext=base64.b64encode(ciphertext).decode(),
+                associated_data=base64.b64encode(associated_data).decode()
             )
 
             if not success:
