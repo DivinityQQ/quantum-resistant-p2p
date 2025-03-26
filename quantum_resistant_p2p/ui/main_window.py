@@ -81,11 +81,11 @@ class MainWindow(QMainWindow):
     
     def _init_after_login(self):
         """Initialize components after successful login."""
-        # Get the master key from key storage
-        master_key = self.key_storage.get_master_key()
+        # Get a specialized key for the secure logger
+        secure_logger_key = self.key_storage.derive_purpose_key("secure_logger_key_v1")
         
-        # Initialize secure logger with the master key
-        self.secure_logger = SecureLogger(encryption_key=master_key)
+        # Initialize secure logger with the derived key
+        self.secure_logger = SecureLogger(encryption_key=secure_logger_key)
         
         # Then initialize the rest of the system
         self._init_network()

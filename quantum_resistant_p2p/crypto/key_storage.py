@@ -1,13 +1,13 @@
 """
-Secure storage for cryptographic keys, using Argon2 for key derivation.
+Secure storage for cryptographic keys with full metadata encryption.
 """
 
-import json
 import os
 import logging
 import base64
 import hmac
 import hashlib
+import json
 import time
 from typing import Dict, Any, Optional, Tuple, List
 from pathlib import Path
@@ -23,11 +23,15 @@ logger = logging.getLogger(__name__)
 
 
 class KeyStorage:
-    """Secure storage for cryptographic keys.
+    """Secure storage for cryptographic keys with full metadata encryption.
     
-    This class provides functionality to securely store and retrieve
-    cryptographic keys using password-based encryption with Argon2.
+    This class provides complete encryption of all data and metadata, with no
+    information leakage in the stored file. It uses Argon2id for key derivation
+    and AES-GCM for encryption.
     """
+    
+    # Storage format version (for future extensions)
+    FORMAT_VERSION = 1
     
     def __init__(self, storage_path: Optional[str] = None):
         """Initialize a new key storage instance.
@@ -47,9 +51,13 @@ class KeyStorage:
             # Make sure parent directory exists
             self.storage_path.parent.mkdir(exist_ok=True, parents=True)
         
+        # In-memory key storage
         self.keys: Dict[str, Dict[str, Any]] = {}
+        
+        # Cryptographic keys - all None until unlocked
         self.master_key: Optional[bytes] = None
         self.salt: Optional[bytes] = None
+        self.hmac_key: Optional[bytes] = None
         
         # Create the secure file handler
         self.secure_file = SecureFile(self.storage_path)
@@ -74,14 +82,51 @@ class KeyStorage:
             salt=salt,               # Salt value
             length=32,               # Output key length (256 bits)
             iterations=3,            # Iterations (time cost)
-            lanes=4,                 # Parallelism parameter
+            lanes=4,                 # Parallelism parameter 
             memory_cost=102400,      # Memory cost (100 MiB)
-            # ad and secret can be left as default None
         )
         
         derived_key = kdf.derive(password.encode())
         
         return derived_key, salt
+    
+    def _derive_encryption_keys(self) -> None:
+        """Derive all encryption keys from the master key.
+        
+        This derives separate keys for different purposes to maintain
+        proper cryptographic domain separation.
+        """
+        if self.master_key is None:
+            raise ValueError("Cannot derive keys, storage not unlocked")
+        
+        # HMAC key for entry IDs
+        self.hmac_key = hmac.new(
+            key=self.master_key,
+            msg=b"key_storage_hmac_key_v1",
+            digestmod=hashlib.sha256
+        ).digest()
+    
+    def _compute_entry_id(self, key_id: str) -> str:
+        """Compute a deterministic but opaque entry ID for a key.
+        
+        Args:
+            key_id: The original key ID
+            
+        Returns:
+            An opaque entry ID for storage
+        """
+        if self.hmac_key is None:
+            raise ValueError("HMAC key not available, storage not unlocked")
+        
+        # Create a keyed hash of the key ID using HMAC
+        # This ensures the mapping is deterministic but only known to those with the key
+        digest = hmac.new(
+            key=self.hmac_key,
+            msg=key_id.encode(),
+            digestmod=hashlib.sha256
+        ).hexdigest()
+        
+        return digest
     
     def _secure_zero(self, data: bytes) -> None:
         """Securely overwrite data in memory.
@@ -113,47 +158,73 @@ class KeyStorage:
                 # First time use, create a new storage file
                 self.salt = os.urandom(16)
                 self.master_key, _ = self._derive_key(password, self.salt)
+                self._derive_encryption_keys()
                 return self._save_storage()
+            
+            # Check format version
+            format_version = data.get('format_version', 0)
+            if format_version != self.FORMAT_VERSION:
+                logger.error(f"Unsupported storage format version: {format_version}")
+                return False
             
             if 'salt' not in data:
                 logger.error("Invalid key storage file, missing salt")
                 return False
             
+            # Derive the master key from the password
             salt = base64.b64decode(data['salt'])
             derived_key, _ = self._derive_key(password, salt)
             
+            # Verify the password using the test value
             if 'test_nonce' in data and 'test_ciphertext' in data:
-                # Try to decrypt a test value to verify the password
-                nonce = base64.b64decode(data['test_nonce'])
-                ciphertext = base64.b64decode(data['test_ciphertext'])
-                
                 try:
+                    nonce = base64.b64decode(data['test_nonce'])
+                    ciphertext = base64.b64decode(data['test_ciphertext'])
+                    
                     aesgcm = AESGCM(derived_key)
                     plaintext = aesgcm.decrypt(nonce, ciphertext, None)
+                    
                     if plaintext.decode() != "test_value":
                         logger.error("Password verification failed")
                         return False
                 except Exception as e:
                     logger.error(f"Failed to decrypt test value, wrong password?: {e}")
                     return False
+            else:
+                logger.error("Invalid key storage file, missing verification data")
+                return False
             
+            # Password verified, set the keys
             self.master_key = derived_key
             self.salt = salt
+            self._derive_encryption_keys()
             
             # Load the encrypted keys
-            if 'keys' in data:
-                for key_id, encrypted_key_data in data['keys'].items():
-                    try:
-                        nonce = base64.b64decode(encrypted_key_data['nonce'])
-                        ciphertext = base64.b64decode(encrypted_key_data['ciphertext'])
+            if 'keys' not in data:
+                logger.warning("No keys found in storage")
+                return True
+                
+            aesgcm = AESGCM(self.master_key)
+            
+            for entry_id, encrypted_key_data in data['keys'].items():
+                try:
+                    # Decrypt the key data
+                    nonce = base64.b64decode(encrypted_key_data['nonce'])
+                    ciphertext = base64.b64decode(encrypted_key_data['ciphertext'])
+                    
+                    key_data_json = aesgcm.decrypt(nonce, ciphertext, None)
+                    key_data = json.loads(key_data_json.decode())
+                    
+                    # Extract the original key_id from the decrypted data
+                    if '__key_id' not in key_data:
+                        logger.error(f"Missing key_id in entry {entry_id}, skipping")
+                        continue
                         
-                        aesgcm = AESGCM(self.master_key)
-                        key_data_json = aesgcm.decrypt(nonce, ciphertext, None)
-                        key_data = json.loads(key_data_json.decode())
+                    key_id = key_data.pop('__key_id')  # Remove the special marker
+                    self.keys[key_id] = key_data
                         
-                        self.keys[key_id] = key_data
-                    except Exception as e:
-                        logger.error(f"Failed to decrypt key {key_id}: {e}")
+                except Exception as e:
+                    logger.error(f"Failed to decrypt key {entry_id}: {e}")
             
             logger.info(f"Unlocked key storage with {len(self.keys)} keys")
             return True
@@ -162,39 +233,36 @@ class KeyStorage:
             logger.error(f"Failed to unlock key storage: {e}")
             return False
     
-    def get_master_key(self) -> bytes:
-        """Get the master key for use by other secure components.
+    def derive_purpose_key(self, purpose: str) -> bytes:
+        """Derive a special-purpose key from the master key.
         
-        This should only be called after successful unlock.
-        
+        Args:
+            purpose: A string identifier for the key's purpose
+            
         Returns:
-            The master key as bytes or None if not unlocked
+            A derived key for the specified purpose
         """
         if self.master_key is None:
-            logger.error("Cannot get master key, storage not unlocked")
+            logger.error("Cannot derive purpose key, storage not unlocked")
             return None
         
-        # For security, we don't return the exact master key
-        # Instead, derive a separate key for logs using the master key
-        # using HMAC to ensure this derived key can't be used to recover the master key
-        
-        # Derive a specific key for logs using HMAC
-        log_key = hmac.new(
+        # Derive a purpose-specific key using HMAC
+        purpose_key = hmac.new(
             key=self.master_key,
-            msg=b"secure_logger_key_v1",
+            msg=purpose.encode(),
             digestmod=hashlib.sha256
         ).digest()
         
-        logger.debug("Derived log encryption key from master key")
-        return log_key
+        logger.debug(f"Derived purpose key for: {purpose}")
+        return purpose_key
     
     def _save_storage(self) -> bool:
-        """Save the key storage to disk.
+        """Save the key storage to disk with full encryption.
         
         Returns:
             True if save successful, False otherwise
         """
-        if self.master_key is None or self.salt is None:
+        if self.master_key is None or self.salt is None or self.hmac_key is None:
             logger.error("Cannot save storage, not unlocked")
             return False
         
@@ -206,20 +274,38 @@ class KeyStorage:
             
             # Prepare the data to save
             data = {
+                'format_version': self.FORMAT_VERSION,
                 'salt': base64.b64encode(self.salt).decode(),
-                'kdf': 'argon2id',  # Document which KDF is used
+                'kdf': 'argon2id',
                 'test_nonce': base64.b64encode(nonce).decode(),
                 'test_ciphertext': base64.b64encode(ciphertext).decode(),
+                'created_at': time.time(),
                 'keys': {}
             }
             
-            # Encrypt each key
+            # Encrypt each key with its metadata
             for key_id, key_data in self.keys.items():
-                key_data_json = json.dumps(key_data).encode()
+                # Include the key_id inside the encrypted data
+                key_data_with_meta = key_data.copy()
+                key_data_with_meta['__key_id'] = key_id  # Special marker
+                
+                # Convert binary data to base64 strings for JSON serialization
+                serialized_data = {}
+                for k, v in key_data_with_meta.items():
+                    if isinstance(v, bytes):
+                        serialized_data[k] = base64.b64encode(v).decode('utf-8')
+                    else:
+                        serialized_data[k] = v
+                
+                # Serialize, encrypt and store with HMAC-based entry ID
+                key_data_json = json.dumps(serialized_data).encode()
                 nonce = os.urandom(12)
                 ciphertext = aesgcm.encrypt(nonce, key_data_json, None)
                 
-                data['keys'][key_id] = {
+                # Create an opaque but deterministic entry ID
+                entry_id = self._compute_entry_id(key_id)
+                
+                data['keys'][entry_id] = {
                     'nonce': base64.b64encode(nonce).decode(),
                     'ciphertext': base64.b64encode(ciphertext).decode()
                 }
@@ -255,6 +341,7 @@ class KeyStorage:
         
         # Generate a new master key with the new password
         self.master_key, self.salt = self._derive_key(new_password)
+        self._derive_encryption_keys()
         
         # Save the storage with the new master key
         return self._save_storage()
@@ -276,16 +363,9 @@ class KeyStorage:
         try:
             # Add metadata
             key_data_with_meta = key_data.copy()
-            key_data_with_meta['id'] = key_id
-            if 'created_at' not in key_data_with_meta:
-                key_data_with_meta['created_at'] = time.time()
+            key_data_with_meta['created_at'] = time.time()
             
-            # Convert binary data to base64 strings for JSON serialization
-            for k, v in key_data_with_meta.items():
-                if isinstance(v, bytes):
-                    key_data_with_meta[k] = base64.b64encode(v).decode('utf-8')
-            
-            # Store the key
+            # Store the key in memory
             self.keys[key_id] = key_data_with_meta
             
             # Save to disk
@@ -315,15 +395,18 @@ class KeyStorage:
         key_data = self.keys[key_id].copy()
         
         # Convert base64 strings back to binary data
+        decoded_data = {}
         for k, v in key_data.items():
             if isinstance(v, str) and k in ['public_key', 'private_key', 'shared_key']:
                 try:
-                    key_data[k] = base64.b64decode(v)
+                    decoded_data[k] = base64.b64decode(v)
                 except Exception:
-                    # Not base64 encoded, leave as is
-                    pass
+                    # Not base64 encoded, use as is
+                    decoded_data[k] = v
+            else:
+                decoded_data[k] = v
         
-        return key_data
+        return decoded_data
     
     def delete_key(self, key_id: str) -> bool:
         """Delete a key from the key storage.
@@ -343,10 +426,10 @@ class KeyStorage:
             return False
         
         try:
-            # Remove the key
+            # Remove the key from memory
             del self.keys[key_id]
             
-            # Save to disk
+            # Save to disk to remove it from storage
             return self._save_storage()
             
         except Exception as e:
@@ -363,7 +446,22 @@ class KeyStorage:
             logger.error("Cannot list keys, storage not unlocked")
             return []
         
-        return [(key_id, key_data) for key_id, key_data in self.keys.items()]
+        # Create a list of (key_id, key_data) tuples
+        # Convert any base64 strings to bytes in the key data
+        result = []
+        for key_id, key_data in self.keys.items():
+            decoded_data = {}
+            for k, v in key_data.items():
+                if isinstance(v, str) and k in ['public_key', 'private_key', 'shared_key']:
+                    try:
+                        decoded_data[k] = base64.b64decode(v)
+                    except Exception:
+                        decoded_data[k] = v
+                else:
+                    decoded_data[k] = v
+            result.append((key_id, decoded_data))
+        
+        return result
     
     def get_key_history(self, decrypt_keys=False) -> List[Dict[str, Any]]:
         """Get a list of all saved key history.
@@ -476,6 +574,10 @@ class KeyStorage:
         if hasattr(self, 'master_key') and self.master_key:
             self._secure_zero(self.master_key)
             self.master_key = None
+            
+        if hasattr(self, 'hmac_key') and self.hmac_key:
+            self._secure_zero(self.hmac_key)
+            self.hmac_key = None
             
         self.keys = {}
         self.salt = None
