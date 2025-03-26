@@ -11,7 +11,6 @@ from .messaging_widget import MessagingWidget
 from .settings_dialog import SettingsDialog
 from .security_metrics_dialog import SecurityMetricsDialog
 from .log_viewer_dialog import LogViewerDialog
-from .log_diagnostics import LogDiagnosticsDialog
 from .oqs_status_widget import OQSStatusWidget
 from .key_history_dialog import KeyHistoryDialog
 
@@ -23,7 +22,6 @@ __all__ = [
     'SettingsDialog',
     'SecurityMetricsDialog',
     'LogViewerDialog',
-    'LogDiagnosticsDialog',
     'OQSStatusWidget',
     'KeyHistoryDialog'
 ]
