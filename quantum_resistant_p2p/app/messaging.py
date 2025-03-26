@@ -240,23 +240,25 @@ class SecureMessaging:
         key_material = f"{node_ids[0]}:{node_ids[1]}:{self.key_exchange.name}"
         key_hash = hashlib.sha256(key_material.encode()).hexdigest()[:16]
         return f"peer_shared_key_{key_hash}"
+
+    def _generate_ephemeral_keypair(self) -> Tuple[bytes, bytes]:
+        """Generate a fresh ephemeral keypair for a single key exchange.
+
+        Returns:
+            Tuple of (public_key, private_key)
+        """
+        public_key, private_key = self.key_exchange.generate_keypair()
+        logger.info(f"Generated ephemeral keypair for {self.key_exchange.name}")
+        return public_key, private_key
     
     def _load_or_generate_keypair(self) -> None:
-        """Load existing keypairs or generate new ones if they don't exist."""
-        # Check if we have key exchange keypair
-        key_exchange_key = self.key_storage.get_key(f"key_exchange_{self.key_exchange.name}")
-        if key_exchange_key is None:
-            # Generate a new keypair
-            public_key, private_key = self.key_exchange.generate_keypair()
-            key_exchange_key = {
-                "algorithm": self.key_exchange.name,
-                "public_key": public_key,
-                "private_key": private_key
-            }
-            self.key_storage.store_key(f"key_exchange_{self.key_exchange.name}", key_exchange_key)
-            logger.info(f"Generated new key exchange keypair for {self.key_exchange.name}")
-        
-        # Check if we have signature keypair
+        """Load existing signature keypair or generate a new one if it doesn't exist.
+
+        Note: KEM keypairs are now generated ephemerally per exchange 
+        and are not stored in KeyStorage anymore.
+        """
+        # We only store signature keypairs persistently now
+        # KEM keypairs are generated fresh for each exchange
         signature_key = self.key_storage.get_key(f"signature_{self.signature.name}")
         if signature_key is None:
             # Generate a new keypair
@@ -474,7 +476,7 @@ class SecureMessaging:
     
     async def send_crypto_settings_to_peer(self, peer_id: str) -> None:
         """Send our cryptography settings to a specific peer.
-        
+
         Args:
             peer_id: The ID of the peer to send settings to
         """
@@ -485,24 +487,16 @@ class SecureMessaging:
             "signature": self.signature.name,
             "timestamp": time.time()
         }
-        
+
         # Encode the settings info
         message_json = json.dumps(settings_info).encode()
-        
-        # Sign the message if possible (might not have signature keypair yet)
-        signature = None
-        signature_key = self.key_storage.get_key(f"signature_{self.signature.name}")
-        if signature_key:
-            private_key = signature_key["private_key"]
-            signature = self.signature.sign(private_key, message_json)
-        
-        # Send the settings update
+
+        # Send the settings update (without signature)
         try:
             await self.node.send_message(
                 peer_id=peer_id,
                 message_type="crypto_settings_update",
-                settings=base64.b64encode(message_json).decode(),
-                signature=base64.b64encode(signature).decode() if signature else None
+                settings=base64.b64encode(message_json).decode()
             )
             logger.debug(f"Sent crypto settings to {peer_id}")
         except Exception as e:
@@ -550,7 +544,7 @@ class SecureMessaging:
                 logger.error(f"Failed to notify peer {peer_id} of settings change: {e}")
     
     async def initiate_key_exchange(self, peer_id: str) -> bool:
-        """Initiate an authenticated key exchange with a peer.
+        """Initiate an authenticated key exchange with a peer using ephemeral keys.
 
         Args:
             peer_id: The ID of the peer to exchange keys with
@@ -592,11 +586,15 @@ class SecureMessaging:
             return False
 
         try:
-            # Get our keypair for key exchange
-            key_exchange_key = self.key_storage.get_key(f"key_exchange_{self.key_exchange.name}")
-            if key_exchange_key is None:
-                logger.error(f"Missing key exchange keypair for {self.key_exchange.name}")
-                return False
+            # Generate a fresh ephemeral keypair for this exchange
+            public_key, private_key = self._generate_ephemeral_keypair()
+
+            # Store the private key in memory temporarily (only for this exchange)
+            # We'll use a dictionary to map peer_id to ephemeral private keys
+            # This is cleared once the exchange is complete
+            if not hasattr(self, 'ephemeral_private_keys'):
+                self.ephemeral_private_keys = {}
+            self.ephemeral_private_keys[peer_id] = private_key
 
             # Get our signature keypair for authentication
             signature_key = self.key_storage.get_key(f"signature_{self.signature.name}")
@@ -606,7 +604,7 @@ class SecureMessaging:
 
             # Create a structured message with metadata
             ke_data = {
-                "public_key": base64.b64encode(key_exchange_key["public_key"]).decode(),
+                "public_key": base64.b64encode(public_key).decode(),
                 "algorithm": self.key_exchange.display_name,
                 "sender_id": self.node.node_id,
                 "recipient_id": peer_id,
@@ -618,8 +616,8 @@ class SecureMessaging:
             ke_data_json = json.dumps(ke_data).encode()
 
             # Sign the key exchange data
-            private_key = signature_key["private_key"]
-            signature = self.signature.sign(private_key, ke_data_json)
+            private_key_sig = signature_key["private_key"]
+            signature = self.signature.sign(private_key_sig, ke_data_json)
 
             # Generate a message ID for tracking the response
             message_id = ke_data["message_id"]
@@ -637,6 +635,10 @@ class SecureMessaging:
                         future.set_exception(result)
                 else:
                     future.set_result(True)
+
+                # Clean up ephemeral private key regardless of result
+                if peer_id in self.ephemeral_private_keys:
+                    del self.ephemeral_private_keys[peer_id]
 
             self.message_callbacks[message_id] = callback
 
@@ -656,6 +658,9 @@ class SecureMessaging:
             if not success:
                 logger.error(f"Failed to send key exchange initiation to {peer_id}")
                 self.key_exchange_states[peer_id] = KeyExchangeState.NONE
+                # Clean up ephemeral private key
+                if peer_id in self.ephemeral_private_keys:
+                    del self.ephemeral_private_keys[peer_id]
                 return False
 
             # Wait for the response with timeout
@@ -670,11 +675,17 @@ class SecureMessaging:
 
                 logger.error(f"Timeout waiting for key exchange response from {peer_id}")
                 self.key_exchange_states[peer_id] = KeyExchangeState.NONE
+                # Clean up ephemeral private key
+                if peer_id in self.ephemeral_private_keys:
+                    del self.ephemeral_private_keys[peer_id]
                 return False
 
         except Exception as e:
             logger.error(f"Error initiating key exchange with {peer_id}: {e}")
             self.key_exchange_states[peer_id] = KeyExchangeState.NONE
+            # Clean up ephemeral private key
+            if hasattr(self, 'ephemeral_private_keys') and peer_id in self.ephemeral_private_keys:
+                del self.ephemeral_private_keys[peer_id]
             # Check if we have a shared key despite the error
             if peer_id in self.shared_keys:
                 logger.warning(f"Key exchange failed with error but shared key exists for {peer_id}")
@@ -792,17 +803,18 @@ class SecureMessaging:
                 )
                 return
 
-            # Get our keypair
-            key_exchange_key = self.key_storage.get_key(f"key_exchange_{self.key_exchange.name}")
-            if key_exchange_key is None:
-                logger.error(f"Missing key exchange keypair for {self.key_exchange.name}")
-
-                # Send rejection due to missing keypair
+            # Generate a fresh ephemeral keypair for this response
+            # No longer using stored keypairs for key exchange
+            try:
+                ephemeral_public_key, ephemeral_private_key = self._generate_ephemeral_keypair()
+            except Exception as e:
+                logger.error(f"Failed to generate ephemeral keypair: {e}")
+                # Send rejection due to keypair generation error
                 await self.node.send_message(
                     peer_id=peer_id,
                     message_type="key_exchange_rejected",
                     message_id=message_id,
-                    reason="missing_keypair"
+                    reason="keypair_generation_error"
                 )
                 return
 
@@ -838,6 +850,7 @@ class SecureMessaging:
             response_data = {
                 "algorithm": self.key_exchange.display_name,
                 "ciphertext": base64.b64encode(ciphertext).decode(),
+                "responder_public_key": base64.b64encode(ephemeral_public_key).decode(),  # Include our ephemeral public key
                 "message_id": message_id,
                 "sender_id": self.node.node_id,
                 "recipient_id": peer_id,
@@ -870,6 +883,10 @@ class SecureMessaging:
                 message_id=message_id
             )
 
+            # We don't need to store the ephemeral private key since we've already encapsulated
+            # the shared secret and won't need it again
+            # ephemeral_private_key gets garbage collected here
+
             logger.info(f"Sent authenticated key exchange response to {peer_id}")
 
         except Exception as e:
@@ -886,7 +903,7 @@ class SecureMessaging:
                 )
             except Exception:
                 pass
-    
+                
     async def _handle_key_exchange_response(self, peer_id: str, message: Dict[str, Any]) -> None:
         """Handle an authenticated key exchange response message from a peer.
 
@@ -955,6 +972,7 @@ class SecureMessaging:
             algorithm_name = response_data.get("algorithm")
             ciphertext_b64 = response_data.get("ciphertext")
             response_message_id = response_data.get("message_id")
+            responder_public_key_b64 = response_data.get("responder_public_key")  # Get responder's ephemeral public key
 
             if not algorithm_name or not ciphertext_b64 or not response_message_id:
                 logger.error(f"Invalid key exchange response from {peer_id}, missing key exchange data")
@@ -1000,26 +1018,33 @@ class SecureMessaging:
 
                 return
 
-            # Get our keypair
-            key_exchange_key = self.key_storage.get_key(f"key_exchange_{self.key_exchange.name}")
-            if key_exchange_key is None:
-                logger.error(f"Missing key exchange keypair for {self.key_exchange.name}")
+            # Get the ephemeral private key for this exchange
+            if not hasattr(self, 'ephemeral_private_keys') or peer_id not in self.ephemeral_private_keys:
+                logger.error(f"No ephemeral private key found for exchange with {peer_id}")
 
                 # Call any registered callbacks with an error
                 if message_id in self.message_callbacks:
-                    error = Exception(f"Missing key exchange keypair for {self.key_exchange.name}")
+                    error = Exception(f"No ephemeral private key found for exchange with {peer_id}")
                     self.message_callbacks[message_id](error)
                     del self.message_callbacks[message_id]
-
                 return
+
+            # Get our ephemeral private key
+            ephemeral_private_key = self.ephemeral_private_keys[peer_id]
 
             # Decapsulate the shared secret
             try:
                 ciphertext = base64.b64decode(ciphertext_b64)
-                private_key = key_exchange_key["private_key"]
-                shared_secret = self.key_exchange.decapsulate(private_key, ciphertext)
+                shared_secret = self.key_exchange.decapsulate(ephemeral_private_key, ciphertext)
+
+                # We're done with the ephemeral private key - delete it immediately
+                del self.ephemeral_private_keys[peer_id]
             except Exception as e:
                 logger.error(f"Error during key decapsulation: {e}")
+
+                # Clean up ephemeral private key
+                if peer_id in self.ephemeral_private_keys:
+                    del self.ephemeral_private_keys[peer_id]
 
                 # Call any registered callbacks with the error
                 if message_id in self.message_callbacks:
@@ -1110,6 +1135,10 @@ class SecureMessaging:
 
         except Exception as e:
             logger.error(f"Error handling key exchange response from {peer_id}: {e}")
+
+            # Clean up ephemeral private key
+            if hasattr(self, 'ephemeral_private_keys') and peer_id in self.ephemeral_private_keys:
+                del self.ephemeral_private_keys[peer_id]
 
             # Call any registered callbacks with the error
             if message_id in self.message_callbacks:
@@ -1318,7 +1347,6 @@ class SecureMessaging:
 
         try:
             settings_data = message.get("settings")
-            signature_data = message.get("signature")
 
             if not settings_data:
                 logger.error(f"Invalid crypto settings update from {peer_id}")
@@ -1326,16 +1354,6 @@ class SecureMessaging:
 
             # Decode the settings
             settings_json = base64.b64decode(settings_data)
-
-            # Verify signature if provided
-            if signature_data:
-                # Get the peer's signature public key (if available)
-                peer_key = self.key_storage.get_key(f"peer_{peer_id}_signature")
-                if peer_key and "public_key" in peer_key:
-                    signature = base64.b64decode(signature_data)
-                    verified = self.signature.verify(peer_key["public_key"], settings_json, signature)
-                    if not verified:
-                        logger.warning(f"Invalid signature on crypto settings update from {peer_id}")
 
             # Parse the settings
             settings = json.loads(settings_json.decode())
@@ -1353,7 +1371,7 @@ class SecureMessaging:
                 self.peer_crypto_settings[peer_id].get("signature") != settings.get("signature")):
                 settings_changed = True
 
-            # Update stored settings - store settings exactly as received, no [Mock] suffix handling
+            # Update stored settings
             self.peer_crypto_settings[peer_id]["key_exchange"] = settings.get("key_exchange")
             self.peer_crypto_settings[peer_id]["symmetric"] = settings.get("symmetric")
             self.peer_crypto_settings[peer_id]["signature"] = settings.get("signature")
@@ -1395,7 +1413,7 @@ class SecureMessaging:
                     except Exception as e:
                         logger.error(f"Error in settings mismatch handler: {e}")
 
-                # If the key exchange algorithm differs, start a new key exchange
+                # If the key exchange algorithm differs, initiate a new key exchange
                 if settings.get("key_exchange") != our_settings["key_exchange"]:
                     # Remove any existing shared key
                     if peer_id in self.shared_keys:
@@ -1703,18 +1721,6 @@ class SecureMessaging:
             
             # Update the algorithm
             self.key_exchange = algorithm
-            
-            # Generate a keypair if we don't have one
-            key_exchange_key = self.key_storage.get_key(f"key_exchange_{self.key_exchange.name}")
-            if key_exchange_key is None:
-                public_key, private_key = self.key_exchange.generate_keypair()
-                key_exchange_key = {
-                    "algorithm": self.key_exchange.name,
-                    "public_key": public_key,
-                    "private_key": private_key
-                }
-                self.key_storage.store_key(f"key_exchange_{self.key_exchange.name}", key_exchange_key)
-                logger.info(f"Generated new key exchange keypair for {self.key_exchange.name}")
             
             # Clear all shared keys and key exchange states
             # This is important - we need to renegotiate with all peers
