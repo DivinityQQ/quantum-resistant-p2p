@@ -1183,96 +1183,76 @@ class SecureMessaging:
             logger.error(f"Error handling crypto settings update from {peer_id}: {e}")
     
     async def _handle_secure_message(self, peer_id: str, message: Dict[str, Any]) -> None:
-        """Handle a secure message from a peer.
-
+        """Handle a secure message from a peer following the sign-then-encrypt standard.
+    
         Args:
             peer_id: The ID of the peer who sent the message
             message: The message data
         """
         logger.debug(f"Received secure message from {peer_id}")
-
+    
         try:
+            # Step 1: Get the encrypted package
             ciphertext = message.get("ciphertext")
-            signature = message.get("signature")
-            public_key = message.get("public_key")
-
-            if not ciphertext or not signature or not public_key:
+            if not ciphertext:
                 logger.error(f"Invalid secure message from {peer_id}")
                 return
-
+    
             # Make sure we have a shared key
             if peer_id not in self.shared_keys:
                 logger.error(f"No shared key established with {peer_id}")
                 return
-
-            # Decrypt the message
-            ciphertext_bytes = base64.b64decode(ciphertext)
-            signature_bytes = base64.b64decode(signature)
-            public_key_bytes = base64.b64decode(public_key)
-
+    
             try:
-                # Decrypt the message
-                plaintext = self.symmetric.decrypt(self.shared_keys[peer_id], ciphertext_bytes)
-
-                # Verify the signature
-                verified = self.signature.verify(public_key_bytes, plaintext, signature_bytes)
+                # Step 2: Decrypt the package
+                ciphertext_bytes = base64.b64decode(ciphertext)
+                decrypted_package_json = self.symmetric.decrypt(self.shared_keys[peer_id], ciphertext_bytes)
+                
+                # Step 3: Parse the signed package
+                signed_package = json.loads(decrypted_package_json.decode())
+                
+                # Step 4: Extract the components
+                message_json = base64.b64decode(signed_package["message"])
+                signature_bytes = base64.b64decode(signed_package["signature"])
+                public_key_bytes = base64.b64decode(signed_package["public_key"])
+                
+                # Step 5: Verify the signature
+                verified = self.signature.verify(public_key_bytes, message_json, signature_bytes)
                 if not verified:
                     logger.error(f"Signature verification failed for message from {peer_id}")
                     return
-
-                # Parse the message
-                message_data = json.loads(plaintext.decode())
-
-                # Set the recipient_id for the message (to this node)
-                # This ensures proper conversation tracking
-                if 'recipient_id' not in message_data:
-                    message_data['recipient_id'] = self.node.node_id
-
+                
+                # Step 6: Parse the verified message
+                message_data = json.loads(message_json.decode())
                 decrypted_message = Message.from_dict(message_data)
-
+                
                 # Check if we've already processed this message
                 if decrypted_message.message_id in self.processed_message_ids:
                     logger.debug(f"Message {decrypted_message.message_id} already processed, skipping")
                     return
-
+                
                 # Add to processed IDs
                 self.processed_message_ids.add(decrypted_message.message_id)
-
+                
                 # Clean up processed IDs occasionally
                 if len(self.processed_message_ids) > 100:
                     old_ids = list(self.processed_message_ids)[:50]
                     for old_id in old_ids:
                         self.processed_message_ids.remove(old_id)
-
+                
                 # Update peer crypto settings from message metadata if available
                 if peer_id not in self.peer_crypto_settings:
                     self.peer_crypto_settings[peer_id] = {}
-
+                
                 if hasattr(decrypted_message, 'key_exchange_algo') and decrypted_message.key_exchange_algo:
                     self.peer_crypto_settings[peer_id]["key_exchange"] = decrypted_message.key_exchange_algo
-
+                
                 if hasattr(decrypted_message, 'symmetric_algo') and decrypted_message.symmetric_algo:
                     self.peer_crypto_settings[peer_id]["symmetric"] = decrypted_message.symmetric_algo
-
+                
                 if hasattr(decrypted_message, 'signature_algo') and decrypted_message.signature_algo:
                     self.peer_crypto_settings[peer_id]["signature"] = decrypted_message.signature_algo
-
-                # Check for algorithm mismatch
-                if (hasattr(decrypted_message, 'key_exchange_algo') and 
-                    decrypted_message.key_exchange_algo != self.key_exchange.name):
-                    logger.warning(f"Key exchange algorithm mismatch with {peer_id}: " +
-                                  f"they use {decrypted_message.key_exchange_algo}, we use {self.key_exchange.name}")
-
-                if (hasattr(decrypted_message, 'symmetric_algo') and 
-                    decrypted_message.symmetric_algo != self.symmetric.name):
-                    logger.warning(f"Symmetric algorithm mismatch with {peer_id}: " +
-                                  f"they use {decrypted_message.symmetric_algo}, we use {self.symmetric.name}")
-
-                if (hasattr(decrypted_message, 'signature_algo') and 
-                    decrypted_message.signature_algo != self.signature.name):
-                    logger.warning(f"Signature algorithm mismatch with {peer_id}: " +
-                                  f"they use {decrypted_message.signature_algo}, we use {self.signature.name}")
-
+                
                 # Log the message
                 self.secure_logger.log_event(
                     event_type="message_received",
@@ -1281,32 +1261,32 @@ class SecureMessaging:
                     encryption_algorithm=self.symmetric.name,
                     signature_algorithm=self.signature.name,
                     is_file=decrypted_message.is_file,
-                    size=len(plaintext)
+                    size=len(message_json)
                 )
-
+                
                 logger.info(f"Received and verified message from {peer_id}")
-
+                
                 # Notify global message handlers
                 for handler in self.global_message_handlers:
                     try:
                         handler(decrypted_message)
                     except Exception as e:
                         logger.error(f"Error in global message handler: {e}")
-
+                
                 # Call any registered callbacks for this message
                 if decrypted_message.message_id in self.message_callbacks:
                     self.message_callbacks[decrypted_message.message_id](decrypted_message)
                     del self.message_callbacks[decrypted_message.message_id]
-
+                    
             except Exception as e:
                 logger.error(f"Failed to decrypt or verify message from {peer_id}: {e}")
-
+                
         except Exception as e:
             logger.error(f"Error handling secure message from {peer_id}: {e}")
     
     async def send_message(self, peer_id: str, content: bytes, 
-                        is_file: bool = False, filename: Optional[str] = None) -> bool:
-        """Send a secure message to a peer.
+                       is_file: bool = False, filename: Optional[str] = None) -> bool:
+        """Send a secure message to a peer following the sign-then-encrypt standard.
 
         Args:
             peer_id: The ID of the peer to send the message to
@@ -1319,10 +1299,9 @@ class SecureMessaging:
         """
         logger.debug(f"Sending message to {peer_id}")
 
-        # First, verify that the key exchange is valid
+        # Verify the key exchange is valid
         if not self.verify_key_exchange_state(peer_id):
             logger.warning(f"Key exchange with {peer_id} is not valid or complete")
-
             # Notify about the issue
             for handler in self.global_message_handlers:
                 try:
@@ -1332,7 +1311,6 @@ class SecureMessaging:
                     handler(system_message)
                 except Exception as e:
                     logger.error(f"Error in system message handler: {e}")
-
             return False
 
         # Make sure we have a shared key
@@ -1356,11 +1334,11 @@ class SecureMessaging:
                 logger.error(f"Missing signature keypair for {self.signature.name}")
                 return False
 
-            # Create the message with recipient_id set
+            # Step 1: Create the message object
             message = Message(
                 content=content,
                 sender_id=self.node.node_id,
-                recipient_id=peer_id,  # Set the recipient ID explicitly
+                recipient_id=peer_id,
                 is_file=is_file,
                 filename=filename,
                 # Include algorithm information in the message
@@ -1369,15 +1347,25 @@ class SecureMessaging:
                 signature_algo=self.signature.name
             )
 
-            # Convert to JSON
+            # Step 2: Convert to JSON (this is what will be signed)
             message_json = json.dumps(message.to_dict()).encode()
 
-            # Sign the message
+            # Step 3: Sign the message JSON
             private_key = signature_key["private_key"]
             signature = self.signature.sign(private_key, message_json)
 
-            # Encrypt the message
-            ciphertext = self.symmetric.encrypt(self.shared_keys[peer_id], message_json)
+            # Step 4: Create signed package (message + signature + public key)
+            signed_package = {
+                "message": base64.b64encode(message_json).decode(),
+                "signature": base64.b64encode(signature).decode(),
+                "public_key": base64.b64encode(signature_key["public_key"]).decode()
+            }
+
+            # Step 5: Serialize the signed package to JSON
+            signed_package_json = json.dumps(signed_package).encode()
+
+            # Step 6: Encrypt the entire signed package
+            ciphertext = self.symmetric.encrypt(self.shared_keys[peer_id], signed_package_json)
 
             # Log the message
             self.secure_logger.log_event(
@@ -1390,13 +1378,11 @@ class SecureMessaging:
                 size=len(content)
             )
 
-            # Send the encrypted message
+            # Step 7: Send only the encrypted package
             success = await self.node.send_message(
                 peer_id=peer_id,
                 message_type="secure_message",
-                ciphertext=base64.b64encode(ciphertext).decode(),
-                signature=base64.b64encode(signature).decode(),
-                public_key=base64.b64encode(signature_key["public_key"]).decode()
+                ciphertext=base64.b64encode(ciphertext).decode()
             )
 
             if not success:
