@@ -1,5 +1,5 @@
 """
-Secure logging for cryptographic operations.
+Secure logging for cryptographic operations using unified file protection.
 """
 
 import json
@@ -9,73 +9,15 @@ import logging
 import datetime
 import threading
 import io
-import platform
 import struct
 import re
 from typing import Dict, List, Any, Optional
 from pathlib import Path
 
 from ..crypto.symmetric import AES256GCM
+from ..utils.secure_file import SecureFile
 
 logger = logging.getLogger(__name__)
-
-# Platform-specific file locking
-WINDOWS = platform.system() == "Windows"
-
-if WINDOWS:
-    # Windows locking with msvcrt
-    import msvcrt
-    
-    def lock_file(file_handle, exclusive=True):
-        """Lock a file on Windows."""
-        try:
-            # 0 = Unlock, 1 = Lock from position 0 to max size
-            mode = 0x2 if exclusive else 0x4  # 0x2 = LK_NBLCK, 0x4 = LK_NBRLCK
-            msvcrt.locking(file_handle.fileno(), mode, 0x7FFFFFFF)
-            return True
-        except (IOError, PermissionError, OSError):
-            # File already locked, or other error
-            return False
-    
-    def unlock_file(file_handle):
-        """Unlock a file on Windows."""
-        try:
-            # 0 = Unlock from position 0 to max size
-            msvcrt.locking(file_handle.fileno(), 0, 0x7FFFFFFF)
-            return True
-        except (IOError, PermissionError, OSError):
-            # File already unlocked, or other error
-            return False
-else:
-    # Unix locking with fcntl
-    try:
-        import fcntl
-        
-        def lock_file(file_handle, exclusive=True):
-            """Lock a file on Unix-like systems."""
-            try:
-                mode = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
-                fcntl.flock(file_handle.fileno(), mode | fcntl.LOCK_NB)
-                return True
-            except (IOError, PermissionError, OSError):
-                # File already locked, or other error
-                return False
-        
-        def unlock_file(file_handle):
-            """Unlock a file on Unix-like systems."""
-            try:
-                fcntl.flock(file_handle.fileno(), fcntl.LOCK_UN)
-                return True
-            except (IOError, PermissionError, OSError):
-                # File already unlocked, or other error
-                return False
-    except ImportError:
-        # Fallback if fcntl is not available
-        def lock_file(file_handle, exclusive=True):
-            return True
-            
-        def unlock_file(file_handle):
-            return True
 
 
 class SecureLogger:
@@ -83,7 +25,7 @@ class SecureLogger:
     
     This class provides functionality to securely log cryptographic operations
     including key exchanges, message transfers, and security-related events,
-    with safeguards against file corruption.
+    with enhanced safeguards against file corruption.
     """
     
     def __init__(self, log_path: Optional[str] = None, encryption_key: Optional[bytes] = None):
@@ -132,35 +74,23 @@ class SecureLogger:
         key_path = self.log_path.parent / "log_encryption_key"
         key_path.parent.mkdir(exist_ok=True, parents=True)
         
-        if key_path.exists():
+        # Use SecureFile for reliable file operations
+        key_file = SecureFile(key_path)
+        
+        key_data = key_file.read_bytes()
+        if key_data:
             # Load existing key
-            try:
-                with open(key_path, "rb") as f:
-                    key = f.read()
-                logger.debug("Loaded existing log encryption key")
-            except Exception as e:
-                logger.error(f"Failed to load log encryption key: {e}, generating new one")
-                # Generate a new key
-                key = self.cipher.generate_key()
-                
-                # Save the key
-                try:
-                    with open(key_path, "wb") as f:
-                        f.write(key)
-                    logger.debug("Generated new log encryption key")
-                except Exception as e:
-                    logger.error(f"Failed to save encryption key: {e}")
+            logger.debug("Loaded existing log encryption key")
+            key = key_data
         else:
             # Generate a new key
             key = self.cipher.generate_key()
             
             # Save the key
-            try:
-                with open(key_path, "wb") as f:
-                    f.write(key)
+            if not key_file.append_bytes(key):
+                logger.error("Failed to save encryption key")
+            else:
                 logger.debug("Generated new log encryption key")
-            except Exception as e:
-                logger.error(f"Failed to save encryption key: {e}")
         
         return key
     
@@ -183,7 +113,10 @@ class SecureLogger:
                 
                 # Get the current date for the log file name
                 date_str = datetime.datetime.now().strftime("%Y-%m-%d")
-                log_file = self.log_path / f"{date_str}.log"
+                log_file_path = self.log_path / f"{date_str}.log"
+                
+                # Create a SecureFile instance for this log file
+                log_file = SecureFile(log_file_path)
                 
                 # Encrypt the log entry
                 entry_json = json.dumps(entry).encode()
@@ -193,23 +126,13 @@ class SecureLogger:
                 length = len(encrypted_entry).to_bytes(4, byteorder="big")
                 record = length + encrypted_entry
                 
-                # Write to the log file with proper locking
-                with open(log_file, "ab") as f:
-                    # Lock the file during write
-                    if lock_file(f, exclusive=True):
-                        try:
-                            # Write the complete record
-                            f.write(record)
-                            f.flush()  # Ensure data is written to disk
-                        finally:
-                            # Always release the lock
-                            unlock_file(f)
-                    else:
-                        # Couldn't get lock, write without locking (better than losing the log)
-                        f.write(record)
-                        f.flush()
+                # Write to the log file
+                success = log_file.append_bytes(record)
                 
-                logger.debug(f"Logged {event_type} event")
+                if success:
+                    logger.debug(f"Logged {event_type} event")
+                else:
+                    self._safe_error(f"Failed to write {event_type} event to log")
                 
             except Exception as e:
                 self._safe_error(f"Failed to log event: {e}")
@@ -229,68 +152,59 @@ class SecureLogger:
             finally:
                 self._in_error_handler = False
     
-    def _recover_from_corruption(self, f, position: int) -> bool:
+    def _recover_from_corruption(self, file_data: bytes, position: int) -> tuple[bool, int]:
         """Attempt to recover from file corruption by finding the next valid entry.
         
         Args:
-            f: The file object
+            file_data: The file contents
             position: The current file position
             
         Returns:
-            True if recovery was successful, False otherwise
+            Tuple of (success, new_position)
         """
         # Record current position
         start_pos = position
+        data_len = len(file_data)
         
         # Set a limit for how far to scan for recovery
         MAX_SCAN = 1024 * 1024  # 1MB max scan
         
         # Try to find a valid entry header
-        for offset in range(1, MAX_SCAN):
+        for offset in range(1, min(MAX_SCAN, data_len - start_pos - 8)):
             try:
-                # Seek to the next possible header position
-                f.seek(start_pos + offset)
-                
-                # Try to read 4 bytes for length
-                length_bytes = f.read(4)
-                if not length_bytes or len(length_bytes) < 4:
-                    # Reached end of file during scan
-                    return False
-                
-                # Try to parse length
+                # Try to read 4 bytes for length at this offset
+                length_bytes = file_data[start_pos + offset:start_pos + offset + 4]
                 length = int.from_bytes(length_bytes, byteorder="big")
                 
                 # Check if length looks reasonable
-                if length > 0 and length < 1_000_000:  # Reasonable size
-                    # This might be a valid entry, try to read it
-                    entry_data = f.read(length)
-                    if len(entry_data) == length:
-                        # Try to decrypt it
-                        try:
-                            entry_json = self.cipher.decrypt(self.encryption_key, entry_data)
-                            json.loads(entry_json.decode())
-                            
-                            # If we got here, we found a valid entry!
-                            self._safe_error(f"Recovered from corruption at position {start_pos}, "
-                                          f"valid entry found at offset +{offset}")
-                            
-                            # Go back to the start of this entry for the caller to process
-                            f.seek(start_pos + offset)
-                            return True
-                        except Exception:
-                            # Not a valid entry, continue scanning
-                            pass
+                if 0 < length < 1_000_000 and start_pos + offset + 4 + length <= data_len:
+                    # This might be a valid entry, try to decrypt it
+                    entry_data = file_data[start_pos + offset + 4:start_pos + offset + 4 + length]
+                    
+                    try:
+                        entry_json = self.cipher.decrypt(self.encryption_key, entry_data)
+                        json.loads(entry_json.decode())
+                        
+                        # If we got here, we found a valid entry!
+                        self._safe_error(f"Recovered from corruption at position {start_pos}, "
+                                        f"valid entry found at offset +{offset}")
+                        
+                        # Return the start of this entry for the caller to process
+                        return True, start_pos + offset
+                    except Exception:
+                        # Not a valid entry, continue scanning
+                        pass
             except Exception:
                 # Error during scan, continue
                 pass
         
         # No valid entry found within scan limit
-        return False
+        return False, position
     
     def get_events(self, start_time: Optional[float] = None, 
-                 end_time: Optional[float] = None,
-                 event_type: Optional[str] = None,
-                 limit: Optional[int] = None) -> List[Dict[str, Any]]:
+                   end_time: Optional[float] = None,
+                   event_type: Optional[str] = None,
+                   limit: Optional[int] = None) -> List[Dict[str, Any]]:
         """Get events from the log.
         
         Args:
@@ -329,97 +243,105 @@ class SecureLogger:
             log_files = [f for f in log_files if f.name <= f"{end_date}.log"]
         
         # Process each log file
-        for log_file in log_files:
+        for log_file_path in log_files:
             try:
-                if not log_file.exists() or not log_file.is_file():
+                if not log_file_path.exists() or not log_file_path.is_file():
                     continue
                 
                 # Skip empty files
-                if log_file.stat().st_size == 0:
+                if log_file_path.stat().st_size == 0:
                     continue
                 
-                with open(log_file, "rb") as f:
-                    # Reset error count for each file
-                    error_count = 0
+                # Use SecureFile to read the entire file at once
+                log_file = SecureFile(log_file_path)
+                file_data = log_file.read_bytes()
+                
+                if not file_data:
+                    continue
+                
+                # Reset error count for each file
+                error_count = 0
+                position = 0
+                
+                while position < len(file_data):
+                    # Check if we've reached the limit
+                    if limit is not None and len(events) >= limit:
+                        break
                     
-                    # Try to lock the file for reading (non-exclusive)
-                    lock_succeeded = lock_file(f, exclusive=False)
+                    # Try to read length of encrypted entry
+                    if position + 4 > len(file_data):
+                        break  # End of file
                     
                     try:
-                        position = 0
-                        while True:
-                            # Check if we've reached the limit
-                            if limit is not None and len(events) >= limit:
+                        length = int.from_bytes(file_data[position:position + 4], byteorder="big")
+                        
+                        # Sanity check - make sure length is reasonable
+                        if length <= 0 or length > ENTRY_SIZE_LIMIT:
+                            self._safe_error(f"Invalid entry length in {log_file_path.name}: {length}")
+                            
+                            # Try to recover from corruption
+                            success, new_position = self._recover_from_corruption(file_data, position)
+                            if success:
+                                # Recovery found a valid entry, continue processing
+                                position = new_position
+                                continue
+                            else:
+                                # Could not recover, skip this file
                                 break
-                            
-                            # Remember current position for error recovery
-                            position = f.tell()
-                                
-                            # Read length of encrypted entry
-                            length_bytes = f.read(4)
-                            if not length_bytes or len(length_bytes) < 4:
-                                break  # End of file
-                            
-                            try:
-                                length = struct.unpack("!I", length_bytes)[0]  # Better error handling for binary data
-                                
-                                # Sanity check - make sure length is reasonable
-                                if length <= 0 or length > ENTRY_SIZE_LIMIT:
-                                    self._safe_error(f"Invalid entry length in {log_file.name}: {length}")
-                                    
-                                    # Try to recover from corruption
-                                    if self._recover_from_corruption(f, position):
-                                        # Recovery found a valid entry, continue processing
-                                        continue
-                                    else:
-                                        # Could not recover, skip this file
-                                        break
-                                
-                                # Read the encrypted entry
-                                encrypted_entry = f.read(length)
-                                if len(encrypted_entry) != length:
-                                    self._safe_error(f"Incomplete entry in {log_file.name}: "
-                                                 f"expected {length} bytes, got {len(encrypted_entry)}")
-                                    break
-                                
-                                # Reset error count on successful read
-                                error_count = 0
-                                
-                                # Decrypt the entry
-                                entry_json = self.cipher.decrypt(self.encryption_key, encrypted_entry)
-                                entry = json.loads(entry_json.decode())
-                                
-                                # Filter by timestamp and event type
-                                if start_time is not None and entry["timestamp"] < start_time:
-                                    continue
-                                if end_time is not None and entry["timestamp"] > end_time:
-                                    continue
-                                if event_type is not None and entry["type"] != event_type:
-                                    continue
-                                
-                                events.append(entry)
-                                
-                            except Exception as e:
-                                error_count += 1
-                                self._safe_error(f"Failed to process log entry in {log_file.name} at position {position}: {e}")
-                                
-                                # Try to recover from corruption
-                                if self._recover_from_corruption(f, position):
-                                    # Recovery worked, reset error count
-                                    error_count = 0
-                                    continue
-                                
-                                # Stop trying if we hit too many errors in a row
-                                if error_count >= MAX_ERRORS:
-                                    self._safe_error(f"Too many consecutive errors ({MAX_ERRORS}) in {log_file.name}, stopping log processing")
-                                    break
-                    finally:
-                        # Always release the lock if we got it
-                        if lock_succeeded:
-                            unlock_file(f)
+                        
+                        # Ensure we have enough data
+                        if position + 4 + length > len(file_data):
+                            self._safe_error(f"Incomplete entry in {log_file_path.name}")
+                            break
+                        
+                        # Read the encrypted entry
+                        encrypted_entry = file_data[position + 4:position + 4 + length]
+                        
+                        # Reset error count on successful read
+                        error_count = 0
+                        
+                        # Decrypt the entry
+                        entry_json = self.cipher.decrypt(self.encryption_key, encrypted_entry)
+                        entry = json.loads(entry_json.decode())
+                        
+                        # Filter by timestamp and event type
+                        if start_time is not None and entry["timestamp"] < start_time:
+                            position += 4 + length
+                            continue
+                        if end_time is not None and entry["timestamp"] > end_time:
+                            position += 4 + length
+                            continue
+                        if event_type is not None and entry["type"] != event_type:
+                            position += 4 + length
+                            continue
+                        
+                        events.append(entry)
+                        
+                        # Move to next entry
+                        position += 4 + length
+                        
+                    except Exception as e:
+                        error_count += 1
+                        self._safe_error(f"Failed to process log entry in {log_file_path.name} at position {position}: {e}")
+                        
+                        # Try to recover from corruption
+                        success, new_position = self._recover_from_corruption(file_data, position)
+                        if success:
+                            # Recovery worked, reset error count
+                            error_count = 0
+                            position = new_position
+                            continue
+                        else:
+                            # Move ahead a byte and try again
+                            position += 1
+                        
+                        # Stop trying if we hit too many errors in a row
+                        if error_count >= MAX_ERRORS:
+                            self._safe_error(f"Too many consecutive errors ({MAX_ERRORS}) in {log_file_path.name}, stopping log processing")
+                            break
                             
             except Exception as e:
-                self._safe_error(f"Error reading log file {log_file}: {e}")
+                self._safe_error(f"Error reading log file {log_file_path}: {e}")
         
         # Sort events by timestamp
         events.sort(key=lambda e: e["timestamp"])
@@ -427,7 +349,7 @@ class SecureLogger:
         return events
     
     def get_event_summary(self, start_time: Optional[float] = None,
-                       end_time: Optional[float] = None) -> Dict[str, int]:
+                          end_time: Optional[float] = None) -> Dict[str, int]:
         """Get a summary of events by type.
         
         Args:
@@ -512,12 +434,12 @@ class SecureLogger:
         # Use a lock to ensure thread safety
         with self.lock:
             # Only clear files that match our date pattern
-            for log_file in self.log_path.glob("*.log"):
-                if self.log_filename_pattern.match(log_file.name):
+            for log_file_path in self.log_path.glob("*.log"):
+                if self.log_filename_pattern.match(log_file_path.name):
                     try:
-                        os.remove(log_file)
-                        logger.debug(f"Removed log file {log_file}")
+                        os.remove(log_file_path)
+                        logger.debug(f"Removed log file {log_file_path}")
                     except Exception as e:
-                        self._safe_error(f"Failed to remove log file {log_file}: {e}")
+                        self._safe_error(f"Failed to remove log file {log_file_path}: {e}")
             
             logger.info("Cleared all logs")

@@ -1,18 +1,23 @@
 """
-Secure storage for cryptographic keys.
+Secure storage for cryptographic keys, using Argon2 for key derivation.
 """
 
 import json
 import os
 import logging
 import base64
+import hmac
+import hashlib
+import time
 from typing import Dict, Any, Optional, Tuple, List
 from pathlib import Path
-import getpass
 
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from cryptography.hazmat.primitives import hashes
+# Use cryptography library for security primitives
+from cryptography.hazmat.primitives.kdf.argon2 import Argon2id
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+# Import our secure file utilities
+from ..utils.secure_file import SecureFile
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +26,7 @@ class KeyStorage:
     """Secure storage for cryptographic keys.
     
     This class provides functionality to securely store and retrieve
-    cryptographic keys using password-based encryption.
+    cryptographic keys using password-based encryption with Argon2.
     """
     
     def __init__(self, storage_path: Optional[str] = None):
@@ -35,21 +40,24 @@ class KeyStorage:
             # Use default path in user's home directory
             home_dir = Path.home()
             storage_dir = home_dir / ".quantum_resistant_p2p"
-            storage_dir.mkdir(exist_ok=True)
+            storage_dir.mkdir(exist_ok=True, parents=True)
             self.storage_path = storage_dir / "keys.json"
         else:
             self.storage_path = Path(storage_path)
             # Make sure parent directory exists
-            self.storage_path.parent.mkdir(exist_ok=True)
+            self.storage_path.parent.mkdir(exist_ok=True, parents=True)
         
         self.keys: Dict[str, Dict[str, Any]] = {}
         self.master_key: Optional[bytes] = None
         self.salt: Optional[bytes] = None
         
+        # Create the secure file handler
+        self.secure_file = SecureFile(self.storage_path)
+        
         logger.info(f"Key storage initialized at {self.storage_path}")
     
     def _derive_key(self, password: str, salt: Optional[bytes] = None) -> Tuple[bytes, bytes]:
-        """Derive a key from a password using PBKDF2.
+        """Derive a key from a password using Argon2id.
         
         Args:
             password: The user's password
@@ -60,18 +68,33 @@ class KeyStorage:
         """
         if salt is None:
             salt = os.urandom(16)
-            
-        # Use PBKDF2 to derive a key from the password
-        kdf = PBKDF2HMAC(
-            algorithm=hashes.SHA256(),
-            length=32,
-            salt=salt,
-            iterations=100000,
+        
+        # Use Argon2id with OWASP-recommended parameters
+        kdf = Argon2id(
+            salt=salt,               # Salt value
+            length=32,               # Output key length (256 bits)
+            iterations=3,            # Iterations (time cost)
+            lanes=4,                 # Parallelism parameter
+            memory_cost=102400,      # Memory cost (100 MiB)
+            # ad and secret can be left as default None
         )
         
         derived_key = kdf.derive(password.encode())
         
         return derived_key, salt
+    
+    def _secure_zero(self, data: bytes) -> None:
+        """Securely overwrite data in memory.
+        
+        Args:
+            data: The data to overwrite
+        """
+        if isinstance(data, bytes) and hasattr(data, '__len__'):
+            # Create a writable view of the bytes
+            view = memoryview(data).cast('B')
+            # Overwrite with zeroes
+            for i in range(len(view)):
+                view[i] = 0
     
     def unlock(self, password: str) -> bool:
         """Unlock the key storage with the given password.
@@ -82,15 +105,15 @@ class KeyStorage:
         Returns:
             True if unlock successful, False otherwise
         """
-        if not self.storage_path.exists():
-            # First time use, create a new storage file
-            self.salt = os.urandom(16)
-            self.master_key, _ = self._derive_key(password, self.salt)
-            return self._save_storage()
-        
         try:
-            with open(self.storage_path, 'r') as f:
-                data = json.load(f)
+            # Read the storage file using SecureFile
+            data = self.secure_file.read_json()
+            
+            if data is None:
+                # First time use, create a new storage file
+                self.salt = os.urandom(16)
+                self.master_key, _ = self._derive_key(password, self.salt)
+                return self._save_storage()
             
             if 'salt' not in data:
                 logger.error("Invalid key storage file, missing salt")
@@ -104,8 +127,8 @@ class KeyStorage:
                 nonce = base64.b64decode(data['test_nonce'])
                 ciphertext = base64.b64decode(data['test_ciphertext'])
                 
-                aesgcm = AESGCM(derived_key)
                 try:
+                    aesgcm = AESGCM(derived_key)
                     plaintext = aesgcm.decrypt(nonce, ciphertext, None)
                     if plaintext.decode() != "test_value":
                         logger.error("Password verification failed")
@@ -138,7 +161,7 @@ class KeyStorage:
         except Exception as e:
             logger.error(f"Failed to unlock key storage: {e}")
             return False
-
+    
     def get_master_key(self) -> bytes:
         """Get the master key for use by other secure components.
         
@@ -153,8 +176,7 @@ class KeyStorage:
         
         # For security, we don't return the exact master key
         # Instead, derive a separate key for logs using the master key
-        import hashlib
-        import hmac
+        # using HMAC to ensure this derived key can't be used to recover the master key
         
         # Derive a specific key for logs using HMAC
         log_key = hmac.new(
@@ -185,6 +207,7 @@ class KeyStorage:
             # Prepare the data to save
             data = {
                 'salt': base64.b64encode(self.salt).decode(),
+                'kdf': 'argon2id',  # Document which KDF is used
                 'test_nonce': base64.b64encode(nonce).decode(),
                 'test_ciphertext': base64.b64encode(ciphertext).decode(),
                 'keys': {}
@@ -201,12 +224,15 @@ class KeyStorage:
                     'ciphertext': base64.b64encode(ciphertext).decode()
                 }
             
-            # Save to disk
-            with open(self.storage_path, 'w') as f:
-                json.dump(data, f, indent=2)
+            # Write using our secure file handler
+            success = self.secure_file.write_json(data)
             
-            logger.info(f"Saved key storage with {len(self.keys)} keys")
-            return True
+            if success:
+                logger.info(f"Saved key storage with {len(self.keys)} keys")
+            else:
+                logger.error("Failed to save key storage")
+            
+            return success
             
         except Exception as e:
             logger.error(f"Failed to save key storage: {e}")
@@ -227,7 +253,7 @@ class KeyStorage:
             logger.error("Failed to unlock storage with old password")
             return False
         
-        # Generate a new master key
+        # Generate a new master key with the new password
         self.master_key, self.salt = self._derive_key(new_password)
         
         # Save the storage with the new master key
@@ -252,11 +278,9 @@ class KeyStorage:
             key_data_with_meta = key_data.copy()
             key_data_with_meta['id'] = key_id
             if 'created_at' not in key_data_with_meta:
-                import time
                 key_data_with_meta['created_at'] = time.time()
             
             # Convert binary data to base64 strings for JSON serialization
-            import base64
             for k, v in key_data_with_meta.items():
                 if isinstance(v, bytes):
                     key_data_with_meta[k] = base64.b64encode(v).decode('utf-8')
@@ -291,9 +315,8 @@ class KeyStorage:
         key_data = self.keys[key_id].copy()
         
         # Convert base64 strings back to binary data
-        import base64
         for k, v in key_data.items():
-            if isinstance(v, str) and k in ['public_key', 'private_key']:
+            if isinstance(v, str) and k in ['public_key', 'private_key', 'shared_key']:
                 try:
                     key_data[k] = base64.b64decode(v)
                 except Exception:
@@ -359,7 +382,6 @@ class KeyStorage:
         for key_id, key_data in self.keys.items():
             if key_id.startswith("peer_shared_key_"):
                 # Extract and convert relevant information
-                # Convert binary data to displayable format
                 display_data = key_data.copy()
 
                 # Only include encrypted_key_data for later decryption
@@ -370,7 +392,6 @@ class KeyStorage:
                     # Remember if it's already bytes or needs to be decoded from base64
                     if isinstance(display_data["shared_key"], str):
                         try:
-                            import base64
                             encrypted_data = {"type": "base64", "data": display_data["shared_key"]}
                         except:
                             encrypted_data = {"type": "string", "data": display_data["shared_key"]}
@@ -399,10 +420,9 @@ class KeyStorage:
                         entry["full_key"] = display_data["shared_key"]
                     elif isinstance(display_data["shared_key"], str):
                         try:
-                            import base64
                             entry["full_key"] = base64.b64decode(display_data["shared_key"])
                         except:
-                            entry["full_key"] = display_data["shared_key"]
+                            entry["full_key"] = display_data["shared_key"].encode('utf-8')
 
                 history.append(entry)
 
@@ -440,7 +460,6 @@ class KeyStorage:
         elif isinstance(shared_key, str):
             # Try to decode if it's base64 encoded
             try:
-                import base64
                 decoded_key = base64.b64decode(shared_key)
                 logger.info(f"Successfully decrypted key {key_id} (from base64)")
                 return decoded_key
@@ -454,7 +473,11 @@ class KeyStorage:
 
     def close(self) -> None:
         """Close the key storage and clear sensitive data from memory."""
+        if hasattr(self, 'master_key') and self.master_key:
+            self._secure_zero(self.master_key)
+            self.master_key = None
+            
         self.keys = {}
-        self.master_key = None
         self.salt = None
-        logger.info("Key storage closed")
+        
+        logger.info("Key storage closed and sensitive data cleared")
