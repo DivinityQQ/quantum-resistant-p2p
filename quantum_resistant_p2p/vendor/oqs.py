@@ -120,6 +120,38 @@ def _install_liboqs(
 
 
 def _load_liboqs() -> ct.CDLL:
+    """Handle to native liboqs handler."""
+    # First try to load directly from vendored location with absolute path
+    try:
+        # Get the path to the vendored OQS libraries
+        vendor_dir = Path(__file__).parent
+        
+        # Determine which binary to use based on platform
+        system = platform.system()
+        if system == "Windows":
+            lib_path = vendor_dir / "lib" / "windows" / "oqs.dll"
+        elif system == "Darwin":  # macOS
+            lib_path = vendor_dir / "lib" / "macos" / "liboqs.dylib"
+        else:  # Linux/Unix
+            lib_path = vendor_dir / "lib" / "linux" / "liboqs.so"
+        
+        # Make sure the path exists
+        if not lib_path.exists():
+            print(f"Vendored library not found at {lib_path}")
+            raise FileNotFoundError(f"Vendored library not found at {lib_path}")
+            
+        # Ensure path is absolute
+        lib_path = lib_path.absolute()
+        
+        # Directly load the library with absolute path
+        dll = ct.windll if system == "Windows" else ct.cdll
+        liboqs = dll.LoadLibrary(str(lib_path))
+        print(f"Successfully loaded vendored OQS library from: {lib_path}")
+        return liboqs
+    except Exception as e:
+        print(f"Failed to load from vendored location: {e}, trying backup method...")
+    
+    # Fall back to normal loading mechanism if direct loading fails
     if "OQS_INSTALL_PATH" in environ:
         oqs_install_dir = Path(environ["OQS_INSTALL_PATH"])
     else:

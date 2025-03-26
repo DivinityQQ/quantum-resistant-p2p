@@ -43,7 +43,7 @@ try:
         oqs_lib = ctypes.cdll.LoadLibrary(str(lib_path))
     
     # Library loaded successfully
-    print(f"Successfully loaded OQS library from {lib_path}")
+    print(f"Found vendored OQS library at {lib_path}")
     
 except Exception as e:
     # We expect this to never happen since the library is vendored,
