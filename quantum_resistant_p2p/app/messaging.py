@@ -474,7 +474,7 @@ class SecureMessaging:
     
     async def send_crypto_settings_to_peer(self, peer_id: str) -> None:
         """Send our cryptography settings to a specific peer.
-        
+
         Args:
             peer_id: The ID of the peer to send settings to
         """
@@ -485,24 +485,16 @@ class SecureMessaging:
             "signature": self.signature.name,
             "timestamp": time.time()
         }
-        
+
         # Encode the settings info
         message_json = json.dumps(settings_info).encode()
-        
-        # Sign the message if possible (might not have signature keypair yet)
-        signature = None
-        signature_key = self.key_storage.get_key(f"signature_{self.signature.name}")
-        if signature_key:
-            private_key = signature_key["private_key"]
-            signature = self.signature.sign(private_key, message_json)
-        
-        # Send the settings update
+
+        # Send the settings update (without signature)
         try:
             await self.node.send_message(
                 peer_id=peer_id,
                 message_type="crypto_settings_update",
-                settings=base64.b64encode(message_json).decode(),
-                signature=base64.b64encode(signature).decode() if signature else None
+                settings=base64.b64encode(message_json).decode()
             )
             logger.debug(f"Sent crypto settings to {peer_id}")
         except Exception as e:
@@ -1309,78 +1301,67 @@ class SecureMessaging:
 
     async def _handle_crypto_settings_update(self, peer_id: str, message: Dict[str, Any]) -> None:
         """Handle a cryptography settings update from a peer.
-
+    
         Args:
             peer_id: The ID of the peer who sent the message
             message: The message data
         """
         logger.debug(f"Received crypto settings update from {peer_id}")
-
+    
         try:
             settings_data = message.get("settings")
-            signature_data = message.get("signature")
-
+    
             if not settings_data:
                 logger.error(f"Invalid crypto settings update from {peer_id}")
                 return
-
+    
             # Decode the settings
             settings_json = base64.b64decode(settings_data)
-
-            # Verify signature if provided
-            if signature_data:
-                # Get the peer's signature public key (if available)
-                peer_key = self.key_storage.get_key(f"peer_{peer_id}_signature")
-                if peer_key and "public_key" in peer_key:
-                    signature = base64.b64decode(signature_data)
-                    verified = self.signature.verify(peer_key["public_key"], settings_json, signature)
-                    if not verified:
-                        logger.warning(f"Invalid signature on crypto settings update from {peer_id}")
-
+            
             # Parse the settings
             settings = json.loads(settings_json.decode())
-
+    
             # Store the peer's settings
             settings_changed = False
-
+    
             if peer_id not in self.peer_crypto_settings:
                 self.peer_crypto_settings[peer_id] = {}
                 settings_changed = True
-
+    
             # Check if settings have actually changed
             if (self.peer_crypto_settings[peer_id].get("key_exchange") != settings.get("key_exchange") or
                 self.peer_crypto_settings[peer_id].get("symmetric") != settings.get("symmetric") or
                 self.peer_crypto_settings[peer_id].get("signature") != settings.get("signature")):
                 settings_changed = True
-
-            # Update stored settings - store settings exactly as received, no [Mock] suffix handling
+    
+            # Update stored settings
             self.peer_crypto_settings[peer_id]["key_exchange"] = settings.get("key_exchange")
             self.peer_crypto_settings[peer_id]["symmetric"] = settings.get("symmetric")
             self.peer_crypto_settings[peer_id]["signature"] = settings.get("signature")
             self.peer_crypto_settings[peer_id]["last_updated"] = time.time()
-
+    
             # Log the update
             logger.info(f"Peer {peer_id} uses cryptography settings: "
                        f"key_exchange={settings.get('key_exchange')}, "
                        f"symmetric={settings.get('symmetric')}, "
                        f"signature={settings.get('signature')}")
-
+    
             # Check for mismatches with our settings
             our_settings = {
                 "key_exchange": self.key_exchange.name,
                 "symmetric": self.symmetric.name,
                 "signature": self.signature.name
             }
-
+    
             mismatches = []
             for key in our_settings:
                 if settings.get(key) != our_settings[key]:
                     mismatches.append(f"{key}: {settings.get(key)} vs {our_settings[key]}")
-
+    
             if mismatches:
                 # Log the mismatch
                 logger.warning(f"Cryptography settings mismatch with peer {peer_id}: {', '.join(mismatches)}")
-
+    
                 # Notify listeners about the mismatch
                 for handler in self.global_message_handlers:
                     try:
@@ -1394,25 +1375,25 @@ class SecureMessaging:
                         handler(mismatch_message)
                     except Exception as e:
                         logger.error(f"Error in settings mismatch handler: {e}")
-
-                # If the key exchange algorithm differs, start a new key exchange
+    
+                # If the key exchange algorithm differs, initiate a new key exchange
                 if settings.get("key_exchange") != our_settings["key_exchange"]:
                     # Remove any existing shared key
                     if peer_id in self.shared_keys:
                         del self.shared_keys[peer_id]
                     if peer_id in self.key_exchange_states:
                         del self.key_exchange_states[peer_id]
-
+    
                     # Initiate a new key exchange if peer is connected
                     if peer_id in self.node.get_peers():
                         asyncio.create_task(self.initiate_key_exchange(peer_id))
                         logger.info(f"Initiated new key exchange with {peer_id} due to algorithm mismatch")
-
+    
             # Only notify if settings have actually changed
             if settings_changed:
                 # Notify settings change listeners for UI updates
                 self._notify_settings_change()
-
+    
         except Exception as e:
             logger.error(f"Error handling crypto settings update from {peer_id}: {e}")
     
