@@ -188,7 +188,7 @@ class KeyStorage:
                         logger.error("Password verification failed")
                         return False
                 except Exception as e:
-                    logger.error(f"Failed to decrypt test value, wrong password?: {e}")
+                    logger.error(f"Failed to decrypt test value, wrong password? {e}")
                     return False
             else:
                 logger.error("Invalid key storage file, missing verification data")
@@ -345,7 +345,110 @@ class KeyStorage:
         
         # Save the storage with the new master key
         return self._save_storage()
-    
+
+    def reset_storage(self, new_password: str, create_backup: bool = False) -> bool:
+        """Reset the key storage with a new password, deleting all existing keys and logs.
+
+        This is a destructive operation that erases all keys, logs, and creates a fresh
+        key storage with the new password. Use only when the original password
+        is forgotten and data loss is acceptable.
+
+        Args:
+            new_password: The new password to use
+            create_backup: Whether to create a backup of the old storage (default: False)
+
+        Returns:
+            True if reset successful, False otherwise
+        """
+        try:
+            # Create backup of existing key storage if requested
+            if create_backup and self.storage_path.exists():
+                backup_path = self.storage_path.with_suffix(self.storage_path.suffix + '.old')
+                try:
+                    import shutil
+                    shutil.copy2(self.storage_path, backup_path)
+                    logger.info(f"Created backup of key storage at {backup_path}")
+                except Exception as e:
+                    logger.error(f"Failed to create backup: {e}")
+
+            # Delete the existing key storage files
+            try:
+                if self.storage_path.exists():
+                    os.remove(self.storage_path)
+                    logger.info(f"Deleted key storage file: {self.storage_path}")
+
+                # Also check for lock and backup files
+                lock_path = self.storage_path.with_suffix(self.storage_path.suffix + '.lock')
+                if lock_path.exists():
+                    os.remove(lock_path)
+                    logger.info(f"Deleted lock file: {lock_path}")
+
+                regular_backup = self.storage_path.with_suffix(self.storage_path.suffix + '.bak')
+                if regular_backup.exists():
+                    os.remove(regular_backup)
+                    logger.info(f"Deleted regular backup file: {regular_backup}")
+
+                # Delete any other backups
+                old_backup = self.storage_path.with_suffix(self.storage_path.suffix + '.old')
+                if old_backup.exists():
+                    os.remove(old_backup)
+                    logger.info(f"Deleted old backup file: {old_backup}")
+
+            except Exception as e:
+                logger.error(f"Error removing old storage files: {e}")
+                return False
+
+            # Delete secure logs
+            try:
+                # Get the logs directory (same location as key storage but in 'logs' subdirectory)
+                logs_dir = self.storage_path.parent / "logs"
+                if logs_dir.exists() and logs_dir.is_dir():
+                    import glob
+                    import shutil
+
+                    # Delete all log files first
+                    log_files = glob.glob(str(logs_dir / "*.log"))
+                    for log_file in log_files:
+                        try:
+                            os.remove(log_file)
+                            logger.info(f"Deleted log file: {log_file}")
+                        except Exception as e:
+                            logger.warning(f"Failed to delete log file {log_file}: {e}")
+
+                    # Delete any encryption keys for logs
+                    key_files = glob.glob(str(logs_dir.parent / "log_encryption_key*"))
+                    for key_file in key_files:
+                        try:
+                            os.remove(key_file)
+                            logger.info(f"Deleted log encryption key: {key_file}")
+                        except Exception as e:
+                            logger.warning(f"Failed to delete log encryption key {key_file}: {e}")
+
+                    logger.info("Deleted secure logs")
+            except Exception as e:
+                logger.error(f"Error deleting secure logs: {e}")
+                # Continue with reset even if log deletion fails
+
+            # Clear any existing keys from memory
+            self.keys = {}
+            self.master_key = None
+            self.salt = None
+            self.hmac_key = None
+
+            # Create a new key storage with the new password
+            success = self.unlock(new_password)
+
+            if success:
+                logger.info("Key storage reset successfully with new password")
+                return True
+            else:
+                logger.error("Failed to initialize new key storage")
+                return False
+
+        except Exception as e:
+            logger.error(f"Failed to reset key storage: {e}")
+            return False
+        
     def store_key(self, key_id: str, key_data: Dict[str, Any]) -> bool:
         """Store a key in the key storage.
         

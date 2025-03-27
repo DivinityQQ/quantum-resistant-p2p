@@ -24,6 +24,7 @@ from .log_viewer_dialog import LogViewerDialog
 from .key_history_dialog import KeyHistoryDialog
 from .oqs_status_widget import OQSStatusWidget
 from .login_dialog import LoginDialog
+from .change_password_dialog import ChangePasswordDialog
 from ..app import SecureMessaging, SecureLogger, MessageStore
 from ..crypto import KeyStorage
 from ..networking import P2PNode, NodeDiscovery
@@ -196,6 +197,12 @@ class MainWindow(QMainWindow):
         send_file_action = QAction("Send File...", self)
         send_file_action.triggered.connect(self._show_send_file_dialog)
         file_menu.addAction(send_file_action)
+
+        # Change password action
+        file_menu.addSeparator()
+        change_password_action = QAction("Change Password...", self)
+        change_password_action.triggered.connect(self._show_change_password_dialog)
+        file_menu.addAction(change_password_action)
 
         file_menu.addSeparator()
 
@@ -414,7 +421,18 @@ class MainWindow(QMainWindow):
             self.async_task.emit(
                 self.secure_messaging.send_file(self.messaging.current_peer, file_path)
             )
-    
+
+    def _show_change_password_dialog(self):
+        """Show the change password dialog."""
+
+        dialog = ChangePasswordDialog(self.key_storage, True, self)
+        dialog.password_changed.connect(self._on_password_changed)
+        dialog.exec_()
+
+    def _on_password_changed(self):
+        """Handle successful password change."""
+        self.status_bar.showMessage("Password changed successfully", 3000)
+
     def _show_crypto_settings(self):
         """Show the cryptography settings dialog."""
         dialog = SettingsDialog(self.secure_messaging, self)

@@ -11,6 +11,9 @@ from PyQt5.QtCore import Qt, pyqtSignal
 
 from ..crypto import KeyStorage
 
+from .change_password_dialog import ChangePasswordDialog
+from .reset_password_dialog import ResetPasswordDialog
+
 logger = logging.getLogger(__name__)
 
 
@@ -108,7 +111,79 @@ class LoginDialog(QDialog):
             self.login_successful.emit()
             self.accept()
         else:
-            QMessageBox.warning(self, "Error", "Failed to unlock key storage. Incorrect password?")
-            self.password_input.clear()
-            self.confirm_input.clear()
-            self.password_input.setFocus()
+            # Show error dialog with option to try again or reset password
+            reply = QMessageBox(QMessageBox.Warning, "Login Failed", 
+                                "Failed to unlock key storage. Incorrect password?", 
+                                QMessageBox.NoButton, self)
+            
+            # Add custom buttons
+            try_again_button = reply.addButton("Try Again", QMessageBox.AcceptRole)
+            reset_button = reply.addButton("Reset Password", QMessageBox.ActionRole)
+            cancel_button = reply.addButton("Cancel", QMessageBox.RejectRole)
+            
+            reply.exec_()
+            
+            clicked_button = reply.clickedButton()
+            
+            if clicked_button == try_again_button:
+                # Clear input and set focus for another attempt
+                self.password_input.clear()
+                self.confirm_input.clear()
+                self.password_input.setFocus()
+            elif clicked_button == reset_button:
+                # Show the reset password dialog
+                self._show_reset_password_dialog()
+            else:  # Cancel button
+                # Reject the dialog to close the application
+                self.reject()
+    
+    def _show_reset_password_dialog(self):
+        """Show the password reset dialog."""
+        
+        dialog = ResetPasswordDialog(self.key_storage, self)
+        
+        # Connect the password reset signal
+        dialog.password_reset.connect(self._on_password_reset)
+        
+        dialog.exec_()
+        
+    def _on_password_reset(self):
+        """Handle successful password reset."""
+        QMessageBox.information(
+            self,
+            "Password Reset",
+            "Your password has been reset successfully. All previous keys have been deleted.\n\n"
+            "Please log in with your new password to continue."
+        )
+        
+        # Clear the password field and set focus
+        self.password_input.clear()
+        self.confirm_input.clear()
+        self.password_input.setFocus()
+    
+    # Keep the original implementation of _show_change_password_dialog for the "Change Password" button
+    
+    def _show_change_password_dialog(self):
+        """Show the change password dialog."""
+
+        
+        # Require the old password for security
+        dialog = ChangePasswordDialog(self.key_storage, True, self)
+        
+        # Connect the password changed signal
+        dialog.password_changed.connect(self._on_password_changed)
+        
+        dialog.exec_()
+        
+    def _on_password_changed(self):
+        """Handle successful password change."""
+        QMessageBox.information(
+            self,
+            "Password Changed",
+            "Your password has been changed successfully. Please log in with your new password."
+        )
+        
+        # Clear the password field and set focus
+        self.password_input.clear()
+        self.confirm_input.clear()
+        self.password_input.setFocus()
