@@ -460,7 +460,7 @@ class MainWindow(QMainWindow):
             "About Quantum Resistant P2P",
             "<h2>Quantum Resistant P2P</h2>"
             "<p>A secure peer-to-peer application using post-quantum cryptography.</p>"
-            "<p>Version: 0.2.0</p>"
+            "<p>Version: 0.3.0</p>"
             "<p>© 2025 DivinityQQ</p>"
         )
     
