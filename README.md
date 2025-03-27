@@ -74,9 +74,6 @@ Once installed, you can run the application using:
 
 # From the quantum_resistant_p2p directory:
 python -m quantum_resistant_p2p
-
-# Or if you installed in development mode:
-python quantum_resistant_p2p/__main__.py
 ```
 
 ## Basic Usage
