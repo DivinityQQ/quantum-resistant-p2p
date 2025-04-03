@@ -31,4 +31,4 @@ except Exception as e:
     logger.error(f"Error checking OQS mechanisms: {e}")
 
 # Package version
-__version__ = "0.3.0"
+__version__ = "0.3.1"

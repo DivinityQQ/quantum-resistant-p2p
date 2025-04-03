@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="quantum_resistant_p2p",
-    version="0.3.0",
+    version="0.3.1",
     packages=find_packages(),
     install_requires=[
         "asyncio>=3.4.3",
