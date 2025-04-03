@@ -117,19 +117,13 @@ class MainWindow(QMainWindow):
         try:
             # Get or create a persistent key for the secure logger
             secure_logger_key = self.key_storage.get_or_create_persistent_key("secure_logger", key_size=32)
-            
+
             if secure_logger_key is None:
                 raise RuntimeError("Failed to obtain secure logger key from key storage")
-            
+
             # Initialize the secure logger with the persistent key
             self.secure_logger = SecureLogger(encryption_key=secure_logger_key)
-            
-            # Log successful initialization
-            self.secure_logger.log_event(
-                event_type="initialization",
-                message="Secure logger initialized with persistent key"
-            )
-            
+
         except Exception as e:
             logger.error(f"Failed to initialize secure logger: {e}", exc_info=True)
             raise RuntimeError(f"Failed to initialize secure logging system: {e}") from e

@@ -258,37 +258,37 @@ class KeyStorage:
 
     def get_or_create_persistent_key(self, purpose: str, key_size: int = 32) -> Optional[bytes]:
         """Get or create a persistent purpose-specific key that survives password changes.
-        
+
         Unlike `derive_purpose_key` which derives a key from the master key (and thus
         changes when the password changes), this method creates a persistent random key
         that is stored in the key storage and survives password changes.
-        
+
         Args:
             purpose: A string identifier for the key's purpose (used as key_id)
             key_size: The size of the key to generate if needed, in bytes
-            
+
         Returns:
             The persistent key, or None if storage is not unlocked or an error occurred
         """
         if self.master_key is None:
             logger.error("Cannot get or create persistent key, storage not unlocked")
             return None
-            
+
         # Create a deterministic key_id based on the purpose
         key_id = f"system_persistent_key_{purpose}"
-        
+
         try:
             # Try to get an existing key
             key_data = self.get_key(key_id)
-            
-            if key_data is None or "key" not in key_data:
-                # No existing key found or invalid format, generate a new one
-                logger.info(f"No valid persistent key found for purpose '{purpose}', generating new key")
-                
+
+            if key_data is None:
+                # No existing key found, generate a new one
+                logger.info(f"No persistent key found for purpose '{purpose}', generating new key")
+
                 # Generate a random key of the specified size
                 import os
                 new_key = os.urandom(key_size)
-                
+
                 # Store the key with metadata
                 key_stored = self.store_key(key_id, {
                     "key": new_key,
@@ -297,24 +297,26 @@ class KeyStorage:
                     "key_size": key_size,
                     "description": f"Persistent key for {purpose}"
                 })
-                
+
                 if not key_stored:
                     logger.error(f"Failed to store persistent key for purpose '{purpose}'")
                     return None
-                    
+
                 logger.info(f"Generated and stored new persistent key for purpose '{purpose}'")
                 return new_key
             else:
                 # Use existing key
                 stored_key = key_data.get("key")
+
+                # Validate the key
                 if not isinstance(stored_key, bytes) or len(stored_key) < 16:
                     # Invalid key format, generate a new one
                     logger.warning(f"Invalid persistent key format for purpose '{purpose}', regenerating")
-                    
+
                     # Generate a new random key
                     import os
                     new_key = os.urandom(key_size)
-                    
+
                     # Store the new key
                     key_stored = self.store_key(key_id, {
                         "key": new_key,
@@ -323,17 +325,17 @@ class KeyStorage:
                         "key_size": key_size,
                         "description": f"Persistent key for {purpose} (regenerated)"
                     })
-                    
+
                     if not key_stored:
                         logger.error(f"Failed to store regenerated persistent key for purpose '{purpose}'")
                         return None
-                        
+
                     logger.info(f"Regenerated persistent key for purpose '{purpose}'")
                     return new_key
                 else:
                     logger.debug(f"Using existing persistent key for purpose '{purpose}'")
                     return stored_key
-                    
+
         except Exception as e:
             logger.error(f"Error managing persistent key for purpose '{purpose}': {e}", exc_info=True)
             return None
@@ -582,13 +584,38 @@ class KeyStorage:
         # Convert base64 strings back to binary data
         decoded_data = {}
         for k, v in key_data.items():
-            if isinstance(v, str) and k in ['public_key', 'private_key', 'shared_key']:
-                try:
-                    decoded_data[k] = base64.b64decode(v)
-                except Exception:
-                    # Not base64 encoded, use as is
-                    decoded_data[k] = v
+            if isinstance(v, str):
+                # For known binary fields, always try to decode
+                common_binary_fields = ['key', 'public_key', 'private_key', 'shared_key', 
+                                        'ciphertext', 'signature', 'original_shared_secret']
+                
+                if k in common_binary_fields:
+                    try:
+                        decoded_data[k] = base64.b64decode(v)
+                        continue
+                    except Exception:
+                        # Not base64 encoded, will use as is below
+                        pass
+                    
+                # For other fields, check if it looks like base64 (length multiple of 4,
+                # only contains valid base64 characters)
+                if len(v) > 0 and len(v) % 4 == 0 and all(c in 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=' for c in v):
+                    try:
+                        # Try to decode it
+                        decoded = base64.b64decode(v)
+                        # Only use the decoded value if it looks like binary data
+                        # (contains bytes that aren't printable ASCII)
+                        if any(b < 32 or b > 126 for b in decoded):
+                            decoded_data[k] = decoded
+                            continue
+                    except:
+                        # If decoding fails, use the original string
+                        pass
+                    
+                # If we got here, use the string value as-is
+                decoded_data[k] = v
             else:
+                # Non-string value (int, bool, etc)
                 decoded_data[k] = v
         
         return decoded_data

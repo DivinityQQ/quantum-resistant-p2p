@@ -144,7 +144,16 @@ class ChangePasswordDialog(QDialog):
             if response == QMessageBox.No:
                 return
 
-        # Change the password - KeyStorage now handles preserving all keys
+        # Get a reference to the secure logger if available
+        secure_logger = None
+        parent = self.parent()
+        while parent is not None:
+            if hasattr(parent, 'secure_logger') and parent.secure_logger is not None:
+                secure_logger = parent.secure_logger
+                break
+            parent = parent.parent()
+
+        # Change the password
         try:
             if self.require_old_password:
                 success = self.key_storage.change_password(old_password, new_password)
@@ -153,6 +162,14 @@ class ChangePasswordDialog(QDialog):
                 success = self.key_storage.change_password("", new_password)
 
             if success:
+                # Log successful password change
+                if secure_logger:
+                    secure_logger.log_event(
+                        event_type="password_change",
+                        message="Password changed successfully",
+                        success=True
+                    )
+
                 QMessageBox.information(
                     self, "Success", 
                     "Password changed successfully. Please remember your new password."
@@ -161,6 +178,14 @@ class ChangePasswordDialog(QDialog):
                 self.password_changed.emit()
                 self.accept()
             else:
+                # Log failed password change
+                if secure_logger:
+                    secure_logger.log_event(
+                        event_type="password_change",
+                        message="Password change failed - likely wrong current password",
+                        success=False
+                    )
+
                 if self.require_old_password:
                     QMessageBox.warning(
                         self, "Error", 
@@ -176,6 +201,15 @@ class ChangePasswordDialog(QDialog):
                 logger.error("Password change failed")
 
         except Exception as e:
+            # Log exception during password change
+            if secure_logger:
+                secure_logger.log_event(
+                    event_type="password_change",
+                    message=f"Exception during password change: {str(e)}",
+                    success=False,
+                    error=str(e)
+                )
+
             QMessageBox.critical(
                 self, "Error", 
                 f"An error occurred while changing the password: {str(e)}"
