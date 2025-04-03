@@ -8,6 +8,7 @@ import logging
 import os
 import platform
 import signal
+import argparse
 from pathlib import Path
 from PyQt5.QtWidgets import QApplication
 from qasync import QEventLoop
@@ -16,17 +17,31 @@ from .ui import MainWindow
 
 
 # Configure logging
-def setup_logging():
-    """Set up logging for the application."""
+def setup_logging(log_level_name='INFO'):
+    """Set up logging for the application.
+    
+    Args:
+        log_level_name: The name of the logging level to use (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+    """
+    # Convert string level to logging level
+    log_level_map = {
+        'DEBUG': logging.DEBUG,
+        'INFO': logging.INFO,
+        'WARNING': logging.WARNING,
+        'ERROR': logging.ERROR,
+        'CRITICAL': logging.CRITICAL
+    }
+    log_level = log_level_map.get(log_level_name.upper(), logging.INFO)
+    
     log_dir = Path.home() / ".quantum_resistant_p2p" / "logs"
     log_dir.mkdir(exist_ok=True, parents=True)
     
     # Change from app.log to a normal system log
     log_file = log_dir / "system.log"
     
-    # Configure root logger
+    # Configure root logger with the specified level
     logging.basicConfig(
-        level=logging.INFO,
+        level=log_level,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         handlers=[
             logging.FileHandler(log_file),
@@ -34,21 +49,27 @@ def setup_logging():
         ]
     )
     
-    # Set specific levels for some loggers
-    logging.getLogger("quantum_resistant_p2p.networking").setLevel(logging.INFO)
-    logging.getLogger("quantum_resistant_p2p.crypto").setLevel(logging.INFO)
-    
     # Create a logger for this module
     logger = logging.getLogger(__name__)
-    logger.info("Logging initialized")
+    logger.info(f"Logging initialized (log level: {log_level_name.upper()})")
     
     return logger
 
 
 def main():
     """Main entry point for the application."""
-    # Set up logging
-    logger = setup_logging()
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description="Quantum-Resistant P2P Application")
+    parser.add_argument(
+        "--log-level", 
+        choices=["debug", "info", "warning", "error", "critical"],
+        default="info",
+        help="Set the logging level (default: info)"
+    )
+    args = parser.parse_args()
+    
+    # Set up logging with specified log level
+    logger = setup_logging(log_level_name=args.log_level)
     
     try:
         # Create the application
