@@ -34,9 +34,14 @@ class SecureLogger:
         Args:
             log_path: Path to the log directory. If None, uses
                      ~/.quantum_resistant_p2p/logs/
-            encryption_key: Optional encryption key to use. If None, will
-                          attempt to load or generate a key.
+            encryption_key: Encryption key to use. Must be provided for proper operation.
+        
+        Raises:
+            ValueError: If no encryption key is provided
         """
+        if encryption_key is None:
+            raise ValueError("Encryption key must be provided to SecureLogger")
+            
         if log_path is None:
             # Use default path in user's home directory
             home_dir = Path.home()
@@ -48,8 +53,8 @@ class SecureLogger:
             # Make sure directory exists
             self.log_path.mkdir(exist_ok=True, parents=True)
         
-        # Use provided key or load/generate one
-        self.encryption_key = encryption_key if encryption_key is not None else self._load_or_generate_key()
+        # Store the provided encryption key
+        self.encryption_key = encryption_key
         
         # Create a single cipher instance for consistency
         self.cipher = AES256GCM()

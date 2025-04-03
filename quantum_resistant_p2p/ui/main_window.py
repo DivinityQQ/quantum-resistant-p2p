@@ -82,30 +82,57 @@ class MainWindow(QMainWindow):
     
     def _init_after_login(self):
         """Initialize components after successful login."""
-        # Get a specialized key for the secure logger
-        secure_logger_key = self.key_storage.derive_purpose_key("secure_logger_key_v1")
+        try:
+            # Initialize secure logger
+            self._init_secure_logger()
+            
+            # Then initialize the rest of the system
+            self._init_network()
+            
+            # Create the message store and set the current node ID
+            self.message_store = MessageStore()
+            self.message_store.set_current_node_id(self.node.node_id)
+            
+            self._init_ui()
         
-        # Initialize secure logger with the derived key
-        self.secure_logger = SecureLogger(encryption_key=secure_logger_key)
-        
-        # Then initialize the rest of the system
-        self._init_network()
-        
-        # Create the message store and set the current node ID
-        self.message_store = MessageStore()
-        self.message_store.set_current_node_id(self.node.node_id)
-        
-        self._init_ui()
+            # Register message handler BEFORE starting the network
+            if self.secure_messaging and not self._message_handler_registered:
+                self.secure_messaging.register_global_message_handler(self._on_secure_message_received)
+                # Register for crypto settings changes
+                self.secure_messaging.register_settings_change_listener(self._update_crypto_status)
+                self._message_handler_registered = True
+                logger.debug("Registered global message handler")
+            
+            self._start_network()
+        except Exception as e:
+            logger.critical(f"Failed to initialize application: {e}", exc_info=True)
+            QMessageBox.critical(
+                self,
+                "Critical Error",
+                f"Failed to initialize application: {str(e)}\n\nApplication may not function correctly."
+            )
     
-        # Register message handler BEFORE starting the network
-        if self.secure_messaging and not self._message_handler_registered:
-            self.secure_messaging.register_global_message_handler(self._on_secure_message_received)
-            # Register for crypto settings changes
-            self.secure_messaging.register_settings_change_listener(self._update_crypto_status)
-            self._message_handler_registered = True
-            logger.debug("Registered global message handler")
-    
-        self._start_network()
+    def _init_secure_logger(self):
+        """Initialize the secure logger with a persistent key."""
+        try:
+            # Get or create a persistent key for the secure logger
+            secure_logger_key = self.key_storage.get_or_create_persistent_key("secure_logger", key_size=32)
+            
+            if secure_logger_key is None:
+                raise RuntimeError("Failed to obtain secure logger key from key storage")
+            
+            # Initialize the secure logger with the persistent key
+            self.secure_logger = SecureLogger(encryption_key=secure_logger_key)
+            
+            # Log successful initialization
+            self.secure_logger.log_event(
+                event_type="initialization",
+                message="Secure logger initialized with persistent key"
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize secure logger: {e}", exc_info=True)
+            raise RuntimeError(f"Failed to initialize secure logging system: {e}") from e
     
     def _init_network(self):
         """Initialize network components."""

@@ -255,7 +255,89 @@ class KeyStorage:
         
         logger.debug(f"Derived purpose key for: {purpose}")
         return purpose_key
-    
+
+    def get_or_create_persistent_key(self, purpose: str, key_size: int = 32) -> Optional[bytes]:
+        """Get or create a persistent purpose-specific key that survives password changes.
+        
+        Unlike `derive_purpose_key` which derives a key from the master key (and thus
+        changes when the password changes), this method creates a persistent random key
+        that is stored in the key storage and survives password changes.
+        
+        Args:
+            purpose: A string identifier for the key's purpose (used as key_id)
+            key_size: The size of the key to generate if needed, in bytes
+            
+        Returns:
+            The persistent key, or None if storage is not unlocked or an error occurred
+        """
+        if self.master_key is None:
+            logger.error("Cannot get or create persistent key, storage not unlocked")
+            return None
+            
+        # Create a deterministic key_id based on the purpose
+        key_id = f"system_persistent_key_{purpose}"
+        
+        try:
+            # Try to get an existing key
+            key_data = self.get_key(key_id)
+            
+            if key_data is None or "key" not in key_data:
+                # No existing key found or invalid format, generate a new one
+                logger.info(f"No valid persistent key found for purpose '{purpose}', generating new key")
+                
+                # Generate a random key of the specified size
+                import os
+                new_key = os.urandom(key_size)
+                
+                # Store the key with metadata
+                key_stored = self.store_key(key_id, {
+                    "key": new_key,
+                    "purpose": purpose,
+                    "created_at": time.time(),
+                    "key_size": key_size,
+                    "description": f"Persistent key for {purpose}"
+                })
+                
+                if not key_stored:
+                    logger.error(f"Failed to store persistent key for purpose '{purpose}'")
+                    return None
+                    
+                logger.info(f"Generated and stored new persistent key for purpose '{purpose}'")
+                return new_key
+            else:
+                # Use existing key
+                stored_key = key_data.get("key")
+                if not isinstance(stored_key, bytes) or len(stored_key) < 16:
+                    # Invalid key format, generate a new one
+                    logger.warning(f"Invalid persistent key format for purpose '{purpose}', regenerating")
+                    
+                    # Generate a new random key
+                    import os
+                    new_key = os.urandom(key_size)
+                    
+                    # Store the new key
+                    key_stored = self.store_key(key_id, {
+                        "key": new_key,
+                        "purpose": purpose,
+                        "created_at": time.time(),
+                        "key_size": key_size,
+                        "description": f"Persistent key for {purpose} (regenerated)"
+                    })
+                    
+                    if not key_stored:
+                        logger.error(f"Failed to store regenerated persistent key for purpose '{purpose}'")
+                        return None
+                        
+                    logger.info(f"Regenerated persistent key for purpose '{purpose}'")
+                    return new_key
+                else:
+                    logger.debug(f"Using existing persistent key for purpose '{purpose}'")
+                    return stored_key
+                    
+        except Exception as e:
+            logger.error(f"Error managing persistent key for purpose '{purpose}': {e}", exc_info=True)
+            return None
+            
     def _save_storage(self) -> bool:
         """Save the key storage to disk with full encryption.
         

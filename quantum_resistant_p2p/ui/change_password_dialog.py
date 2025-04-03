@@ -115,23 +115,23 @@ class ChangePasswordDialog(QDialog):
         old_password = self.old_password_input.text() if hasattr(self, 'old_password_input') else ""
         new_password = self.new_password_input.text()
         confirm_password = self.confirm_password_input.text()
-        
+
         # Validate inputs
         if self.require_old_password and not old_password:
             QMessageBox.warning(self, "Error", "Please enter your current password.")
             return
-        
+
         if not new_password:
             QMessageBox.warning(self, "Error", "Please enter a new password.")
             return
-            
+
         if new_password != confirm_password:
             QMessageBox.warning(self, "Error", "New passwords do not match.")
             self.new_password_input.clear()
             self.confirm_password_input.clear()
             self.new_password_input.setFocus()
             return
-            
+
         # Check password strength
         if len(new_password) < 8:
             response = QMessageBox.question(
@@ -143,16 +143,15 @@ class ChangePasswordDialog(QDialog):
             )
             if response == QMessageBox.No:
                 return
-        
-        # Change the password
+
+        # Change the password - KeyStorage now handles preserving all keys
         try:
             if self.require_old_password:
                 success = self.key_storage.change_password(old_password, new_password)
             else:
                 # For the case where we've just verified the old password (e.g., in login dialog)
-                current_master_key = self.key_storage.master_key
                 success = self.key_storage.change_password("", new_password)
-                
+
             if success:
                 QMessageBox.information(
                     self, "Success", 
@@ -175,9 +174,10 @@ class ChangePasswordDialog(QDialog):
                         "Failed to change password due to an internal error."
                     )
                 logger.error("Password change failed")
+
         except Exception as e:
             QMessageBox.critical(
                 self, "Error", 
                 f"An error occurred while changing the password: {str(e)}"
             )
-            logger.error(f"Exception during password change: {e}")
+            logger.error(f"Exception during password change: {e}", exc_info=True)
