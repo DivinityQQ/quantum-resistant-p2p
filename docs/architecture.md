@@ -4,7 +4,7 @@
 
 The Quantum-Resistant P2P application is designed as a secure peer-to-peer communication platform that uses post-quantum cryptographic algorithms to ensure forward security. The system consists of several key components organized in a layered architecture:
 
-![System Architecture Diagram](/diagrams/architecture.png)
+![System Architecture Diagram](diagrams/architecture.png)
 
 ### 1.1 Core Components
 
