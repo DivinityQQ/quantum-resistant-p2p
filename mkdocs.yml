@@ -1,0 +1,126 @@
+site_name: Quantum Resistant P2P Documentation
+repo_url: https://github.com/DivinityQQ/quantum-resistant-p2p
+site_description: Documentation for the Quantum Resistant P2P application
+site_author: DivinityQQ
+
+theme:
+  name: material
+  palette:
+    # Light mode (default)
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+
+    # Dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: blue
+      accent: blue
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.expand
+    - navigation.indexes
+    - navigation.top
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.code.annotate
+
+plugins:
+  - search
+  - autorefs
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            show_source: true
+            show_category_heading: true
+            show_root_heading: true
+            show_object_full_path: false
+            heading_level: 3
+            members_order: source
+            docstring_style: google
+            docstring_section_style: table
+            filters: ["!^_[^_]", "^__init__$"]
+            merge_init_into_class: true
+
+markdown_extensions:
+  - admonition
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.critic
+  - pymdownx.caret
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.tilde
+  - attr_list
+  - md_in_html
+  - footnotes
+  - toc:
+      permalink: true
+
+# Add the extra JavaScript for Mermaid
+extra_javascript:
+  - https://unpkg.com/mermaid/dist/mermaid.min.js
+
+# Navigation structure
+nav:
+  - Home: index.md
+  - Architecture: architecture.md
+  - User Guide: user-guide.md
+  - API Reference:
+    - App: 
+      - Overview: api/app/index.md
+      - Messaging: api/app/messaging.md
+      - Logging: api/app/logging.md
+    - Crypto:
+      - Overview: api/crypto/index.md
+      - Key Exchange: api/crypto/key_exchange.md
+      - Signatures: api/crypto/signatures.md
+      - Symmetric: api/crypto/symmetric.md
+      - Key Storage: api/crypto/key_storage.md
+      - Algorithm Base: api/crypto/algorithm_base.md
+    - Networking:
+      - Overview: api/networking/index.md
+      - P2P Node: api/networking/p2p_node.md
+      - Discovery: api/networking/discovery.md
+      - Node Identity: api/networking/node_identity.md
+    - UI:
+      - Overview: api/ui/index.md
+      - Main Window: api/ui/main_window.md
+      - Peer List: api/ui/peer_list.md
+      - Messaging Widget: api/ui/messaging_widget.md
+      - Dialogs:
+        - Settings Dialog: api/ui/settings_dialog.md
+        - Security Metrics Dialog: api/ui/security_metrics_dialog.md
+        - Log Viewer Dialog: api/ui/log_viewer_dialog.md
+        - Key History Dialog: api/ui/key_history_dialog.md
+        - Login Dialog: api/ui/login_dialog.md
+        - Change Password Dialog: api/ui/change_password_dialog.md
+        - Reset Password Dialog: api/ui/reset_password_dialog.md
+      - Components:
+        - OQS Status Widget: api/ui/oqs_status_widget.md
+    - Utils:
+      - Overview: api/utils/index.md
+      - Secure File: api/utils/secure_file.md
+  - Development Guide: dev-guide.md
+
+# GitHub Pages specific configuration
+site_url: https://DivinityQQ.github.io/quantum-resistant-p2p/
