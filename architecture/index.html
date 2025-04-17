@@ -1,0 +1,2601 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Documentation for the Quantum Resistant P2P application">
+      
+      
+        <meta name="author" content="DivinityQQ">
+      
+      
+        <link rel="canonical" href="https://DivinityQQ.github.io/quantum-resistant-p2p/architecture/">
+      
+      
+        <link rel="prev" href="..">
+      
+      
+        <link rel="next" href="../user-guide/">
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.11">
+    
+    
+      
+        <title>Architecture - Quantum Resistant P2P Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.4af4bdda.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#quantum-resistant-p2p-architecture-overview" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Quantum Resistant P2P Documentation" class="md-header__button md-logo" aria-label="Quantum Resistant P2P Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Quantum Resistant P2P Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Architecture
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="blue" data-md-color-accent="blue"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+          <a href="javascript:void(0)" class="md-search__icon md-icon" title="Share" aria-label="Share" data-clipboard data-clipboard-text="" data-md-component="search-share" tabindex="-1">
+            
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9a3 3 0 0 0-3 3 3 3 0 0 0 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.15c-.05.21-.08.43-.08.66 0 1.61 1.31 2.91 2.92 2.91s2.92-1.3 2.92-2.91A2.92 2.92 0 0 0 18 16.08"/></svg>
+          </a>
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/DivinityQQ/quantum-resistant-p2p" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.2 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Quantum Resistant P2P Documentation" class="md-nav__button md-logo" aria-label="Quantum Resistant P2P Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Quantum Resistant P2P Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/DivinityQQ/quantum-resistant-p2p" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.2 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Home
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    Architecture
+    
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    Architecture
+    
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-system-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      1. System Architecture
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1. System Architecture">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#11-core-components" class="md-nav__link">
+    <span class="md-ellipsis">
+      1.1 Core Components
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1.1 Core Components">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#111-networking-layer" class="md-nav__link">
+    <span class="md-ellipsis">
+      1.1.1 Networking Layer
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#112-cryptography-layer" class="md-nav__link">
+    <span class="md-ellipsis">
+      1.1.2 Cryptography Layer
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#113-application-layer" class="md-nav__link">
+    <span class="md-ellipsis">
+      1.1.3 Application Layer
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#114-user-interface-layer" class="md-nav__link">
+    <span class="md-ellipsis">
+      1.1.4 User Interface Layer
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#12-component-interactions" class="md-nav__link">
+    <span class="md-ellipsis">
+      1.2 Component Interactions
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-data-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      2. Data Flow
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Data Flow">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#21-peer-discovery-process" class="md-nav__link">
+    <span class="md-ellipsis">
+      2.1 Peer Discovery Process
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#22-secure-message-exchange" class="md-nav__link">
+    <span class="md-ellipsis">
+      2.2 Secure Message Exchange
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-security-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      3. Security Architecture
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Security Architecture">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#31-post-quantum-security" class="md-nav__link">
+    <span class="md-ellipsis">
+      3.1 Post-Quantum Security
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#32-cryptographic-protocol" class="md-nav__link">
+    <span class="md-ellipsis">
+      3.2 Cryptographic Protocol
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#33-key-management" class="md-nav__link">
+    <span class="md-ellipsis">
+      3.3 Key Management
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#34-algorithm-parameter-specifics" class="md-nav__link">
+    <span class="md-ellipsis">
+      3.4 Algorithm Parameter Specifics
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#35-secure-random-number-generation" class="md-nav__link">
+    <span class="md-ellipsis">
+      3.5 Secure Random Number Generation
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#36-forward-secrecy-guarantees" class="md-nav__link">
+    <span class="md-ellipsis">
+      3.6 Forward Secrecy Guarantees
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-network-protocol" class="md-nav__link">
+    <span class="md-ellipsis">
+      4. Network Protocol
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Network Protocol">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#41-message-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      4.1 Message Types
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#42-message-security-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      4.2 Message Security Model
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#43-aead-implementation" class="md-nav__link">
+    <span class="md-ellipsis">
+      4.3 AEAD Implementation
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#44-large-message-handling" class="md-nav__link">
+    <span class="md-ellipsis">
+      4.4 Large Message Handling
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#45-peer-identity-verification" class="md-nav__link">
+    <span class="md-ellipsis">
+      4.5 Peer Identity Verification
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-secure-storage-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      5. Secure Storage Architecture
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="5. Secure Storage Architecture">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#51-keystorage" class="md-nav__link">
+    <span class="md-ellipsis">
+      5.1 KeyStorage
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#52-securelogger" class="md-nav__link">
+    <span class="md-ellipsis">
+      5.2 SecureLogger
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#53-securefile" class="md-nav__link">
+    <span class="md-ellipsis">
+      5.3 SecureFile
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#54-secure-data-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      5.4 Secure Data Flow
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-extensibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      6. Extensibility
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-security-auditing" class="md-nav__link">
+    <span class="md-ellipsis">
+      7. Security Auditing
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-password-management" class="md-nav__link">
+    <span class="md-ellipsis">
+      8. Password Management
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-deployment-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      9. Deployment Architecture
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../user-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    User Guide
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    API Reference
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            API Reference
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4_1" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../api/app/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    App
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4_1" id="__nav_4_1_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_1">
+            <span class="md-nav__icon md-icon"></span>
+            App
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/app/messaging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Messaging
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/app/logging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Logging
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4_2" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../api/crypto/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    Crypto
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4_2" id="__nav_4_2_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_2">
+            <span class="md-nav__icon md-icon"></span>
+            Crypto
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/crypto/key_exchange/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Key Exchange
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/crypto/signatures/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Signatures
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/crypto/symmetric/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Symmetric
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/crypto/key_storage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Key Storage
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/crypto/algorithm_base/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Algorithm Base
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../api/networking/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    Networking
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4_3" id="__nav_4_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_3">
+            <span class="md-nav__icon md-icon"></span>
+            Networking
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/networking/p2p_node/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    P2P Node
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/networking/discovery/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Discovery
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/networking/node_identity/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Node Identity
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../api/ui/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    UI
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4_4" id="__nav_4_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_4">
+            <span class="md-nav__icon md-icon"></span>
+            UI
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/ui/main_window/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Main Window
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/ui/peer_list/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Peer List
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/ui/messaging_widget/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Messaging Widget
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4_4_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_4_5" id="__nav_4_4_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Dialogs
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_4_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_4_5">
+            <span class="md-nav__icon md-icon"></span>
+            Dialogs
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/ui/settings_dialog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Settings Dialog
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/ui/security_metrics_dialog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Security Metrics Dialog
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/ui/log_viewer_dialog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Log Viewer Dialog
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/ui/key_history_dialog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Key History Dialog
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/ui/login_dialog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Login Dialog
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/ui/change_password_dialog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Change Password Dialog
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/ui/reset_password_dialog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Reset Password Dialog
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4_4_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_4_6" id="__nav_4_4_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Components
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_4_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_4_6">
+            <span class="md-nav__icon md-icon"></span>
+            Components
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/ui/oqs_status_widget/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    OQS Status Widget
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../api/utils/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    Utils
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4_5" id="__nav_4_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5">
+            <span class="md-nav__icon md-icon"></span>
+            Utils
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/utils/secure_file/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Secure File
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dev-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Development Guide
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-system-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      1. System Architecture
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1. System Architecture">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#11-core-components" class="md-nav__link">
+    <span class="md-ellipsis">
+      1.1 Core Components
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1.1 Core Components">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#111-networking-layer" class="md-nav__link">
+    <span class="md-ellipsis">
+      1.1.1 Networking Layer
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#112-cryptography-layer" class="md-nav__link">
+    <span class="md-ellipsis">
+      1.1.2 Cryptography Layer
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#113-application-layer" class="md-nav__link">
+    <span class="md-ellipsis">
+      1.1.3 Application Layer
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#114-user-interface-layer" class="md-nav__link">
+    <span class="md-ellipsis">
+      1.1.4 User Interface Layer
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#12-component-interactions" class="md-nav__link">
+    <span class="md-ellipsis">
+      1.2 Component Interactions
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-data-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      2. Data Flow
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Data Flow">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#21-peer-discovery-process" class="md-nav__link">
+    <span class="md-ellipsis">
+      2.1 Peer Discovery Process
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#22-secure-message-exchange" class="md-nav__link">
+    <span class="md-ellipsis">
+      2.2 Secure Message Exchange
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-security-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      3. Security Architecture
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Security Architecture">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#31-post-quantum-security" class="md-nav__link">
+    <span class="md-ellipsis">
+      3.1 Post-Quantum Security
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#32-cryptographic-protocol" class="md-nav__link">
+    <span class="md-ellipsis">
+      3.2 Cryptographic Protocol
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#33-key-management" class="md-nav__link">
+    <span class="md-ellipsis">
+      3.3 Key Management
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#34-algorithm-parameter-specifics" class="md-nav__link">
+    <span class="md-ellipsis">
+      3.4 Algorithm Parameter Specifics
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#35-secure-random-number-generation" class="md-nav__link">
+    <span class="md-ellipsis">
+      3.5 Secure Random Number Generation
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#36-forward-secrecy-guarantees" class="md-nav__link">
+    <span class="md-ellipsis">
+      3.6 Forward Secrecy Guarantees
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-network-protocol" class="md-nav__link">
+    <span class="md-ellipsis">
+      4. Network Protocol
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Network Protocol">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#41-message-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      4.1 Message Types
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#42-message-security-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      4.2 Message Security Model
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#43-aead-implementation" class="md-nav__link">
+    <span class="md-ellipsis">
+      4.3 AEAD Implementation
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#44-large-message-handling" class="md-nav__link">
+    <span class="md-ellipsis">
+      4.4 Large Message Handling
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#45-peer-identity-verification" class="md-nav__link">
+    <span class="md-ellipsis">
+      4.5 Peer Identity Verification
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-secure-storage-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      5. Secure Storage Architecture
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="5. Secure Storage Architecture">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#51-keystorage" class="md-nav__link">
+    <span class="md-ellipsis">
+      5.1 KeyStorage
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#52-securelogger" class="md-nav__link">
+    <span class="md-ellipsis">
+      5.2 SecureLogger
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#53-securefile" class="md-nav__link">
+    <span class="md-ellipsis">
+      5.3 SecureFile
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#54-secure-data-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      5.4 Secure Data Flow
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-extensibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      6. Extensibility
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-security-auditing" class="md-nav__link">
+    <span class="md-ellipsis">
+      7. Security Auditing
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-password-management" class="md-nav__link">
+    <span class="md-ellipsis">
+      8. Password Management
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-deployment-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      9. Deployment Architecture
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="quantum-resistant-p2p-architecture-overview">Quantum-Resistant P2P Architecture Overview<a class="headerlink" href="#quantum-resistant-p2p-architecture-overview" title="Permanent link">&para;</a></h1>
+<h2 id="1-system-architecture">1. System Architecture<a class="headerlink" href="#1-system-architecture" title="Permanent link">&para;</a></h2>
+<p>The Quantum-Resistant P2P application is designed as a secure peer-to-peer communication platform that uses post-quantum cryptographic algorithms to ensure forward security. The system consists of several key components organized in a layered architecture:</p>
+<p><img alt="System Architecture Diagram" src="../diagrams/architecture.png" /></p>
+<h3 id="11-core-components">1.1 Core Components<a class="headerlink" href="#11-core-components" title="Permanent link">&para;</a></h3>
+<h4 id="111-networking-layer">1.1.1 Networking Layer<a class="headerlink" href="#111-networking-layer" title="Permanent link">&para;</a></h4>
+<ul>
+<li><strong>P2PNode</strong>: Handles direct peer-to-peer connections, message passing, and connection management</li>
+<li><strong>NodeDiscovery</strong>: Provides mechanisms for discovering other peers on the network via broadcast and direct announcements</li>
+</ul>
+<h4 id="112-cryptography-layer">1.1.2 Cryptography Layer<a class="headerlink" href="#112-cryptography-layer" title="Permanent link">&para;</a></h4>
+<ul>
+<li><strong>Key Exchange</strong>: Implements post-quantum key exchange algorithms (ML-KEM, HQC, FrodoKEM)</li>
+<li><strong>Symmetric Encryption</strong>: Provides authenticated encryption with associated data (AES-256-GCM, ChaCha20Poly1305)</li>
+<li><strong>Digital Signatures</strong>: Implements post-quantum signature schemes (ML-DSA, SPHINCS+)</li>
+<li><strong>KeyStorage</strong>: Securely stores cryptographic keys using password-based encryption with Argon2id</li>
+</ul>
+<h4 id="113-application-layer">1.1.3 Application Layer<a class="headerlink" href="#113-application-layer" title="Permanent link">&para;</a></h4>
+<ul>
+<li><strong>SecureMessaging</strong>: Coordinates cryptographic operations for secure communication</li>
+<li><strong>SecureLogger</strong>: Provides encrypted, tamper-evident logging of security events</li>
+<li><strong>MessageStore</strong>: Stores and manages conversation history with unread message tracking</li>
+</ul>
+<h4 id="114-user-interface-layer">1.1.4 User Interface Layer<a class="headerlink" href="#114-user-interface-layer" title="Permanent link">&para;</a></h4>
+<ul>
+<li><strong>MainWindow</strong>: Primary application window with menu and status bar</li>
+<li><strong>MessagingWidget</strong>: UI for message conversations and file transfers</li>
+<li><strong>PeerListWidget</strong>: UI for displaying and interacting with peers</li>
+<li><strong>Settings Dialogs</strong>: Various dialogs for configuring cryptographic settings</li>
+<li><strong>Security Dialogs</strong>: Key history viewer, log viewer, security metrics dialogs</li>
+</ul>
+<h3 id="12-component-interactions">1.2 Component Interactions<a class="headerlink" href="#12-component-interactions" title="Permanent link">&para;</a></h3>
+<p>The application follows a modular design where components interact through well-defined interfaces:</p>
+<ol>
+<li>The P2PNode provides the networking foundation, with higher-level components like SecureMessaging built on top</li>
+<li>The cryptographic algorithms are abstracted through base classes, allowing easy algorithm switching</li>
+<li>The UI components interact with the application logic through signal/slot connections and async tasks</li>
+</ol>
+<h2 id="2-data-flow">2. Data Flow<a class="headerlink" href="#2-data-flow" title="Permanent link">&para;</a></h2>
+<h3 id="21-peer-discovery-process">2.1 Peer Discovery Process<a class="headerlink" href="#21-peer-discovery-process" title="Permanent link">&para;</a></h3>
+<pre class="mermaid"><code>sequenceDiagram
+    participant Node A
+    participant Network
+    participant Node B
+
+    Node A-&gt;&gt;Network: Broadcast Announcement
+    Network-&gt;&gt;Node B: Forward Announcement
+    Node B-&gt;&gt;Node B: Record Node A
+    Node B-&gt;&gt;Node A: Direct Connection
+    Node A-&gt;&gt;Node B: Share Crypto Settings
+    Node B-&gt;&gt;Node A: Share Crypto Settings
+    Note over Node A,Node B: Compatibility Check</code></pre>
+<h3 id="22-secure-message-exchange">2.2 Secure Message Exchange<a class="headerlink" href="#22-secure-message-exchange" title="Permanent link">&para;</a></h3>
+<pre class="mermaid"><code>sequenceDiagram
+    participant Alice
+    participant Bob
+
+    Alice-&gt;&gt;Bob: Key Exchange Initiation
+    Note over Bob: Verify signature &amp; Compatibility
+    Bob-&gt;&gt;Alice: Key Exchange Response
+    Alice-&gt;&gt;Bob: Key Exchange Confirmation
+    Alice-&gt;&gt;Bob: Key Exchange Test Message
+    Note over Alice,Bob: Secure Channel Established
+
+    Note over Alice: 1. Create message object
+    Note over Alice: 2. Sign message with ML-DSA/SPHINCS+
+    Note over Alice: 3. Create signed package with signature
+    Note over Alice: 4. Prepare AEAD associated data
+    Note over Alice: 5. Encrypt signed package with AES-GCM/ChaCha20
+    Alice-&gt;&gt;Bob: Send encrypted package with associated data
+
+    Note over Bob: 1. Extract associated data and ciphertext
+    Note over Bob: 2. Verify associated data authenticity
+    Note over Bob: 3. Decrypt ciphertext with shared key
+    Note over Bob: 4. Verify message signature
+    Note over Bob: 5. Process decrypted &amp; verified message
+
+    Bob-&gt;&gt;Alice: Encrypted &amp; Signed Response (same process)</code></pre>
+<h2 id="3-security-architecture">3. Security Architecture<a class="headerlink" href="#3-security-architecture" title="Permanent link">&para;</a></h2>
+<h3 id="31-post-quantum-security">3.1 Post-Quantum Security<a class="headerlink" href="#31-post-quantum-security" title="Permanent link">&para;</a></h3>
+<p>The application implements several post-quantum algorithms to protect against future quantum computing threats:</p>
+<ul>
+<li><strong>Lattice-based</strong>: ML-KEM (formerly Kyber) and ML-DSA (formerly Dilithium)</li>
+<li><strong>Code-based</strong>: HQC key encapsulation</li>
+<li><strong>Hash-based</strong>: SPHINCS+ signatures</li>
+<li><strong>Standard LWE</strong>: FrodoKEM</li>
+</ul>
+<p>These are complemented by classical strong symmetric encryption:</p>
+<ul>
+<li>AES-256-GCM with AEAD</li>
+<li>ChaCha20-Poly1305 with AEAD</li>
+</ul>
+<h3 id="32-cryptographic-protocol">3.2 Cryptographic Protocol<a class="headerlink" href="#32-cryptographic-protocol" title="Permanent link">&para;</a></h3>
+<p>The secure communication protocol follows these steps:</p>
+<ol>
+<li><strong>Key Exchange</strong>: Establish a shared secret using a post-quantum KEM with ephemeral keypairs</li>
+<li><strong>Key Derivation</strong>: Use HKDF to derive symmetric keys from the shared secret</li>
+<li><strong>Message Protection</strong>: Implement sign-then-encrypt approach:</li>
+<li>Create the message with content and metadata</li>
+<li>Sign the message JSON with sender's private key</li>
+<li>Create a signed package with message, signature, and public key</li>
+<li>Create associated data with critical metadata (message ID, sender/recipient IDs, timestamp)</li>
+<li>Encrypt the signed package using AEAD with the associated data</li>
+<li><strong>Message Verification</strong>:</li>
+<li>Verify the associated data integrity</li>
+<li>Decrypt the ciphertext using the shared key</li>
+<li>Verify the signature of the decrypted message</li>
+<li>Process the verified message</li>
+</ol>
+<h3 id="33-key-management">3.3 Key Management<a class="headerlink" href="#33-key-management" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Ephemeral Keys</strong>: Fresh keypairs generated for each key exchange for forward secrecy</li>
+<li><strong>Key Storage</strong>: All keys are stored in encrypted form using Argon2id for password-based key derivation</li>
+<li><strong>Key Rotation</strong>: The application supports re-establishing keys when cryptographic settings change</li>
+<li><strong>Key History</strong>: Secure view of past key exchanges with on-demand decryption</li>
+<li><strong>Secure Deletion</strong>: Secure cleanup of sensitive material from memory</li>
+</ul>
+<h3 id="34-algorithm-parameter-specifics">3.4 Algorithm Parameter Specifics<a class="headerlink" href="#34-algorithm-parameter-specifics" title="Permanent link">&para;</a></h3>
+<p>The application provides different security levels for each post-quantum algorithm:</p>
+<table>
+<thead>
+<tr>
+<th>Algorithm</th>
+<th>NIST Level</th>
+<th>Variant</th>
+<th>Security Against Classical &amp; Quantum Attackers</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>ML-KEM</td>
+<td>1</td>
+<td>ML-KEM-512</td>
+<td>~128 bits</td>
+</tr>
+<tr>
+<td>ML-KEM</td>
+<td>3</td>
+<td>ML-KEM-768</td>
+<td>~192 bits</td>
+</tr>
+<tr>
+<td>ML-KEM</td>
+<td>5</td>
+<td>ML-KEM-1024</td>
+<td>~256 bits</td>
+</tr>
+<tr>
+<td>HQC</td>
+<td>1</td>
+<td>HQC-128</td>
+<td>~128 bits</td>
+</tr>
+<tr>
+<td>HQC</td>
+<td>3</td>
+<td>HQC-192</td>
+<td>~192 bits</td>
+</tr>
+<tr>
+<td>HQC</td>
+<td>5</td>
+<td>HQC-256</td>
+<td>~256 bits</td>
+</tr>
+<tr>
+<td>FrodoKEM</td>
+<td>1</td>
+<td>FrodoKEM-640-(AES/SHAKE)</td>
+<td>~128 bits</td>
+</tr>
+<tr>
+<td>FrodoKEM</td>
+<td>3</td>
+<td>FrodoKEM-976-(AES/SHAKE)</td>
+<td>~192 bits</td>
+</tr>
+<tr>
+<td>FrodoKEM</td>
+<td>5</td>
+<td>FrodoKEM-1344-(AES/SHAKE)</td>
+<td>~256 bits</td>
+</tr>
+<tr>
+<td>ML-DSA</td>
+<td>2</td>
+<td>ML-DSA-44</td>
+<td>~128 bits</td>
+</tr>
+<tr>
+<td>ML-DSA</td>
+<td>3</td>
+<td>ML-DSA-65</td>
+<td>~192 bits</td>
+</tr>
+<tr>
+<td>ML-DSA</td>
+<td>5</td>
+<td>ML-DSA-87</td>
+<td>~256 bits</td>
+</tr>
+<tr>
+<td>SPHINCS+</td>
+<td>1</td>
+<td>SPHINCS+-SHA2-128f-simple</td>
+<td>~128 bits</td>
+</tr>
+<tr>
+<td>SPHINCS+</td>
+<td>3</td>
+<td>SPHINCS+-SHA2-192f-simple</td>
+<td>~192 bits</td>
+</tr>
+<tr>
+<td>SPHINCS+</td>
+<td>5</td>
+<td>SPHINCS+-SHA2-256f-simple</td>
+<td>~256 bits</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Note on Symmetric Algorithms:</strong>
+- AES-256-GCM: 256-bit keys (providing ~128-bit security against quantum attacks via Grover's algorithm)
+- ChaCha20-Poly1305: 256-bit keys (providing ~128-bit security against quantum attacks via Grover's algorithm)</p>
+<h3 id="35-secure-random-number-generation">3.5 Secure Random Number Generation<a class="headerlink" href="#35-secure-random-number-generation" title="Permanent link">&para;</a></h3>
+<p>The application uses cryptographically secure random number generation for all security-critical operations:</p>
+<ol>
+<li><strong>System-Level RNG</strong>: Uses <code>os.urandom()</code> which directly accesses the OS entropy source (/dev/urandom on Unix, CryptGenRandom on Windows)</li>
+<li><strong>Nonce Generation</strong>: 12-byte (96-bit) random nonces for all AEAD operations</li>
+<li><strong>Salt Generation</strong>: 16-byte (128-bit) random salts for key derivation</li>
+<li><strong>Algorithm-Specific RNG</strong>: The liboqs library uses its own secure RNG for post-quantum operations</li>
+<li><strong>Unique Identifiers</strong>: UUID v4 generation for message IDs using Python's cryptographically secure <code>uuid.uuid4()</code></li>
+</ol>
+<h3 id="36-forward-secrecy-guarantees">3.6 Forward Secrecy Guarantees<a class="headerlink" href="#36-forward-secrecy-guarantees" title="Permanent link">&para;</a></h3>
+<p>The application implements forward secrecy through several mechanisms:</p>
+<ol>
+<li><strong>Ephemeral Keypairs</strong>: Fresh keypairs are generated for each key exchange session</li>
+<li><strong>Key Lifecycle Management</strong>:</li>
+<li>Private keys are deleted immediately after use in key exchange</li>
+<li>Keys are stored only in memory during active sessions</li>
+<li>Private key material is explicitly overwritten in memory when no longer needed</li>
+<li><strong>Session Independence</strong>: Each connection uses completely independent keying material</li>
+<li><strong>Compromise Containment</strong>: If a session key is compromised, it does not affect the security of past or future communications</li>
+<li><strong>Re-keying on Settings Change</strong>: When cryptographic settings change, all session keys are regenerated</li>
+</ol>
+<h2 id="4-network-protocol">4. Network Protocol<a class="headerlink" href="#4-network-protocol" title="Permanent link">&para;</a></h2>
+<h3 id="41-message-types">4.1 Message Types<a class="headerlink" href="#41-message-types" title="Permanent link">&para;</a></h3>
+<p>The P2P network protocol defines several message types:</p>
+<table>
+<thead>
+<tr>
+<th>Message Type</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>hello</td>
+<td>Initial connection establishment</td>
+</tr>
+<tr>
+<td>hello_response</td>
+<td>Response to hello message</td>
+</tr>
+<tr>
+<td>key_exchange_init</td>
+<td>Begin key exchange process</td>
+</tr>
+<tr>
+<td>key_exchange_response</td>
+<td>Response with encapsulated key</td>
+</tr>
+<tr>
+<td>key_exchange_confirm</td>
+<td>Confirmation of successful key establishment</td>
+</tr>
+<tr>
+<td>key_exchange_test</td>
+<td>Test message to verify secure channel</td>
+</tr>
+<tr>
+<td>key_exchange_rejected</td>
+<td>Notification of key exchange rejection with reason</td>
+</tr>
+<tr>
+<td>secure_message</td>
+<td>Encrypted and signed message content</td>
+</tr>
+<tr>
+<td>crypto_settings_update</td>
+<td>Inform peer about cryptographic algorithm changes</td>
+</tr>
+<tr>
+<td>crypto_settings_request</td>
+<td>Request peer's cryptographic settings</td>
+</tr>
+</tbody>
+</table>
+<h3 id="42-message-security-model">4.2 Message Security Model<a class="headerlink" href="#42-message-security-model" title="Permanent link">&para;</a></h3>
+<p>The application implements a layered security approach for each message:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>┌─────────────────────────────────────────────────┐
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>│ Original Message (plaintext or file content)    │
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>├─────────────────────────────────────────────────┤
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>│ Digital Signature Layer (ML-DSA or SPHINCS+)    │
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>│ (Ensures authenticity and integrity)            │
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>├─────────────────────────────────────────────────┤
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>│ Symmetric Encryption Layer with AEAD            │
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>│ (Ensures confidentiality and tamper detection)  │
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>├─────────────────────────────────────────────────┤
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>│ Associated Authenticated Data                   │
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>│ (Ensures metadata integrity)                    │
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>└─────────────────────────────────────────────────┘
+</code></pre></div>
+<h3 id="43-aead-implementation">4.3 AEAD Implementation<a class="headerlink" href="#43-aead-implementation" title="Permanent link">&para;</a></h3>
+<p>The application uses Authenticated Encryption with Associated Data (AEAD) for message protection:</p>
+<ol>
+<li><strong>Confidentiality</strong>: The message content is encrypted to protect it from unauthorized readers</li>
+<li><strong>Authentication</strong>: The ciphertext includes an authentication tag to detect tampering</li>
+<li><strong>Associated Data</strong>: Critical metadata is bound to the ciphertext but not encrypted</li>
+<li><strong>Benefits</strong>:</li>
+<li>Metadata can be used for routing without decryption</li>
+<li>Changes to either ciphertext or associated data will cause authentication to fail</li>
+<li>Protection against replay attacks by including message IDs and timestamps</li>
+</ol>
+<p>This is implemented using:
+- <strong>AES-256-GCM</strong>: Uses a 12-byte random nonce and GCM mode for AEAD
+- <strong>ChaCha20-Poly1305</strong>: Uses a 12-byte random nonce and Poly1305 for authentication</p>
+<h3 id="44-large-message-handling">4.4 Large Message Handling<a class="headerlink" href="#44-large-message-handling" title="Permanent link">&para;</a></h3>
+<p>For large messages (like file transfers), the application uses a chunking mechanism:</p>
+<ol>
+<li>The sender splits the message into chunks of configurable size (default 64KB)</li>
+<li>Header includes:</li>
+<li>Flags byte indicating chunking</li>
+<li>UUID for message identification</li>
+<li>Total chunks count and size</li>
+<li>Individual chunk index and size</li>
+<li>The receiver reassembles the chunks into the complete message</li>
+<li>Error handling for incomplete transmissions</li>
+</ol>
+<h3 id="45-peer-identity-verification">4.5 Peer Identity Verification<a class="headerlink" href="#45-peer-identity-verification" title="Permanent link">&para;</a></h3>
+<p>The application implements a multi-layered approach to peer identity verification:</p>
+<ol>
+<li><strong>Persistent Node Identifiers</strong>: Each node has a unique ID persisted across sessions</li>
+<li><strong>Signed Key Exchange</strong>: All key exchange messages are signed using post-quantum signatures</li>
+<li><strong>Identity Binding</strong>: The key exchange protocol explicitly binds:</li>
+<li>Sender and recipient IDs</li>
+<li>Timestamps to prevent replay attacks</li>
+<li>Message IDs for uniqueness verification</li>
+<li><strong>Verification Checks</strong>:</li>
+<li>Sender/recipient ID validation on every message</li>
+<li>Signature verification on all key material</li>
+<li>Timestamp validation (5-minute window) to prevent replays</li>
+<li><strong>Visual Verification</strong>: The UI displays truncated peer IDs (first 8 characters) for visual verification</li>
+<li><strong>Connection Metadata</strong>: Peers share algorithm preferences which must remain consistent during a session</li>
+</ol>
+<p>This implementation does not provide full protection against man-in-the-middle attacks on initial connection without additional out-of-band verification.</p>
+<h2 id="5-secure-storage-architecture">5. Secure Storage Architecture<a class="headerlink" href="#5-secure-storage-architecture" title="Permanent link">&para;</a></h2>
+<p>The secure storage layer provides comprehensive protection for sensitive data at rest through several integrated components:</p>
+<h3 id="51-keystorage">5.1 KeyStorage<a class="headerlink" href="#51-keystorage" title="Permanent link">&para;</a></h3>
+<p>Provides encrypted storage for cryptographic keys with strong security properties:</p>
+<ul>
+<li><strong>Password-Based Encryption</strong>: Uses Argon2id key derivation (100MB memory, parallelism 4) for master key generation</li>
+<li><strong>Complete Encryption</strong>: All keys and metadata are encrypted, with no plaintext information in stored files</li>
+<li><strong>Key Hierarchy</strong>: Derives purpose-specific keys from the master key for domain separation</li>
+<li><strong>Metadata Protection</strong>: Uses HMAC-based key identifiers to prevent information leakage</li>
+<li><strong>Emergency Recovery</strong>: Supports password reset with secure data erasure when needed</li>
+</ul>
+<h3 id="52-securelogger">5.2 SecureLogger<a class="headerlink" href="#52-securelogger" title="Permanent link">&para;</a></h3>
+<p>Implements encrypted, tamper-evident logging for security events:</p>
+<ul>
+<li><strong>Encrypted Log Entries</strong>: Each log entry is individually encrypted and authenticated</li>
+<li><strong>Corruption Recovery</strong>: Self-healing mechanisms to recover from partially corrupted log files</li>
+<li><strong>Structured Organization</strong>: Daily log rotation with separate encryption per file</li>
+<li><strong>Security Metrics</strong>: Aggregates usage patterns and security-relevant statistics</li>
+</ul>
+<h3 id="53-securefile">5.3 SecureFile<a class="headerlink" href="#53-securefile" title="Permanent link">&para;</a></h3>
+<p>Provides robust, corruption-resistant file operations:</p>
+<ul>
+<li><strong>Atomic Updates</strong>: Ensures files are either completely updated or unchanged</li>
+<li><strong>Concurrency Control</strong>: Two-level locking for multi-process/thread safety</li>
+<li><strong>Automatic Backups</strong>: Creates backups of critical files before modification</li>
+<li><strong>Cross-Platform</strong>: Adapts to platform-specific filesystem behaviors</li>
+</ul>
+<h3 id="54-secure-data-flow">5.4 Secure Data Flow<a class="headerlink" href="#54-secure-data-flow" title="Permanent link">&para;</a></h3>
+<p>The secure storage components work together to protect sensitive data throughout its lifecycle:</p>
+<ol>
+<li><strong>Authentication</strong>: User password unlocks the KeyStorage via Argon2id KDF</li>
+<li><strong>Key Protection</strong>: All cryptographic keys are protected under the master key</li>
+<li><strong>Secure Logging</strong>: Security events are encrypted and logged with tamper protection</li>
+<li><strong>Message Persistence</strong>: Messages are stored with sender verification and unread tracking</li>
+<li><strong>Safe Operations</strong>: All file operations use atomic updates with backup creation</li>
+</ol>
+<h2 id="6-extensibility">6. Extensibility<a class="headerlink" href="#6-extensibility" title="Permanent link">&para;</a></h2>
+<p>The architecture is designed for extensibility:</p>
+<ul>
+<li><strong>Algorithm Abstraction</strong>: New cryptographic algorithms can be added by implementing the abstract base classes</li>
+<li><strong>Protocol Extensions</strong>: The messaging protocol can be extended with new message types</li>
+<li><strong>UI Customization</strong>: The modular UI design allows for components to be replaced or enhanced</li>
+<li><strong>Crypto Settings Adoption</strong>: Peers can adopt compatible settings from each other</li>
+</ul>
+<h2 id="7-security-auditing">7. Security Auditing<a class="headerlink" href="#7-security-auditing" title="Permanent link">&para;</a></h2>
+<p>The system includes comprehensive security logging and metrics:</p>
+<ul>
+<li><strong>SecureLogger</strong>: Encrypts all security events with tamper detection</li>
+<li><strong>Event Tracking</strong>: Records key exchanges, message transfers, and security settings changes</li>
+<li><strong>Security Metrics</strong>: Tracks algorithm usage, connection statistics, and security levels</li>
+<li><strong>Corruption Protection</strong>: Log files have recovery mechanisms for corruption resistance</li>
+</ul>
+<h2 id="8-password-management">8. Password Management<a class="headerlink" href="#8-password-management" title="Permanent link">&para;</a></h2>
+<p>The application includes robust password management features:</p>
+<ul>
+<li><strong>Secure Login</strong>: Password-based unlocking of the key storage using Argon2id KDF</li>
+<li><strong>Password Change</strong>: Ability to change the storage password</li>
+<li><strong>Password Reset</strong>: Emergency reset capability with complete data erasure</li>
+<li><strong>Security Strength</strong>: Password quality recommendations</li>
+</ul>
+<h2 id="9-deployment-architecture">9. Deployment Architecture<a class="headerlink" href="#9-deployment-architecture" title="Permanent link">&para;</a></h2>
+<p>The application is designed as a standalone desktop application that can operate in various network environments:</p>
+<ul>
+<li><strong>Local Networks</strong>: Direct peer connections on LANs</li>
+<li><strong>Internet</strong>: Direct connections over the internet (may require port forwarding)</li>
+<li><strong>Mixed Environments</strong>: Discovery works on local networks while direct connections can span networks</li>
+</ul>
+<p>No central servers are required for operation, maintaining the true peer-to-peer nature of the system.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      <script id="__config" type="application/json">{"base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.expand", "navigation.indexes", "navigation.top", "search.highlight", "search.share", "content.code.copy", "content.code.annotate"], "search": "../assets/javascripts/workers/search.f8cc74c7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.c8b220af.min.js"></script>
+      
+        <script src="https://unpkg.com/mermaid/dist/mermaid.min.js"></script>
+      
+    
+  </body>
+</html>
