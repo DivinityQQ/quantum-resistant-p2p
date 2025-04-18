@@ -1,4 +1,5 @@
 # Quantum-Resistant P2P
+[![Documentation](https://img.shields.io/badge/documentation-online-blue.svg)](https://divinityqq.github.io/quantum-resistant-p2p/)
 
 A secure peer-to-peer communication application with post-quantum cryptography support.
 
@@ -16,7 +17,7 @@ Key features:
 
 ## Documentation
 
-**[View the full documentation](https://divinityqq.github.io/quantum_resistant_p2p/)**
+**[View the full documentation](https://divinityqq.github.io/quantum-resistant-p2p/)**
 
 ## Requirements
 
