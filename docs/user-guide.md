@@ -2,56 +2,131 @@
 
 ## Installation
 
+### Installation with Virtual Environment (Recommended)
+
+It's recommended to use a virtual environment to avoid conflicts with other Python packages. Here's how to set up and install the application:
+
 ```bash
-# Clone the repository
+# First, clone the repository
 git clone https://github.com/DivinityQQ/quantum-resistant-p2p.git
 cd quantum_resistant_p2p
 
-# Install dependencies
-pip install -r requirements.txt
+# Create a virtual environment inside the project directory
+python -m venv venv
 
-# Run the application
+# Activate the virtual environment
+# On Windows:
+venv\Scripts\activate
+# On macOS/Linux:
+source venv/bin/activate
+```
+
+Your command prompt should now show `(venv)` at the beginning, indicating the virtual environment is active. All pip commands will now install packages into this isolated environment.
+
+### Option 1: Standard Installation
+
+```bash
+# With the virtual environment activated and while in the quantum_resistant_p2p directory:
+pip install .
+```
+
+### Option 2: Development Mode Installation
+
+```bash
+# With the virtual environment activated and while in the quantum_resistant_p2p directory:
+pip install -e .
+```
+
+### Deactivating the Virtual Environment
+
+When you're done using the application, you can deactivate the virtual environment:
+
+```bash
+deactivate
+```
+
+## Running the Application
+
+Once installed, you can run the application using:
+
+```bash
+# Make sure your virtual environment is activated first
+# (You should see (venv) at the beginning of your command prompt)
+
+# From the quantum_resistant_p2p directory:
 python -m quantum_resistant_p2p
 ```
 
-## Initial Setup
+## Basic Usage
 
-When you first run the application, you'll need to set up a password to secure your cryptographic keys.
+1. **Start the application**
 
-## Connecting to Peers
+2. **Login**
+   - When first starting, you'll be prompted to create a password to secure your keys
+   - For subsequent launches, enter the same password
 
-1. Click "File" > "Connect to Peer" or use the connect button in the peer list
-2. Enter the peer's IP address and port
-3. Click "Connect"
+3. **Connect to Peers**
+   - The application will automatically search for peers on the local network
+   - Or click "Add Peer" to manually enter a peer's address
+   - Select a peer from the list and click "Connect"
 
-## Sending Messages
+4. **Establish Secure Connection**
+   - After connecting, click "Establish Shared Key" to perform a post-quantum key exchange
+   - This creates a secure channel protected against both classical and quantum attacks
 
-1. Select a peer from the peer list
-2. If no secure connection exists, click "Establish Shared Key"
-3. Type your message in the input field and click "Send"
+5. **Secure Messaging**
+   - Type messages in the input field and press Enter or click Send
+   - Use "Send File" to securely transfer files
 
-## Sending Files
+6. **Security Settings**
+   - Access "Crypto Settings" to customize which algorithms are used
+   - View logs and security metrics from the Settings menu
 
-1. Select a peer from the peer list
-2. Ensure you have a secure connection established
-3. Click "Send File" and select the file to send
+## Troubleshooting
 
-## Cryptography Settings
+### Connection Issues
 
-1. Click "Settings" > "Cryptography Settings"
-2. Choose your desired algorithms for key exchange, symmetric encryption, and digital signatures
-3. Click "OK" to apply the changes
+If you're having trouble connecting to peers:
 
-## Security Metrics
+1. Ensure both peers are on the same network
+2. Check if any firewall is blocking UDP port 8001 (discovery) or TCP port 8000 (communication)
+3. Try adding the peer manually with their IP address
 
-1. Click "Settings" > "Security Metrics" to view usage statistics and security information
+## Advanced: Building OQS Yourself
 
-## Viewing Logs
+If you need to build the OQS library yourself:
 
-1. Click "Settings" > "View Logs" to view the secure application logs
+### Windows
 
-## Changing Password
+```bash
+git clone https://github.com/open-quantum-safe/liboqs
+cd liboqs
+mkdir build && cd build
+cmake .. -DBUILD_SHARED_LIBS=ON -DCMAKE_WINDOWS_EXPORT_ALL_SYMBOLS=TRUE
+cmake --build . --config Release --parallel 8
+# Copy build\bin\Release\oqs.dll to quantum_resistant_p2p\vendor\lib\windows\
+```
 
-1. Click "File" > "Change Password"
-2. Enter your current password and new password
-3. Click "Change Password" to apply the change
+### macOS
+
+```bash
+brew install cmake ninja
+git clone https://github.com/open-quantum-safe/liboqs
+cd liboqs
+mkdir build && cd build
+cmake .. -DBUILD_SHARED_LIBS=ON -DOQS_BUILD_ONLY_LIB=ON
+cmake --build . --parallel 8
+# Copy build/lib/liboqs.dylib to quantum_resistant_p2p/vendor/lib/macos/
+```
+
+### Linux
+
+```bash
+sudo apt install cmake gcc ninja-build libssl-dev
+git clone https://github.com/open-quantum-safe/liboqs
+cd liboqs
+mkdir build && cd build
+cmake .. -DBUILD_SHARED_LIBS=ON -DOQS_BUILD_ONLY_LIB=ON
+cmake --build . --parallel 8
+# Copy build/lib/liboqs.so to quantum_resistant_p2p/vendor/lib/linux/
+```

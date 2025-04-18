@@ -201,19 +201,22 @@ The P2P network protocol defines several message types:
 
 The application implements a layered security approach for each message:
 
-```
-┌─────────────────────────────────────────────────┐
-│ Original Message (plaintext or file content)    │
-├─────────────────────────────────────────────────┤
-│ Digital Signature Layer (ML-DSA or SPHINCS+)    │
-│ (Ensures authenticity and integrity)            │
-├─────────────────────────────────────────────────┤
-│ Symmetric Encryption Layer with AEAD            │
-│ (Ensures confidentiality and tamper detection)  │
-├─────────────────────────────────────────────────┤
-│ Associated Authenticated Data                   │
-│ (Ensures metadata integrity)                    │
-└─────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    A["Original Message (plaintext or file content)"]
+    B["Digital Signature Layer (ML-DSA or SPHINCS+)
+        (Ensures authenticity and integrity)"]
+    C["Symmetric Encryption Layer with AEAD
+        (Ensures confidentiality and tamper detection)"]
+    D["Associated Authenticated Data
+        (Ensures metadata integrity)"]
+    
+    A --> B --> C --> D
+    
+    style A fill:#f9f9f9,stroke:#666,stroke-width:2px
+    style B fill:#e1efff,stroke:#666,stroke-width:2px
+    style C fill:#e1fff1,stroke:#666,stroke-width:2px
+    style D fill:#fff1e1,stroke:#666,stroke-width:2px
 ```
 
 ### 4.3 AEAD Implementation

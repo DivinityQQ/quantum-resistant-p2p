@@ -14,6 +14,10 @@ Key features:
 - End-to-end encrypted file transfer
 - Secure logging with encrypted audit trails
 
+## Documentation
+
+**[View the full documentation](https://divinityqq.github.io/quantum_resistant_p2p/)**
+
 ## Requirements
 
 - Python 3.8 or higher

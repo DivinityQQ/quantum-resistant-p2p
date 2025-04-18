@@ -19,3 +19,13 @@ This application provides a secure peer-to-peer communication platform using pos
 - See the [User Guide](user-guide.md) for installation and usage instructions
 - Review the [Architecture](architecture.md) for a high-level overview of the system
 - Browse the [API Reference](api/app/index.md) for detailed documentation of the codebase
+
+## License
+
+quantum-resistant-p2p is licensed under the MIT License; see
+[LICENSE](https://github.com/DivinityQQ/quantum-resistant-p2p/blob/main/LICENSE)
+for details.
+
+## Credits
+
+This project uses the [Open Quantum Safe (OQS)](https://openquantumsafe.org/) library for post-quantum cryptography.
