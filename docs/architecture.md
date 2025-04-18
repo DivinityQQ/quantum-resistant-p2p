@@ -204,7 +204,7 @@ The application implements a layered security approach for each message:
 ```mermaid
 flowchart TD
     A["Original Message (plaintext or file content)"]
-    B["Digital Signature Layer (ML-DSA or SPHINCS+)
+    B["Digital Signature Layer
         (Ensures authenticity and integrity)"]
     C["Symmetric Encryption Layer with AEAD
         (Ensures confidentiality and tamper detection)"]
@@ -212,11 +212,6 @@ flowchart TD
         (Ensures metadata integrity)"]
     
     A --> B --> C --> D
-    
-    style A fill:#f9f9f9,stroke:#666,stroke-width:2px
-    style B fill:#e1efff,stroke:#666,stroke-width:2px
-    style C fill:#e1fff1,stroke:#666,stroke-width:2px
-    style D fill:#fff1e1,stroke:#666,stroke-width:2px
 ```
 
 ### 4.3 AEAD Implementation
