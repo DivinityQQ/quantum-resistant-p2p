@@ -85,7 +85,7 @@ Nastavení algoritmů:
 
 ![Cryptography Settings](WorkflowScreens/Cryptography%20Settings.png)
 
-![Cryptography Settings](WorkflowScreens/Key%20Echange.png)
+![Cryptography Settings](WorkflowScreens/Key%20Exchange.png)
 
 ![Cryptography Settings](WorkflowScreens/Symmetric%20Encryption.png)
 
@@ -95,7 +95,7 @@ Nastavení algoritmů:
 
 #### Algorithms
 
-![Algorithms](WorkflowScreens/Security%20Metrics%Algorithms.png)
+![Algorithms](WorkflowScreens/Security%20Metrics%20Algorithms.png)
 
 Zobrazuje aktuální algoritmy, počet peerů a jejich popisy.
 
@@ -107,7 +107,7 @@ Eviduje:
 - Časy první/poslední aktivity.
 - Použití algoritmů.
 
-![Usage Metrics](WorkflowScreens/Security%20Metrics%Usage%20Metrics.png)
+![Usage Metrics](WorkflowScreens/Security%20Metrics%20Usage%20Metrics.png)
 
 #### Event Summary
 
@@ -118,7 +118,7 @@ Zkrácený přehled o:
 - Odeslaných/přijatých zprávách
 - Změnách nastavení
 
-![Event Summary](WorkflowScreens/Security%20Metrics%Event%20Summary.png)
+![Event Summary](WorkflowScreens/Security%20Metrics%20Event%20Summary.png)
 
 ### Key Exchange History
 
