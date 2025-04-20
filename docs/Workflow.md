@@ -85,7 +85,7 @@ Nastavení algoritmů:
 
 ![Cryptography Settings](WorkflowScreens/Cryptography%20Settings.png)
 
-![Cryptography Settings](WorkflowScreens/Key%20Exhange.png)
+![Cryptography Settings](WorkflowScreens/Key%20Echange.png)
 
 ![Cryptography Settings](WorkflowScreens/Symmetric%20Encryption.png)
 
