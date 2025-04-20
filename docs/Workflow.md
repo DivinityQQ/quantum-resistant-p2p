@@ -41,10 +41,10 @@ Po spuštění programu je uživatel vyzván ke zvolení hesla které slouží p
 
 ![Hlavní okno programu](WorkflowScreens/Main%20Window.png)
 
-V levé části se nachází seznam dostupných zařízení (peerů) se kterými je možné navázat komunikaci.
-Okno v pravé části slouží k zobrazení nastaveného šifrování lokálního počítače a připojeného peera. Pod těmito informace se nachází tlačítka Use Peer Settings a Establish Shared Key.
-Tlačítko Use Peer Settings lze použít v případě že jeden z komunikujících počítačů změní nastavení šifrování na svém konci. Po stisknutí tlačítka nastaví daná stanice stejné metody šifrování jako druhý počítač.
-Tlačítko Establish Shared Key je nutné stisknout po tlačítku Use Peer Settings aby došlo k výměně klíčů podle nových šifrovacích metod. Komunikace nebude pokračovat dokud nedojde k výměně klíčů.
+V levé části se nachází seznam dostupných zařízení (peerů) se kterými je možné navázat komunikaci.\
+Okno v pravé části slouží k zobrazení nastaveného šifrování lokálního počítače a připojeného peera. Pod těmito informace se nachází tlačítka Use Peer Settings a Establish Shared Key.\
+Tlačítko Use Peer Settings lze použít v případě že jeden z komunikujících počítačů změní nastavení šifrování na svém konci. Po stisknutí tlačítka nastaví daná stanice stejné metody šifrování jako druhý počítač.\
+Tlačítko Establish Shared Key je nutné stisknout po tlačítku Use Peer Settings aby došlo k výměně klíčů podle nových šifrovacích metod. Komunikace nebude pokračovat dokud nedojde k výměně klíčů.\
 Pod tlačítky Use Peer Settings a Establish Shared Key se nachází výpis provedených akcí včetně času kdy byly provedeny. Budou se zde zobrazovat odeslané zprávy a soubory.
 Ve spodní části je pole určené pro textové zprávy.
 
