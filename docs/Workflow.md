@@ -46,7 +46,7 @@ Při prvním spuštění je uživatel vyzván k zadání hesla pro šifrování 
 - Pod tlačítky: výpis akcí a zpráv.
 - Spodní část: textové pole pro zprávy.
 
-![Hlavní okno programu](WorkflowScreens/Main Window.png)
+![Hlavní okno programu](WorkflowScreens/Main_Window.png)
 ## Záložka File
 
 Obsahuje tyto funkce:
