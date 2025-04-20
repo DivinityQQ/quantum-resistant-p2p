@@ -38,7 +38,6 @@ Při prvním spuštění je uživatel vyzván k zadání hesla pro šifrování 
 
 ![Prvotní Spuštění](WorkflowScreens/Unlock.png)
 ## Hlavní okno programu
-
 - Levá část: seznam zařízení (peerů).
 - Pravá část: zobrazuje šifrování lokálního i vzdáleného zařízení.
 - Tlačítka:
@@ -47,6 +46,7 @@ Při prvním spuštění je uživatel vyzván k zadání hesla pro šifrování 
 - Pod tlačítky: výpis akcí a zpráv.
 - Spodní část: textové pole pro zprávy.
 
+![Hlavní okno programu](WorkflowScreens/Main Window.png)
 ## Záložka File
 
 Obsahuje tyto funkce:
