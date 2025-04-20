@@ -82,7 +82,7 @@ Obsahuje:
 - **Security Metrics** - – zde se nachází popisy použitých algoritmů a sledování jejich využití
 - **View Logs** - okno s přehledem odeslaných typů zpráv
 - **Key Exchange History** - zde se nachází záznamy komunikace včetně nastavení kde může uživatel dešifrovat použité klíče při komunikaci
-- 
+  
 ![Záložka Settings](WorkflowScreens/Settings.png)
 
 ### Cryptography Settings
