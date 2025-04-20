@@ -125,9 +125,9 @@ Zkrácený přehled o:
 Historie použitých klíčů. Možnost dešifrovat a zobrazit klíče ve formátech Hex, Base64 nebo decimálně.
 ![Key Exchange History](WorkflowScreens/Key%20Echange%20History.png)
 
-![Key Exchange History](WorkflowScreens/Key%20Echange%History%20Confirmation.png)
+![Key Exchange History](WorkflowScreens/Key%20Echange%20History%20Confirmation.png)
 
-![Key Exchange History](WorkflowScreens/Key%20Echange%History%20Show%20Key.png)
+![Key Exchange History](WorkflowScreens/Key%20Echange%20History%20Show%20Key.png)
 ### View Logs
 
 Záznamy o typech zpráv, časech, odesílatelích a filtrech.  
