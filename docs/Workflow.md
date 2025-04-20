@@ -35,7 +35,7 @@ Tento dokument slouží k seznámení uživatele s programem **Quantum Resistant
 ## Prvotní spuštění
 
 Při prvním spuštění je uživatel vyzván k zadání hesla pro šifrování záznamů. Stejné heslo bude použito při každém dalším spuštění k dešifrování těchto záznamů.
-!(WorkflowScreens/Unlock.png)
+![Prvotní Spuštění](WorkflowScreens/Unlock.png)
 ## Hlavní okno programu
 
 - Levá část: seznam zařízení (peerů).
