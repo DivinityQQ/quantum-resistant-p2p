@@ -95,8 +95,6 @@ Pro výměnu klíče (Key Exchange) jsou k dispozici následující algoritmy:
 
 ![Cryptography Settings](WorkflowScreens/Key%20Exchange.png)
 
-NTRU je Mock only, nefunguje tedy v režimu ochrany proti kvantovým počítačům.
-
 Pro symetrické šifrování (Symmetric Encryption) jsou k dispozici následující algoritmy:
 
 ![Cryptography Settings](WorkflowScreens/Symmetric%20Encryption.png)
