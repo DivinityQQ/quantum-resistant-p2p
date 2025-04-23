@@ -86,6 +86,8 @@ nav:
   - Architecture: architecture.md
   - User Guide: user-guide.md
   - Development Guide: dev-guide.md
+  - Testing Guide: testing-guide.md
+  - App Workflow (CZ): Workflow.md
   - API Reference:
     - App: 
       - Overview: api/app/index.md

@@ -214,8 +214,6 @@ V tomto případě je nutné pomocí tlačítka Use Peer Settings sjednotit nast
 
 ![Odlišné kryptografické nastavení](WorkflowScreens/Issue%202%20-%202.png)
 
-![Odlišné kryptografické nastavení](WorkflowScreens/Issue%202%20-%203.png)
-
 ![Odlišné kryptografické nastavení](WorkflowScreens/Issue%202%20-%204.png)
 
 ![Odlišné kryptografické nastavení](WorkflowScreens/Issue%202%20-%205.png)

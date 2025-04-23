@@ -18,6 +18,8 @@ This application provides a secure peer-to-peer communication platform using pos
 
 - See the [User Guide](user-guide.md) for installation and usage instructions
 - Review the [Architecture](architecture.md) for a high-level overview of the system
+- Consult the [App Workflow (CZ)](Workflow.md) for detailed app usage examples
+- See the [Testing Guide](testing-guide.md) for testing instructions
 - Browse the [API Reference](api/app/index.md) for detailed documentation of the codebase
 
 ## License
