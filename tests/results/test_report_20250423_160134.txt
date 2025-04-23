@@ -1,0 +1,190 @@
+Quantum-Resistant P2P Algorithm Test Report
+Generated: 2025-04-23 16:01:34
+===============================================
+
+Algorithm Compatibility Results:
+-------------------------------
+Key Exchange              Symmetric            Signature            Connect    Key Ex     Messaging  File       KE Time(s)
+-------------------------------------------------------------------------------------------------------------------
+ML-KEM (Level 1)          AES-256-GCM          ML-DSA (Level 2)     PASS       PASS       PASS       PASS       0.24
+ML-KEM (Level 1)          AES-256-GCM          ML-DSA (Level 3)     PASS       PASS       PASS       PASS       0.24
+ML-KEM (Level 1)          AES-256-GCM          ML-DSA (Level 5)     PASS       PASS       PASS       PASS       0.25
+ML-KEM (Level 1)          AES-256-GCM          SPHINCS+ (Level 1)   PASS       PASS       PASS       PASS       0.67
+ML-KEM (Level 1)          AES-256-GCM          SPHINCS+ (Level 3)   PASS       PASS       PASS       PASS       0.97
+ML-KEM (Level 1)          AES-256-GCM          SPHINCS+ (Level 5)   PASS       PASS       PASS       PASS       1.72
+ML-KEM (Level 1)          ChaCha20-Poly1305    ML-DSA (Level 2)     PASS       PASS       PASS       PASS       0.25
+ML-KEM (Level 1)          ChaCha20-Poly1305    ML-DSA (Level 3)     PASS       PASS       PASS       PASS       0.25
+ML-KEM (Level 1)          ChaCha20-Poly1305    ML-DSA (Level 5)     PASS       PASS       PASS       PASS       0.25
+ML-KEM (Level 1)          ChaCha20-Poly1305    SPHINCS+ (Level 1)   PASS       PASS       PASS       PASS       0.67
+ML-KEM (Level 1)          ChaCha20-Poly1305    SPHINCS+ (Level 3)   PASS       PASS       PASS       PASS       0.97
+ML-KEM (Level 1)          ChaCha20-Poly1305    SPHINCS+ (Level 5)   PASS       PASS       PASS       PASS       1.71
+ML-KEM (Level 3)          AES-256-GCM          ML-DSA (Level 2)     PASS       PASS       PASS       PASS       0.25
+ML-KEM (Level 3)          AES-256-GCM          ML-DSA (Level 3)     PASS       PASS       PASS       PASS       0.25
+ML-KEM (Level 3)          AES-256-GCM          ML-DSA (Level 5)     PASS       PASS       PASS       PASS       0.25
+ML-KEM (Level 3)          AES-256-GCM          SPHINCS+ (Level 1)   PASS       PASS       PASS       PASS       0.67
+ML-KEM (Level 3)          AES-256-GCM          SPHINCS+ (Level 3)   PASS       PASS       PASS       PASS       0.96
+ML-KEM (Level 3)          AES-256-GCM          SPHINCS+ (Level 5)   PASS       PASS       PASS       PASS       1.71
+ML-KEM (Level 3)          ChaCha20-Poly1305    ML-DSA (Level 2)     PASS       PASS       PASS       PASS       0.24
+ML-KEM (Level 3)          ChaCha20-Poly1305    ML-DSA (Level 3)     PASS       PASS       PASS       PASS       0.24
+ML-KEM (Level 3)          ChaCha20-Poly1305    ML-DSA (Level 5)     PASS       PASS       PASS       PASS       0.24
+ML-KEM (Level 3)          ChaCha20-Poly1305    SPHINCS+ (Level 1)   PASS       PASS       PASS       PASS       0.66
+ML-KEM (Level 3)          ChaCha20-Poly1305    SPHINCS+ (Level 3)   PASS       PASS       PASS       PASS       0.97
+ML-KEM (Level 3)          ChaCha20-Poly1305    SPHINCS+ (Level 5)   PASS       PASS       PASS       PASS       1.71
+ML-KEM (Level 5)          AES-256-GCM          ML-DSA (Level 2)     PASS       PASS       PASS       PASS       0.25
+ML-KEM (Level 5)          AES-256-GCM          ML-DSA (Level 3)     PASS       PASS       PASS       PASS       0.25
+ML-KEM (Level 5)          AES-256-GCM          ML-DSA (Level 5)     PASS       PASS       PASS       PASS       0.25
+ML-KEM (Level 5)          AES-256-GCM          SPHINCS+ (Level 1)   PASS       PASS       PASS       PASS       0.68
+ML-KEM (Level 5)          AES-256-GCM          SPHINCS+ (Level 3)   PASS       PASS       PASS       PASS       0.97
+ML-KEM (Level 5)          AES-256-GCM          SPHINCS+ (Level 5)   PASS       PASS       PASS       PASS       1.72
+ML-KEM (Level 5)          ChaCha20-Poly1305    ML-DSA (Level 2)     PASS       PASS       PASS       PASS       0.24
+ML-KEM (Level 5)          ChaCha20-Poly1305    ML-DSA (Level 3)     PASS       PASS       PASS       PASS       0.25
+ML-KEM (Level 5)          ChaCha20-Poly1305    ML-DSA (Level 5)     PASS       PASS       PASS       PASS       0.25
+ML-KEM (Level 5)          ChaCha20-Poly1305    SPHINCS+ (Level 1)   PASS       PASS       PASS       PASS       0.67
+ML-KEM (Level 5)          ChaCha20-Poly1305    SPHINCS+ (Level 3)   PASS       PASS       PASS       PASS       0.97
+ML-KEM (Level 5)          ChaCha20-Poly1305    SPHINCS+ (Level 5)   PASS       PASS       PASS       PASS       1.76
+HQC (Level 1)             AES-256-GCM          ML-DSA (Level 2)     PASS       PASS       PASS       PASS       0.30
+HQC (Level 1)             AES-256-GCM          ML-DSA (Level 3)     PASS       PASS       PASS       PASS       0.30
+HQC (Level 1)             AES-256-GCM          ML-DSA (Level 5)     PASS       PASS       PASS       PASS       0.30
+HQC (Level 1)             AES-256-GCM          SPHINCS+ (Level 1)   PASS       PASS       PASS       PASS       0.72
+HQC (Level 1)             AES-256-GCM          SPHINCS+ (Level 3)   PASS       PASS       PASS       PASS       1.02
+HQC (Level 1)             AES-256-GCM          SPHINCS+ (Level 5)   PASS       PASS       PASS       PASS       1.80
+HQC (Level 1)             ChaCha20-Poly1305    ML-DSA (Level 2)     PASS       PASS       PASS       PASS       0.30
+HQC (Level 1)             ChaCha20-Poly1305    ML-DSA (Level 3)     PASS       PASS       PASS       PASS       0.30
+HQC (Level 1)             ChaCha20-Poly1305    ML-DSA (Level 5)     PASS       PASS       PASS       PASS       0.30
+HQC (Level 1)             ChaCha20-Poly1305    SPHINCS+ (Level 1)   PASS       PASS       PASS       PASS       0.71
+HQC (Level 1)             ChaCha20-Poly1305    SPHINCS+ (Level 3)   PASS       PASS       PASS       PASS       1.01
+HQC (Level 1)             ChaCha20-Poly1305    SPHINCS+ (Level 5)   PASS       PASS       PASS       PASS       1.76
+HQC (Level 3)             AES-256-GCM          ML-DSA (Level 2)     PASS       PASS       PASS       PASS       0.39
+HQC (Level 3)             AES-256-GCM          ML-DSA (Level 3)     PASS       PASS       PASS       PASS       0.39
+HQC (Level 3)             AES-256-GCM          ML-DSA (Level 5)     PASS       PASS       PASS       PASS       0.40
+HQC (Level 3)             AES-256-GCM          SPHINCS+ (Level 1)   PASS       PASS       PASS       PASS       0.81
+HQC (Level 3)             AES-256-GCM          SPHINCS+ (Level 3)   PASS       PASS       PASS       PASS       1.12
+HQC (Level 3)             AES-256-GCM          SPHINCS+ (Level 5)   PASS       PASS       PASS       PASS       1.87
+HQC (Level 3)             ChaCha20-Poly1305    ML-DSA (Level 2)     PASS       PASS       PASS       PASS       0.39
+HQC (Level 3)             ChaCha20-Poly1305    ML-DSA (Level 3)     PASS       PASS       PASS       PASS       0.40
+HQC (Level 3)             ChaCha20-Poly1305    ML-DSA (Level 5)     PASS       PASS       PASS       PASS       0.40
+HQC (Level 3)             ChaCha20-Poly1305    SPHINCS+ (Level 1)   PASS       PASS       PASS       PASS       0.81
+HQC (Level 3)             ChaCha20-Poly1305    SPHINCS+ (Level 3)   PASS       PASS       PASS       PASS       1.17
+HQC (Level 3)             ChaCha20-Poly1305    SPHINCS+ (Level 5)   PASS       PASS       PASS       PASS       1.87
+HQC (Level 5)             AES-256-GCM          ML-DSA (Level 2)     PASS       PASS       PASS       PASS       0.56
+HQC (Level 5)             AES-256-GCM          ML-DSA (Level 3)     PASS       PASS       PASS       PASS       0.52
+HQC (Level 5)             AES-256-GCM          ML-DSA (Level 5)     PASS       PASS       PASS       PASS       0.52
+HQC (Level 5)             AES-256-GCM          SPHINCS+ (Level 1)   PASS       PASS       PASS       PASS       0.93
+HQC (Level 5)             AES-256-GCM          SPHINCS+ (Level 3)   PASS       PASS       PASS       PASS       1.24
+HQC (Level 5)             AES-256-GCM          SPHINCS+ (Level 5)   PASS       PASS       PASS       PASS       1.99
+HQC (Level 5)             ChaCha20-Poly1305    ML-DSA (Level 2)     PASS       PASS       PASS       PASS       0.51
+HQC (Level 5)             ChaCha20-Poly1305    ML-DSA (Level 3)     PASS       PASS       PASS       PASS       0.52
+HQC (Level 5)             ChaCha20-Poly1305    ML-DSA (Level 5)     PASS       PASS       PASS       PASS       0.52
+HQC (Level 5)             ChaCha20-Poly1305    SPHINCS+ (Level 1)   PASS       PASS       PASS       PASS       0.94
+HQC (Level 5)             ChaCha20-Poly1305    SPHINCS+ (Level 3)   PASS       PASS       PASS       PASS       1.24
+HQC (Level 5)             ChaCha20-Poly1305    SPHINCS+ (Level 5)   PASS       PASS       PASS       PASS       1.98
+FrodoKEM (Level 1)        AES-256-GCM          ML-DSA (Level 2)     PASS       PASS       PASS       PASS       0.28
+FrodoKEM (Level 1)        AES-256-GCM          ML-DSA (Level 3)     PASS       PASS       PASS       PASS       0.28
+FrodoKEM (Level 1)        AES-256-GCM          ML-DSA (Level 5)     PASS       PASS       PASS       PASS       0.28
+FrodoKEM (Level 1)        AES-256-GCM          SPHINCS+ (Level 1)   PASS       PASS       PASS       PASS       0.69
+FrodoKEM (Level 1)        AES-256-GCM          SPHINCS+ (Level 3)   PASS       PASS       PASS       PASS       1.00
+FrodoKEM (Level 1)        AES-256-GCM          SPHINCS+ (Level 5)   PASS       PASS       PASS       PASS       1.75
+FrodoKEM (Level 1)        ChaCha20-Poly1305    ML-DSA (Level 2)     PASS       PASS       PASS       PASS       0.28
+FrodoKEM (Level 1)        ChaCha20-Poly1305    ML-DSA (Level 3)     PASS       PASS       PASS       PASS       0.27
+FrodoKEM (Level 1)        ChaCha20-Poly1305    ML-DSA (Level 5)     PASS       PASS       PASS       PASS       0.29
+FrodoKEM (Level 1)        ChaCha20-Poly1305    SPHINCS+ (Level 1)   PASS       PASS       PASS       PASS       0.70
+FrodoKEM (Level 1)        ChaCha20-Poly1305    SPHINCS+ (Level 3)   PASS       PASS       PASS       PASS       1.00
+FrodoKEM (Level 1)        ChaCha20-Poly1305    SPHINCS+ (Level 5)   PASS       PASS       PASS       PASS       1.83
+FrodoKEM (Level 3)        AES-256-GCM          ML-DSA (Level 2)     PASS       PASS       PASS       PASS       0.31
+FrodoKEM (Level 3)        AES-256-GCM          ML-DSA (Level 3)     PASS       PASS       PASS       PASS       0.32
+FrodoKEM (Level 3)        AES-256-GCM          ML-DSA (Level 5)     PASS       PASS       PASS       PASS       0.32
+FrodoKEM (Level 3)        AES-256-GCM          SPHINCS+ (Level 1)   PASS       PASS       PASS       PASS       0.73
+FrodoKEM (Level 3)        AES-256-GCM          SPHINCS+ (Level 3)   PASS       PASS       PASS       PASS       1.03
+FrodoKEM (Level 3)        AES-256-GCM          SPHINCS+ (Level 5)   PASS       PASS       PASS       PASS       1.78
+FrodoKEM (Level 3)        ChaCha20-Poly1305    ML-DSA (Level 2)     PASS       PASS       PASS       PASS       0.32
+FrodoKEM (Level 3)        ChaCha20-Poly1305    ML-DSA (Level 3)     PASS       PASS       PASS       PASS       0.32
+FrodoKEM (Level 3)        ChaCha20-Poly1305    ML-DSA (Level 5)     PASS       PASS       PASS       PASS       0.32
+FrodoKEM (Level 3)        ChaCha20-Poly1305    SPHINCS+ (Level 1)   PASS       PASS       PASS       PASS       0.73
+FrodoKEM (Level 3)        ChaCha20-Poly1305    SPHINCS+ (Level 3)   PASS       PASS       PASS       PASS       1.03
+FrodoKEM (Level 3)        ChaCha20-Poly1305    SPHINCS+ (Level 5)   PASS       PASS       PASS       PASS       1.78
+FrodoKEM (Level 5)        AES-256-GCM          ML-DSA (Level 2)     PASS       PASS       PASS       PASS       0.37
+FrodoKEM (Level 5)        AES-256-GCM          ML-DSA (Level 3)     PASS       PASS       PASS       PASS       0.37
+FrodoKEM (Level 5)        AES-256-GCM          ML-DSA (Level 5)     PASS       PASS       PASS       PASS       0.38
+FrodoKEM (Level 5)        AES-256-GCM          SPHINCS+ (Level 1)   PASS       PASS       PASS       PASS       0.79
+FrodoKEM (Level 5)        AES-256-GCM          SPHINCS+ (Level 3)   PASS       PASS       PASS       PASS       1.09
+FrodoKEM (Level 5)        AES-256-GCM          SPHINCS+ (Level 5)   PASS       PASS       PASS       PASS       1.84
+FrodoKEM (Level 5)        ChaCha20-Poly1305    ML-DSA (Level 2)     PASS       PASS       PASS       PASS       0.37
+FrodoKEM (Level 5)        ChaCha20-Poly1305    ML-DSA (Level 3)     PASS       PASS       PASS       PASS       0.37
+FrodoKEM (Level 5)        ChaCha20-Poly1305    ML-DSA (Level 5)     PASS       PASS       PASS       PASS       0.38
+FrodoKEM (Level 5)        ChaCha20-Poly1305    SPHINCS+ (Level 1)   PASS       PASS       PASS       PASS       0.84
+FrodoKEM (Level 5)        ChaCha20-Poly1305    SPHINCS+ (Level 3)   PASS       PASS       PASS       PASS       1.09
+FrodoKEM (Level 5)        ChaCha20-Poly1305    SPHINCS+ (Level 5)   PASS       PASS       PASS       PASS       1.84
+
+Summary: 108/108 combinations successful
+
+
+File Transfer Performance (Averaged by Symmetric+Signature):
+--------------------------------------------------------
+Rank   Symmetric            Signature            Avg KB/s    
+-----------------------------------------------------------
+1      ChaCha20-Poly1305    ML-DSA (Level 2)     7791.17
+2      AES-256-GCM          ML-DSA (Level 2)     7664.60
+3      ChaCha20-Poly1305    ML-DSA (Level 3)     7495.45
+4      AES-256-GCM          ML-DSA (Level 3)     7314.77
+5      AES-256-GCM          ML-DSA (Level 5)     7288.28
+6      ChaCha20-Poly1305    ML-DSA (Level 5)     7202.62
+7      AES-256-GCM          SPHINCS+ (Level 1)   1906.42
+8      ChaCha20-Poly1305    SPHINCS+ (Level 1)   1891.77
+9      ChaCha20-Poly1305    SPHINCS+ (Level 3)   1235.45
+10     AES-256-GCM          SPHINCS+ (Level 3)   1226.97
+11     ChaCha20-Poly1305    SPHINCS+ (Level 5)   683.03
+12     AES-256-GCM          SPHINCS+ (Level 5)   682.33
+
+File Transfer Details by File Size:
+----------------------------------
+
+File Size: 10KB
+-------------------------
+Rank   Symmetric            Signature            Avg KB/s    
+------------------------------------------------------------
+1      ChaCha20-Poly1305    ML-DSA (Level 2)     2217.60
+2      AES-256-GCM          ML-DSA (Level 2)     2102.00
+3      ChaCha20-Poly1305    ML-DSA (Level 3)     1926.28
+4      AES-256-GCM          ML-DSA (Level 3)     1828.83
+5      AES-256-GCM          ML-DSA (Level 5)     1620.28
+6      ChaCha20-Poly1305    ML-DSA (Level 5)     1496.07
+7      ChaCha20-Poly1305    SPHINCS+ (Level 1)   71.14
+8      AES-256-GCM          SPHINCS+ (Level 1)   70.02
+9      ChaCha20-Poly1305    SPHINCS+ (Level 3)   41.79
+10     AES-256-GCM          SPHINCS+ (Level 3)   41.43
+11     AES-256-GCM          SPHINCS+ (Level 5)   20.46
+12     ChaCha20-Poly1305    SPHINCS+ (Level 5)   20.43
+
+File Size: 100KB
+-------------------------
+Rank   Symmetric            Signature            Avg KB/s    
+------------------------------------------------------------
+1      ChaCha20-Poly1305    ML-DSA (Level 2)     8530.06
+2      AES-256-GCM          ML-DSA (Level 2)     8393.63
+3      ChaCha20-Poly1305    ML-DSA (Level 3)     8157.25
+4      AES-256-GCM          ML-DSA (Level 5)     7970.06
+5      AES-256-GCM          ML-DSA (Level 3)     7759.09
+6      ChaCha20-Poly1305    ML-DSA (Level 5)     7741.49
+7      AES-256-GCM          SPHINCS+ (Level 1)   677.62
+8      ChaCha20-Poly1305    SPHINCS+ (Level 1)   672.78
+9      ChaCha20-Poly1305    SPHINCS+ (Level 3)   407.27
+10     AES-256-GCM          SPHINCS+ (Level 3)   405.68
+11     AES-256-GCM          SPHINCS+ (Level 5)   202.10
+12     ChaCha20-Poly1305    SPHINCS+ (Level 5)   201.14
+
+File Size: 1024KB
+-------------------------
+Rank   Symmetric            Signature            Avg KB/s    
+------------------------------------------------------------
+1      ChaCha20-Poly1305    ML-DSA (Level 2)     12625.84
+2      AES-256-GCM          ML-DSA (Level 2)     12498.17
+3      ChaCha20-Poly1305    ML-DSA (Level 3)     12402.82
+4      ChaCha20-Poly1305    ML-DSA (Level 5)     12370.31
+5      AES-256-GCM          ML-DSA (Level 3)     12356.40
+6      AES-256-GCM          ML-DSA (Level 5)     12274.50
+7      AES-256-GCM          SPHINCS+ (Level 1)   4971.61
+8      ChaCha20-Poly1305    SPHINCS+ (Level 1)   4931.39
+9      ChaCha20-Poly1305    SPHINCS+ (Level 3)   3257.29
+10     AES-256-GCM          SPHINCS+ (Level 3)   3233.80
+11     ChaCha20-Poly1305    SPHINCS+ (Level 5)   1827.53
+12     AES-256-GCM          SPHINCS+ (Level 5)   1824.44

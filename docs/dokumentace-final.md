@@ -165,19 +165,16 @@ python -m quantum_resistant_p2p
 
 ### Příklad použití pro ověření funkčnosti
 
-Pro ověření funkčnosti aplikace můžete spustit dva instance na jednom počítači:
+Pro ověření funkčnosti aplikace můžete využít dva počítače v jedné siti, nebo virtuální stroj. Na obou strojích nainstalujte aplikaci podle pokynů. Poté aplikace spusťte a ověřte funkčnost přes uživatelské rozhraní.
 
-1. Otevřete dva terminály a aktivujte v nich virtuální prostředí
-2. V prvním terminálu spusťte:
+Také je možné ověřit kompatibilitu kryptografických algoritmů a jejich rychlost při přenosu souborů spuštěním testovacího skriptu:
+
+1. Otevřete terminál a aktivujte v něm virtuální prostředí
+2. V terminálu spusťte:
    ```bash
-   python -m tests.local_testing server 8000
+   python -m tests.crypto_algorithms_tester --output-dir your/output/directory
    ```
-3. Ve druhém terminálu spusťte:
-   ```bash
-   python -m tests.local_testing client 8001 8000
-   ```
-4. Tím se vytvoří dvě instance aplikace, které se automaticky propojí
-5. Můžete pozorovat výměnu zpráv a ověřit funkčnost přenosu souborů
+5. Po vyzkoušení všech kombinací se vygeneruje report ve vámi zvoleném adresáři
 
 ## Použité externí knihovny a jejich verze
 
