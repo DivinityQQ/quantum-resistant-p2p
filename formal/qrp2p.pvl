@@ -21,6 +21,10 @@
      choice a user can make. The core enforces "glass_box only if requested"; so does the model.
    - Reflection checks (§7.5) are local policy and are not modelled. *)
 
+(* More precise treatment of process actions; helps ProVerif reconstruct traces for derivations
+   through tables and branches. *)
+set preciseActions = true.
+
 free c: channel.
 
 type kseed.
