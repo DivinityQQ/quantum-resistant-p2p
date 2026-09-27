@@ -64,6 +64,17 @@ Re-check them when a pinned version changes; most should become regression tests
   `SLH_DSA_PURE_*` / `SLH_DSA_*_PREHASH_*` (221 signature names in total). With default flags the
   shared library links the system `libcrypto.so.3`; with `-DOQS_USE_OPENSSL=OFF` it links only
   libc, which is what a bundle needs. `-DOQS_DIST_BUILD=ON` keeps it portable across CPUs.
+- **liboqs 0.16.0 SLH-DSA (SHA-2 variants) is broken when built with MSVC.**
+  `src/sig/slh_dsa/slh_dsa_c/plat_local.h` selects byte swapping with
+  `#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__`. MSVC defines neither macro, so the preprocessor
+  compares 0 with 0 and a little-endian x64 build takes the big-endian path in SHA-256/512. Found in
+  CI: on Windows, `verify()` rejected a signature it had just made; every KEM and the SHAKE variants
+  were fine. Reproduced on Linux by building with `-U__BYTE_ORDER__ -U__ORDER_BIG_ENDIAN__`
+  (SHA2-128f verify fails, SHAKE-128f passes) and fixed by defining
+  `__ORDER_LITTLE_ENDIAN__=1234 __ORDER_BIG_ENDIAN__=4321 __BYTE_ORDER__=1234`, which the CI
+  `liboqs` job now passes on Windows through `CFLAGS`. `tests/vectors/liboqs/` holds a signature
+  from a correct GCC build that every OS must verify; the simulated MSVC build fails it. Worth
+  reporting upstream.
 - liboqs upstream README: *"WE DO NOT CURRENTLY RECOMMEND RELYING ON THIS LIBRARY IN A
   PRODUCTION ENVIRONMENT OR TO PROTECT ANY SENSITIVE DATA."* It is used for lab algorithms only.
 

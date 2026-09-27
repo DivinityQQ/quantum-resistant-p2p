@@ -74,7 +74,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: _oqs
-          key: liboqs-${{ env.LIBOQS_COMMIT }}-${{ runner.os }}-${{ runner.arch }}-v1
+          key: liboqs-${{ env.LIBOQS_COMMIT }}-${{ runner.os }}-${{ runner.arch }}-v2
       - name: Check out liboqs
         if: steps.cache.outputs.cache-hit != 'true'
         uses: actions/checkout@v7
@@ -89,9 +89,15 @@ jobs:
         if: steps.cache.outputs.cache-hit != 'true'
         # Shared library only; portable CPU dispatch (OQS_DIST_BUILD); no OpenSSL dependency so
         # the bundle is self-contained.
+        # MSVC: liboqs 0.16.0's SLH-DSA tests `__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__`; MSVC
+        # defines neither, so the test is 0 == 0 and SHA-2 takes the big-endian path. Define the
+        # GCC macros (via CFLAGS, which keeps MSVC's default flags). VERIFIED_FACTS has the details.
         run: |
           extra=()
-          if [ "$RUNNER_OS" = "Windows" ]; then extra+=(-DCMAKE_WINDOWS_EXPORT_ALL_SYMBOLS=TRUE); fi
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            extra+=(-DCMAKE_WINDOWS_EXPORT_ALL_SYMBOLS=TRUE)
+            export CFLAGS="-D__ORDER_LITTLE_ENDIAN__=1234 -D__ORDER_BIG_ENDIAN__=4321 -D__BYTE_ORDER__=1234"
+          fi
           cmake -S _liboqs-src -B _liboqs-build \
             -DBUILD_SHARED_LIBS=ON -DOQS_BUILD_ONLY_LIB=ON -DOQS_DIST_BUILD=ON \
             -DOQS_USE_OPENSSL=OFF -DCMAKE_BUILD_TYPE=Release \

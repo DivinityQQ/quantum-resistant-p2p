@@ -20,6 +20,7 @@ from qrp2p.lab.oqs_loader import (
     library_candidates,
     load_oqs,
 )
+from tests.vectors import load_json
 
 CHILD = textwrap.dedent(
     """
@@ -117,3 +118,12 @@ def test_lab_algorithms_load_and_work() -> None:
             with oqs.Signature(name) as verifier:
                 assert verifier.verify(b"lab", signature, public)
                 assert not verifier.verify(b"lab!", signature, public)
+    # A self-consistent build can still be wrong. This signature comes from a GCC build on Linux;
+    # an MSVC build without the byte-order fix (see the CI liboqs job) fails to verify it.
+    kat = load_json("liboqs/slh_dsa_pure_sha2_128f.json")
+    with oqs.Signature(kat["algorithm"]) as verifier:
+        assert verifier.verify(
+            bytes.fromhex(kat["message"]),
+            bytes.fromhex(kat["signature"]),
+            bytes.fromhex(kat["public_key"]),
+        )

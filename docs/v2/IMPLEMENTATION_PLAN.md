@@ -76,7 +76,11 @@ Everything here lives in `src/qrp2p/core/crypto/` and has no I/O.
 - `tests/reason_checklist.py` reserves a test name for every code in Appendix B; entries without
   a milestone prefix are checked to exist.
 - liboqs: 0.16.0 built locally with the CI flags; HQC, FrodoKEM, Classic McEliece and SLH-DSA load
-  through `qrp2p.lab.oqs_loader`. Windows and macOS are proven only by the CI `liboqs` job.
+  through `qrp2p.lab.oqs_loader`. The first CI run passed on Linux and macOS. On Windows the build,
+  load and KEMs passed but SLH-DSA-SHA2 failed: an MSVC byte-order bug in liboqs
+  (VERIFIED_FACTS), now worked around in the CI build and guarded by a cross-platform KAT.
+- Windows checkouts converted the vendored vectors to CRLF and broke their SHA-256 pins;
+  `.gitattributes` now marks `tests/vectors/` as `-text`.
 
 ---
 
