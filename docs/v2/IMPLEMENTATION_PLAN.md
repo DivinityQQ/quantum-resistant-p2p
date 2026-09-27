@@ -5,8 +5,9 @@ work up next, human or a Claude Code session on a local machine. Start with the 
 `CLAUDE.md`, then this file.
 
 **Status (2026-09-27):** Step 0 done except the PyPI placeholder (needs the owner's account).
-M0.1–M0.9 implemented with tests; M0.10 has a working loader and a CI job that builds liboqs on
-3 OSes. The M0 gate is met once that CI run is green on all 3 OSes (see the M0 status notes).
+**M0 is complete; its gate is met.** CI run 36334481736 is green on Linux, Windows and macOS:
+lint, types, layers, audit, the full test suite, and liboqs built, bundled and exercised on all
+three OSes (see the M0 status notes). Next: M1, formal model first.
 
 ---
 
