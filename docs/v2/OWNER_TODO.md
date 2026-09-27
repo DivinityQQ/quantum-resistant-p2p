@@ -4,7 +4,7 @@ Things a Claude Code cloud session cannot do for you: its GitHub access refuses 
 repository-settings changes, and it has no PyPI account. Work top to bottom; delete items as you
 finish them, and this file once it is empty.
 
-_Last updated: 2026-09-27._
+_Last updated: 2026-09-27 (after M1)._
 
 ## 1. GitHub: land v2 on `main` (about 10 minutes)
 
@@ -22,18 +22,26 @@ Order matters: tag v1 **before** merging, while `main` still points at the last 
    (Or in the web UI: Releases → Draft a new release → tag `v1-final`, target `main`.)
 
 2. **Require CI on `main`.** Settings → Rules → Rulesets → New ruleset → *Import a ruleset* →
-   choose `.github/rulesets/main.json` from the repository → Create. It allows changes only
-   through pull requests, requires all seven CI checks, blocks force-push and deletion, and has no
-   bypass (it applies to you too).
+   choose `.github/rulesets/main.json` → Create. It allows changes only through pull requests,
+   requires the CI checks, blocks force-push and deletion, and has no bypass (it applies to you
+   too).
+   - Import the file from the **M1 branch** (`claude/v2-m1-protocol-core`, 9 checks: M0's seven
+     plus "Formal model (ProVerif)" and "Mutation testing (core)"). The M0 branch's copy has only
+     seven. If you imported the M0 copy already, add the two checks by hand (Rulesets → the
+     ruleset → Require status checks → Add checks).
    - If you later rename a CI job in `.github/workflows/ci.yml`, update the ruleset in the same
      change, or every merge into `main` will wait for a check that never reports.
 
-3. **Merge [PR #3](https://github.com/DivinityQQ/quantum-resistant-p2p/pull/3)** with
+3. **Merge [PR #3](https://github.com/DivinityQQ/quantum-resistant-p2p/pull/3) (M0)** with
    **"Create a merge commit"**, not squash or rebase. The commits record decisions (for example the
-   MSVC liboqs finding), and any M1 branch stacked on the M0 branch keeps working without a
-   rebase only if M0's commits reach `main` unchanged.
+   MSVC liboqs finding), and the M1 branch is stacked on M0: it keeps working without a rebase
+   only if M0's commits reach `main` unchanged.
+4. **Then the M1 PR** (base `claude/v2-m0-crypto-foundations`). After step 3, change its base to
+   `main` (Edit next to the PR title), or let GitHub do it by deleting the M0 branch with
+   *Automatically delete head branches* on. Wait for CI on `main` (all 9 checks), then merge it
+   with a merge commit too.
 
-4. **Housekeeping (optional, your call).**
+5. **Housekeeping (optional, your call).**
    - Settings → General → enable *Automatically delete head branches*. With it, a stacked PR whose
      base branch is deleted after merging is retargeted to `main` automatically.
    - Delete branches that are now superseded: `claude/codebase-review-security-arch-cjdcr5` (an
@@ -99,7 +107,10 @@ uv run pytest && uv run ruff check . && uv run pyright && uv run lint-imports
 - Lab algorithms locally (optional): build liboqs 0.16.0 with the flags in `ci.yml` (on Windows
   with MSVC, include the `CFLAGS` byte-order workaround), then
   `OQS_INSTALL_PATH=<prefix> QRP2P_REQUIRE_LIBOQS=1 uv run pytest -m liboqs`.
-- Formal model (M1, optional locally): ProVerif via `opam install proverif`. CI runs it too.
+- Formal model (optional locally): `opam install proverif` (2.05), then `python formal/verify.py`.
+  CI runs it on every push; locally it takes about 12 minutes, most of it `handshake_fs.pv`.
+- Mutation testing (optional locally): `uv run mutmut run && uv run python -m tests.mutation_gate`
+  (5-20 minutes). CI runs it too.
 
 ## 5. Claude Code cloud environment (optional)
 

@@ -8,9 +8,10 @@ can **watch, pause and attack that exact channel**.
 - A learning layer: Inspector, glass-box sessions with mutual consent, solo lab, Attack Lab,
   weakened engines, Algorithm Lab and guided lessons.
 
-> **Status:** early development. M0 (crypto foundations) is done; M1 (protocol core) is next.
-> Nothing here is ready for use, and the protocol must not be called secure until every item in
-> DESIGN §15 passes. v1 is preserved at the tag
+> **Status:** early development. M0 (crypto foundations) and M1 (protocol core: formal model,
+> handshake, record layer, rekey) are done; M2 (services and a headless CLI) is next, so nothing
+> talks over a network yet. Nothing here is ready for use, and the protocol must not be called
+> secure until every item in DESIGN §15 passes. v1 is preserved at the tag
 > [`v1-final`](https://github.com/DivinityQQ/quantum-resistant-p2p/tree/v1-final).
 
 ## Documentation
