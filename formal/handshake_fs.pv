@@ -3,9 +3,9 @@
 
 (* EXPECT false: not event(IDone) *)
 query event(IDone).
-(* EXPECT true: not attacker(secretI *)
+(* EXPECT true: not attacker_p1(secretI *)
 query attacker(secretI).
-(* EXPECT true: not attacker(secretR *)
+(* EXPECT true: not attacker_p1(secretR *)
 query attacker(secretR).
 
 process

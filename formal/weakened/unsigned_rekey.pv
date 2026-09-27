@@ -72,14 +72,15 @@ process
   (
     (* Honest A-B sessions whose state A5 has read *)
     !( new cs: bitstring;
-       new exp: bitstring;
+       new sid: bitstring;
+       let exp = expo(pkA, pkB, sid) in
        out(c, (cs, exp));
        ( WRekeyInitiator(skA, pkA, pkB, cs, exp, true) | WRekeyResponder(skB, pkB, pkA, cs, exp, true) ) )
-    (* Rekeys with any peer, on any state *)
-  | !( in(c, (p: bitstring, cs: bitstring, exp: bitstring)); WRekeyInitiator(skA, pkA, p, cs, exp, false) )
-  | !( in(c, (p: bitstring, cs: bitstring, exp: bitstring)); WRekeyResponder(skA, pkA, p, cs, exp, false) )
-  | !( in(c, (p: bitstring, cs: bitstring, exp: bitstring)); WRekeyInitiator(skB, pkB, p, cs, exp, false) )
-  | !( in(c, (p: bitstring, cs: bitstring, exp: bitstring)); WRekeyResponder(skB, pkB, p, cs, exp, false) )
+    (* Rekeys with any peer, on any chaining secret and any session of that pair *)
+  | !( in(c, (p: bitstring, cs: bitstring, sid: bitstring)); WRekeyInitiator(skA, pkA, p, cs, expo(pkA, p, sid), false) )
+  | !( in(c, (p: bitstring, cs: bitstring, sid: bitstring)); WRekeyResponder(skA, pkA, p, cs, expo(p, pkA, sid), false) )
+  | !( in(c, (p: bitstring, cs: bitstring, sid: bitstring)); WRekeyInitiator(skB, pkB, p, cs, expo(pkB, p, sid), false) )
+  | !( in(c, (p: bitstring, cs: bitstring, sid: bitstring)); WRekeyResponder(skB, pkB, p, cs, expo(p, pkB, sid), false) )
     (* Handshake signatures on anything *)
   | !( in(c, x: bitstring); out(c, sign(skA, (rInitiator, x))) )
   | !( in(c, x: bitstring); out(c, sign(skA, (rResponder, x))) )

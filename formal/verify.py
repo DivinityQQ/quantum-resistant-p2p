@@ -31,6 +31,7 @@ TIMEOUT_S = 3600
 
 EXPECT_RE = re.compile(r"\(\* EXPECT (true|false): (.+?) \*\)")
 RESULT_RE = re.compile(r"^RESULT (.*?) (is true|is false|cannot be proved)\.$")
+EXCERPT_LINES = 60
 
 
 @dataclass
@@ -42,6 +43,7 @@ class Outcome:
     errors: list[str] = field(default_factory=list)
     results: list[tuple[str, str]] = field(default_factory=list)
     output: str = ""
+    unexpected: list[str] = field(default_factory=list)
 
 
 def expectations(model: Path) -> list[tuple[bool, str]]:
@@ -50,12 +52,13 @@ def expectations(model: Path) -> list[tuple[bool, str]]:
     return [(verdict == "true", prefix) for verdict, prefix in EXPECT_RE.findall(text)]
 
 
-def check(model: Path, output: str) -> tuple[list[tuple[str, str]], list[str]]:
+def check(model: Path, output: str) -> tuple[list[tuple[str, str]], list[str], list[str]]:
     """Compare ProVerif's RESULT lines with the model's expectations."""
     results = [
         (m.group(1), m.group(2)) for line in output.splitlines() if (m := RESULT_RE.match(line))
     ]
     errors: list[str] = []
+    unexpected: list[str] = []
     expected = expectations(model)
     if not expected:
         errors.append("no EXPECT lines")
@@ -70,12 +73,25 @@ def check(model: Path, output: str) -> tuple[list[tuple[str, str]], list[str]]:
         want = "is true" if want_true else "is false"
         if verdict != want:
             errors.append(f"{query}: {verdict}, expected {want}")
+            unexpected.append(query)
     errors.extend(
         f"result without an EXPECT line: {query} {verdict}"
         for i, (query, verdict) in enumerate(results)
         if i not in used
     )
-    return results, errors
+    return results, errors, unexpected
+
+
+def excerpt(output: str, query: str) -> str:
+    """ProVerif's output for one query: the lines just before its RESULT line."""
+    lines = output.splitlines()
+    for i, line in enumerate(lines):
+        if line.startswith(f"RESULT {query} "):
+            start = i
+            while start > 0 and not lines[start - 1].startswith("-- "):
+                start -= 1
+            return "\n".join(lines[max(start - 1, i - EXCERPT_LINES) : i + 1])
+    return "(no output for this query)"
 
 
 def run(proverif: str, model: Path) -> Outcome:
@@ -97,7 +113,7 @@ def run(proverif: str, model: Path) -> Outcome:
     outcome.output = proc.stdout + proc.stderr
     if proc.returncode != 0:
         outcome.errors.append(f"proverif exited with {proc.returncode}")
-    outcome.results, errors = check(model, outcome.output)
+    outcome.results, errors, outcome.unexpected = check(model, outcome.output)
     outcome.errors.extend(errors)
     return outcome
 
@@ -114,7 +130,9 @@ def main() -> int:
     if proverif is None:
         print(f"ProVerif not found: {args.proverif}", file=sys.stderr)
         return 2
-    models = args.models or sorted([*FORMAL.glob("*.pv"), *FORMAL.glob("weakened/*.pv")])
+    models = args.models or sorted(
+        [*FORMAL.glob("*.pv"), *FORMAL.glob("weakened/*.pv"), *FORMAL.glob("redundant/*.pv")]
+    )
 
     with ThreadPoolExecutor(max_workers=os.cpu_count() or 1) as pool:
         outcomes = list(pool.map(lambda m: run(proverif, m), models))
@@ -128,6 +146,10 @@ def main() -> int:
             print(f"       {verdict:17} {query}")
         for error in outcome.errors:
             print(f"     ! {error}")
+        for query in outcome.unexpected:
+            print(f"\n----- {name}: {query}")
+            print(excerpt(outcome.output, query))
+            print("-----\n")
         if args.log_dir:
             log = args.log_dir / (name.replace("/", "__") + ".log")
             log.parent.mkdir(parents=True, exist_ok=True)

@@ -1,7 +1,6 @@
-(* WEAKENED ENGINE (DESIGN §11.8): each handshake signature is computed before the signer's identity
-   enters the transcript, so it does not cover that identity; the Finished MAC still does.
-   Prediction before running: no attack (the SIGMA-I argument: the MAC binds the identity to the
-   key). See formal/README.md. *)
+(* REDUNDANT DEFENCE (formal/README.md): no Finished MACs (FinR, FinI and FinA are neither sent nor
+   checked). Result: no attack, because the handshake AEAD under keys derived
+   from ss already proves possession of the handshake secret. See formal/README.md. *)
 
 (* EXPECT false: not event(IDone) *)
 query event(IDone).
@@ -37,27 +36,22 @@ let WInitiator(skI: sseed, pkI: bitstring) =
   let tr1 = ((t10, hello), (t11, (nR, (ctm, ctx)))) in
   let hsR = hexpand(hs, lRhs, H(tr1)) in
   let hsI = hexpand(hs, lIhs, H(tr1)) in
-  let (idR: bitstring, sigR: bitstring, finR: bitstring) = adec(hexpand(hsR, lKey, cEmpty), s0, hReply, rbox) in
+  let (idR: bitstring, sigR: bitstring) = adec(hexpand(hsR, lKey, cEmpty), s0, hReply, rbox) in  (* WEAKENED *)
   let tr2 = (tr1, (t21, idR)) in
-  if checksign(idR, (rResponder, H(tr1)), sigR) = true then  (* WEAKENED *)
+  if checksign(idR, (rResponder, H(tr2)), sigR) = true then
   let tr3 = (tr2, (t22, sigR)) in
-  if finR = hmac(hexpand(hsR, lFin, cEmpty), H(tr3)) then
   (* the pin is checked before the initiator reveals itself *)
   if hasPin = false || idR = pinned then
   (* Confirm *)
-  let tr4 = ((tr3, (t23, finR)), (t31, pkI)) in
-  let sigI = sign(skI, (rInitiator, H((tr3, (t23, finR))))) in  (* WEAKENED *)
-  let tr5 = (tr4, (t32, sigI)) in
-  let finI = hmac(hexpand(hsI, lFin, cEmpty), H(tr5)) in
-  let tr6 = (tr5, (t33, finI)) in
+  let tr4 = (tr3, (t31, pkI)) in
+  let sigI = sign(skI, (rInitiator, H(tr4))) in
+  let tr6 = (tr4, (t32, sigI)) in
   event IConfirmSent(pkI, idR, prof, gbreq, H(tr6));
-  out(c, aenc(hexpand(hsI, lKey, cEmpty), s0, hConfirm, (pkI, sigI, finI)));
+  out(c, aenc(hexpand(hsI, lKey, cEmpty), s0, hConfirm, (pkI, sigI)));  (* WEAKENED *)
   (* Admit *)
   in(c, abox: bitstring);
-  let (admitBody: bitstring, finA: bitstring) = adec(hexpand(hsR, lKey, cEmpty), s1, hAdmit, abox) in
-  let tr7 = (tr6, (t41, admitBody)) in
-  if finA = hmac(hexpand(hsR, lFin, cEmpty), H(tr7)) then
-  let thf = H((tr7, (t42, finA))) in
+  let admitBody = adec(hexpand(hsR, lKey, cEmpty), s1, hAdmit, abox) in  (* WEAKENED *)
+  let thf = H((tr6, (t41, admitBody))) in
   let (dec: bitstring, gbflag: bitstring, reason: bitstring) = admitBody in
   get honest(=idR) in
   event IAdmitOk(pkI, idR, prof, gbreq, admitBody, thf);
@@ -72,11 +66,9 @@ let WResponderAdmit(pkR: bitstring, idI: bitstring, prof: bitstring, gbreq: bits
                     hs: bitstring, hsR: bitstring, tr6: bitstring, honestPeer: bool,
                     dec: bitstring, gbflag: bitstring, reason: bitstring) =
   let admitBody = (dec, gbflag, reason) in
-  let tr7 = (tr6, (t41, admitBody)) in
-  let finA = hmac(hexpand(hsR, lFin, cEmpty), H(tr7)) in
-  let thf = H((tr7, (t42, finA))) in
+  let thf = H((tr6, (t41, admitBody))) in
   event RAdmitSent(idI, pkR, prof, gbreq, admitBody, thf);
-  out(c, aenc(hexpand(hsR, lKey, cEmpty), s1, hAdmit, (admitBody, finA)));
+  out(c, aenc(hexpand(hsR, lKey, cEmpty), s1, hAdmit, admitBody));  (* WEAKENED *)
   if dec = accept then
   let cs0 = hextract(hexpand(hs, lDerived, H(cEmpty)), cZero) in
   let apI = hexpand(cs0, lIap, thf) in
@@ -115,18 +107,15 @@ let WResponder(skR: sseed, pkR: bitstring) =
   let hsR = hexpand(hs, lRhs, H(tr1)) in
   let hsI = hexpand(hs, lIhs, H(tr1)) in
   let tr2 = (tr1, (t21, pkR)) in
-  let sigR = sign(skR, (rResponder, H(tr1))) in  (* WEAKENED *)
+  let sigR = sign(skR, (rResponder, H(tr2))) in
   let tr3 = (tr2, (t22, sigR)) in
-  let finR = hmac(hexpand(hsR, lFin, cEmpty), H(tr3)) in
-  out(c, (nR, ctm, ctx, aenc(hexpand(hsR, lKey, cEmpty), s0, hReply, (pkR, sigR, finR))));
+  out(c, (nR, ctm, ctx, aenc(hexpand(hsR, lKey, cEmpty), s0, hReply, (pkR, sigR))));  (* WEAKENED *)
   (* Confirm *)
   in(c, cbox: bitstring);
-  let (idI: bitstring, sigI: bitstring, finI: bitstring) = adec(hexpand(hsI, lKey, cEmpty), s0, hConfirm, cbox) in
-  let tr4 = ((tr3, (t23, finR)), (t31, idI)) in
-  if checksign(idI, (rInitiator, H((tr3, (t23, finR)))), sigI) = true then  (* WEAKENED *)
-  let tr5 = (tr4, (t32, sigI)) in
-  if finI = hmac(hexpand(hsI, lFin, cEmpty), H(tr5)) then
-  let tr6 = (tr5, (t33, finI)) in
+  let (idI: bitstring, sigI: bitstring) = adec(hexpand(hsI, lKey, cEmpty), s0, hConfirm, cbox) in  (* WEAKENED *)
+  let tr4 = (tr3, (t31, idI)) in
+  if checksign(idI, (rInitiator, H(tr4)), sigI) = true then
+  let tr6 = (tr4, (t32, sigI)) in
   get honest(=idI) in (
     event RConfirmOk(idI, pkR, prof, gbreq, H(tr6));
     WResponderDecide(pkR, idI, prof, gbreq, hs, hsR, tr6, true)

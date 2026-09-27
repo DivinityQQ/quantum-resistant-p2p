@@ -249,6 +249,10 @@ let Responder(skR: sseed, pkR: bitstring) =
 
 (* ---- The signed PQ rekey (DESIGN §8.4) ------------------------------------------------------- *)
 
+(* exporter_n = Derive-Secret(cs_n, "exporter", th): th_final covers both identity bundles, so an
+   exporter belongs to one session between two identities. Modelled as expo(pk_I, pk_R, session). *)
+fun expo(bitstring, bitstring, bitstring): bitstring.
+
 event RAnswered(bitstring, bitstring, bitstring).  (* pk_I, pk_R, H(RT) *)
 event IAnswerOk(bitstring, bitstring, bitstring).
 event IRekeyed(bitstring, bitstring, bitstring).   (* pk_I, pk_R, th_rekey *)
