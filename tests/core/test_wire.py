@@ -329,3 +329,42 @@ def test_inner_garbage_gives_only_schema_error(data: bytes) -> None:
         decode_inner(data)
     except ProtocolError as e:
         assert e.reason is CloseReason.SCHEMA_ERROR
+
+
+# --- boundaries (mutation testing found these gaps) ----------------------------------------------
+
+
+def test_exact_limits_are_accepted() -> None:
+    assert hello_prefix(b"\x02\x01\x01") == (1, True)
+    top = FileProgress(file_id=ID, received=2**64 - 1)
+    assert decode_inner(encode_inner(top)) == top
+    with pytest.raises(ValueError, match="u64"):
+        FileProgress(file_id=ID, received=2**64)
+    offer = FileOffer(file_id=ID, name="n" * 255, size=2**64 - 1, media_type="m" * 127)
+    assert decode_inner(encode_inner(offer)) == offer
+    assert profile_bitmask([]) == 0
+    assert profile_bitmask([LAB_CLASSICAL]) == 0
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda: parse_header(b"\x00\x00\x00"),
+        lambda: Hello.decode(hello().encode(), PQ_CNSA_1),
+        lambda: SignedInner.decode(b"", HYBRID_1),
+        lambda: decode_profile_unsupported(b"\x01\x02"),
+        lambda: Reply.decode(b"", HYBRID_1),
+    ],
+)
+def test_malformed_handshake_parts_are_schema_errors(call) -> None:  # noqa: ANN001
+    with pytest.raises(ProtocolError) as excinfo:
+        call()
+    assert reason(excinfo) is CloseReason.SCHEMA_ERROR
+
+
+def test_inner_of_exactly_the_plaintext_limit_decodes() -> None:
+    pad = 16_384 - len(encode_inner(RekeyOffer(ek=b"\x00" * 300)))
+    biggest = RekeyOffer(ek=b"\x00" * (300 + pad))
+    data = encode_inner(biggest)
+    assert len(data) == 16_384
+    assert decode_inner(data) == biggest

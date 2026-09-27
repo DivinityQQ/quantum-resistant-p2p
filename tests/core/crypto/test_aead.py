@@ -97,3 +97,11 @@ def test_key_must_be_32_bytes() -> None:
     short = TrafficKeys(Secret(bytes(16), "k"), Secret(IV, "iv"))
     with pytest.raises(ValueError, match="32 bytes"):
         aead.seal(AeadAlgorithm.AES_256_GCM, short, 0, b"", b"")
+
+
+def test_empty_plaintext_is_just_a_tag() -> None:
+    keys = TrafficKeys(Secret(bytes(32), "k"), Secret(bytes(12), "iv"))
+    for algorithm in AeadAlgorithm:
+        sealed = aead.seal(algorithm, keys, 0, b"aad", b"")
+        assert len(sealed) == aead.TAG_LEN
+        assert aead.unseal(algorithm, keys, 0, b"aad", sealed) == b""

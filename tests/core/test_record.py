@@ -504,3 +504,152 @@ def test_other_profile_sessions_are_independent() -> None:
     assert one(b["r"].channel.receive(frame, 11.0), Closed).reason is CloseReason.DECRYPT_FAILED
     assert none_of([], Send)
     assert Receipt(id=ID) != chat("x")
+
+
+# --- boundaries and erasure (mutation testing found these gaps) ----------------------------------
+
+
+def test_largest_record_round_trips() -> None:
+    from qrp2p.core.wire import MAX_RECORD_PLAINTEXT, encode_inner  # noqa: PLC0415
+
+    # Fill a record to exactly the plaintext limit with a rekey blob (no per-field cap).
+    pad = MAX_RECORD_PLAINTEXT - len(encode_inner(RekeyOffer(ek=b"\x00" * 300)))
+    biggest = RekeyOffer(ek=b"\x00" * (300 + pad))
+    assert len(encode_inner(biggest)) == MAX_RECORD_PLAINTEXT
+    i, r = session()
+    frame = sent(i.seal_next(biggest, 11.0))[0]
+    assert len(frame.body) == MAX_RECORD_BODY
+    # The record layer accepts the size; the rekey layer then refuses the wrong-size key.
+    assert one(r.receive(frame, 11.0), Closed).reason is CloseReason.SCHEMA_ERROR
+
+
+def test_key_update_by_count_triggers_exactly_at_the_threshold() -> None:
+    net = link()
+    i = net["i"].channel
+    for n in range(3):
+        net.push("i", chat("x", n))
+    net.run()
+    assert i._send.records == 3
+    i._send.records = KEY_UPDATE_RECORDS - 1
+    net.tick(11.0)
+    assert KeyUpdate() not in [m for _, _, m in net["i"].queue]
+    net.push("i", chat("one more"))
+    net.run()
+    net.tick(12.0)
+    net.tick(13.0)
+    assert [m for _, _, m in net["i"].queue].count(KeyUpdate()) == 1  # queued once
+
+
+def test_rekey_offer_exactly_at_the_minimum_gap_is_accepted() -> None:
+    net = link()
+    i, r = net["i"].channel, net["r"].channel
+    net.now = 20.0
+    net.absorb("i", i.start_rekey(net.now))
+    net.run()
+    i._last_rekey_start = float("-inf")
+    net.now = 20.0 + 30.0
+    net.absorb("i", i.start_rekey(net.now))
+    net.run()
+    assert r.state is ChannelState.OPEN
+    assert i.epoch == r.epoch == 2
+
+
+def test_duplicate_rekey_switch_is_unexpected() -> None:
+    net, offer = rekey_messages()
+    answer = answer_for(net, offer)
+    finish_events = deliver(net, "i", answer)
+    finish = [e.message for e in finish_events if isinstance(e, Queue)]
+    assert [type(m) for m in finish] == [RekeyFinish, RekeySwitch]
+    r = net["r"].channel
+    # The initiator seals finish and switch for real, so its send key moves to the new epoch.
+    for message in finish:
+        net.absorb("r", r.receive(sent(net["i"].channel.seal_next(message, 20.0))[0], 20.0))
+    assert r._rekey is not None
+    assert r._rekey.recv_switched
+    assert not r._rekey.send_switched  # the responder's own switch is still queued
+    events = r.receive(net.raw("i", RekeySwitch()), 20.0)
+    assert one(events, Closed).reason is CloseReason.UNEXPECTED_MESSAGE
+
+
+def test_rekey_switch_cannot_be_sealed_before_new_keys() -> None:
+    i, _ = session()
+    with pytest.raises(RuntimeError, match="before the new keys"):
+        i.seal_next(RekeySwitch(), 11.0)
+
+
+def test_rekey_erases_what_it_no_longer_needs() -> None:
+    net, offer = rekey_messages()
+    i = net["i"].channel
+    assert i._rekey is not None
+    assert i._rekey.dk is not None
+    answer = answer_for(net, offer)
+    deliver(net, "i", answer)
+    assert i._rekey is not None
+    assert i._rekey.dk is None  # the ephemeral key did its only job
+    assert i._rekey.ss is None
+    r = net["r"].channel
+    assert r._rekey is not None
+    assert r._rekey.ss is not None  # kept until the finish arrives
+
+
+def test_glass_box_flag_reaches_the_channel() -> None:
+    i, r = session(i=initiator(gb=True), glass_box=True)
+    assert i.glass_box
+    assert r.glass_box
+    i, r = session()
+    assert not i.glass_box
+    assert not r.glass_box
+
+
+def test_rekey_state_is_dropped_on_close() -> None:
+    net, _ = rekey_messages()
+    i = net["i"].channel
+    assert i._rekey is not None
+    events = i.receive(net.raw("r", Close(reason=CloseReason.NORMAL)), 20.0)
+    assert one(events, Closed).by_peer
+    assert i._rekey is None
+    net, _ = rekey_messages()
+    net["i"].channel.close()
+    assert net["i"].channel._rekey is None
+
+
+def test_key_updates_repeat_every_ten_minutes() -> None:
+    net = link()
+    net.advance(T0 + KEY_UPDATE_SECONDS)
+    net.advance(T0 + 2 * KEY_UPDATE_SECONDS)
+    assert net["i"].channel._send.generation == 2
+    assert net["r"].channel._recv.generation == 2
+
+
+def test_timers_keep_running_after_a_rekey() -> None:
+    net = link()
+    i = net["i"].channel
+    net.now = 100.0
+    net.absorb("i", i.start_rekey(net.now))
+    net.run()
+    assert i.epoch == 1
+    net.advance(100.0 + REKEY_SECONDS - 1)
+    assert i.epoch == 1
+    net.advance(100.0 + REKEY_SECONDS)
+    assert i.epoch == 2
+
+
+def test_initiator_can_finish_a_rekey_on_the_receive_side() -> None:
+    """The writer may seal our rekey_switch before the peer's arrives; timers must still work."""
+    net, offer = rekey_messages()
+    i, r = net["i"].channel, net["r"].channel
+    answer = answer_for(net, offer)
+    queued = [e.message for e in i.receive(net.raw("r", answer), 20.0) if isinstance(e, Queue)]
+    r_queue: list[Inner] = []
+    for message in queued:  # finish and switch, both sealed before anything comes back
+        events = r.receive(sent(i.seal_next(message, 20.0))[0], 20.0)
+        r_queue += [e.message for e in events if isinstance(e, Queue)]
+    assert i.rekey_in_progress  # our send side has switched, the receive side has not
+    assert r_queue == [RekeySwitch()]
+    i.receive(sent(r.seal_next(RekeySwitch(), 21.0))[0], 21.0)
+    assert not i.rekey_in_progress
+    assert i.epoch == 1
+    later = 21.0 + REKEY_SECONDS
+    i._last_received = i._last_sent = later - 1  # a live session (pings not modelled here)
+    events = i.tick(later)
+    assert RekeyOffer in [type(e.message) for e in events if isinstance(e, Queue)]

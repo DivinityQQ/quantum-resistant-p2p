@@ -171,3 +171,20 @@ jobs:
           name: proverif-output
           path: ${{ runner.temp }}/proverif
           retention-days: 30
+
+  mutation:
+    name: Mutation testing (core)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+      - run: uv sync --locked --all-extras
+      # mutmut exits 0 whatever survives; the gate decides (tests/mutation_allowlist.txt).
+      - run: uv run mutmut run --max-children 4
+      - name: Every surviving mutant is message-only or allowlisted
+        run: uv run python -m tests.mutation_gate

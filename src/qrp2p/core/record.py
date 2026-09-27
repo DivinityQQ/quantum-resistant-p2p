@@ -97,8 +97,10 @@ class _Direction:
     secret: Secret
     keys: TrafficKeys
     seq: int = 0
+    epoch: int = 0
     generation: int = 0
     records: int = 0
+    """Records sealed under this secret (send direction only; triggers KeyUpdate)."""
     since: float = 0.0
 
 
@@ -107,7 +109,6 @@ class _Rekey:
     """A PQ rekey in progress (DESIGN §8.4)."""
 
     rt: bytes
-    started: float
     dk: Secret | None = None
     ss: Secret | None = None
     sig_r: bytes = b""
@@ -144,8 +145,8 @@ class Channel:
         self._epoch = epoch
         self._epoch_started = now
         send, recv = (epoch.ap_i, epoch.ap_r) if is_initiator else (epoch.ap_r, epoch.ap_i)
-        self._send = self._direction(send, now)
-        self._recv = self._direction(recv, now)
+        self._send = self._direction(send, epoch.epoch, now)
+        self._recv = self._direction(recv, epoch.epoch, now)
         self._last_sent = now
         self._last_received = now
         self._ping_queued = False
@@ -183,7 +184,7 @@ class Channel:
 
     @property
     def epoch(self) -> int:
-        """The PQ rekey epoch of the receive keys."""
+        """The PQ rekey epoch; it advances once both directions have switched."""
         return self._epoch.epoch
 
     @property
@@ -193,8 +194,9 @@ class Channel:
 
     # -- helpers --------------------------------------------------------------------------------
 
-    def _direction(self, secret: Secret, now: float) -> _Direction:
-        return _Direction(secret, self._provider.traffic_keys(self._profile, secret), since=now)
+    def _direction(self, secret: Secret, epoch: int, now: float) -> _Direction:
+        keys = self._provider.traffic_keys(self._profile, secret)
+        return _Direction(secret, keys, epoch=epoch, since=now)
 
     def _emit(self, event: ChannelEvent) -> None:
         self._events.append(event)
@@ -258,9 +260,7 @@ class Channel:
         self._emit(Trace(FrameTraced(Direction.OUT, frame, dissect(frame, self._profile))))
         self._emit(
             Trace(
-                RecordTraced(
-                    Direction.OUT, self._send_epoch(), send.generation, send.seq, len(body), kind
-                )
+                RecordTraced(Direction.OUT, send.epoch, send.generation, send.seq, len(body), kind)
             )
         )
         self._emit(Send(frame))
@@ -280,19 +280,12 @@ class Channel:
                 pass
         return self._take()
 
-    def _send_epoch(self) -> int:
-        rekey = self._rekey
-        if rekey is not None and rekey.send_switched and rekey.next is not None:
-            return rekey.next.epoch
-        return self._epoch.epoch
-
     def _updated(self, direction: _Direction, which: Direction, now: float) -> _Direction:
         secret = updated_traffic_secret(self._provider, self._profile, direction.secret)
         self._trace_secret(secret)
-        new = self._direction(secret, now)
+        new = self._direction(secret, direction.epoch, now)
         new.generation = direction.generation + 1
-        epoch = self._send_epoch() if which is Direction.OUT else self._epoch.epoch
-        self._emit(Trace(KeysSwitched(which, epoch, new.generation, "key_update")))
+        self._emit(Trace(KeysSwitched(which, new.epoch, new.generation, "key_update")))
         return new
 
     def close(self, reason: CloseReason = CloseReason.NORMAL) -> list[ChannelEvent]:
@@ -320,14 +313,13 @@ class Channel:
         )
         seq = recv.seq
         recv.seq += 1
-        recv.records += 1
         self._last_received = now
         message = decode_inner(plaintext)
         self._emit(
             Trace(
                 RecordTraced(
                     Direction.IN,
-                    self._epoch.epoch,
+                    recv.epoch,
                     recv.generation,
                     seq,
                     len(frame.body),
@@ -402,7 +394,7 @@ class Channel:
         dk, ek = self._provider.kem_keygen(self._profile)
         self._trace_secret(dk)
         self._last_rekey_start = now
-        self._rekey = _Rekey(rt=transcript_entry(Tag.REKEY_EK, ek), started=now, dk=dk)
+        self._rekey = _Rekey(rt=transcript_entry(Tag.REKEY_EK, ek), dk=dk)
         self._emit(Trace(RekeyStep("offer", self._epoch.epoch)))
         self._queue(RekeyOffer(ek=ek))
 
@@ -424,7 +416,7 @@ class Channel:
         rt = transcript_entry(Tag.REKEY_EK, message.ek) + transcript_entry(Tag.REKEY_CT, ct)
         sig = self._provider.sign(profile, self._identity, Role.REKEY_ANSWER, self._signed_hash(rt))
         self._last_rekey_start = now
-        self._rekey = _Rekey(rt=rt, started=now, ss=shared.ss, sig_r=sig)
+        self._rekey = _Rekey(rt=rt, ss=shared.ss, sig_r=sig)
         self._emit(Trace(RekeyStep("answer", self._epoch.epoch)))
         self._queue(RekeyAnswer(ct=ct, sig=sig))
 
@@ -478,7 +470,7 @@ class Channel:
         rekey = self._rekey
         assert rekey is not None and rekey.next is not None  # noqa: S101, PT018  # queued after derivation
         new = rekey.next
-        self._send = self._direction(new.ap_i if self._is_initiator else new.ap_r, now)
+        self._send = self._direction(new.ap_i if self._is_initiator else new.ap_r, new.epoch, now)
         rekey.send_switched = True
         self._emit(Trace(KeysSwitched(Direction.OUT, new.epoch, 0, "rekey")))
         self._finish_rekey_if_done(now)
@@ -488,7 +480,7 @@ class Channel:
         if rekey is None or rekey.next is None or rekey.recv_switched:
             raise ProtocolError(CloseReason.UNEXPECTED_MESSAGE, "rekey_switch not expected")
         new = rekey.next
-        self._recv = self._direction(new.ap_r if self._is_initiator else new.ap_i, now)
+        self._recv = self._direction(new.ap_r if self._is_initiator else new.ap_i, new.epoch, now)
         rekey.recv_switched = True
         self._emit(Trace(KeysSwitched(Direction.IN, new.epoch, 0, "rekey")))
         self._finish_rekey_if_done(now)

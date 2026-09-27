@@ -513,3 +513,15 @@ def test_trace_names_secrets_and_transcript_hashes_without_values() -> None:
 
 def test_admit_body_is_bound_to_the_decision() -> None:
     assert AdmitBody(Decision.ACCEPT, glass_box=False, reason=AdmitReason.NONE).encode() == bytes(3)
+
+
+def test_handshake_secrets_are_dropped_when_done() -> None:
+    run = handshake()
+    for machine in (run.i, run.r):
+        assert machine._secrets is None
+    assert run.i._dk is None
+    run = handshake(until="reply")
+    assert run.i._dk is None  # erased right after decapsulation
+    assert run.i._secrets is not None
+    run.i.tick(1000.0)
+    assert run.i._secrets is None  # and on any close

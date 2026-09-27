@@ -96,3 +96,8 @@ def test_every_code_has_a_test_in_the_checklist(
             if isinstance(node, ast.FunctionDef)
         }
         assert match["name"] in names, f"{code!r}: {entry} names a missing test"
+
+
+def test_protocol_error_args_keep_reason_and_detail() -> None:
+    error = ProtocolError(CloseReason.OVERSIZE, "too big")
+    assert error.args == (CloseReason.OVERSIZE, "too big")

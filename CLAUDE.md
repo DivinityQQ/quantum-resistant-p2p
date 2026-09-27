@@ -39,6 +39,8 @@ solo lab, Attack Lab, weakened engines, Algorithm Lab and lessons.
   the sender is the session, never a payload field.
 - **Tests come with every change.** Security checks need a test that fails if the check is
   removed (mutation testing enforces this in `core/`).
+- **Model first.** A change to the handshake, record layer or rekey changes `formal/` in the same
+  PR; every weakened model must still yield its attack.
 - **Weakened engines and `LAB-CLASSICAL`** live only under `qrp2p/lab/` and must never be reachable
   from real sessions. Real sessions build their provider with `REAL_PROFILES` only.
 - **Never `import oqs` directly.** Use `qrp2p.lab.oqs_loader.load_oqs()`; liboqs-python otherwise
@@ -61,8 +63,24 @@ Lab-algorithm test against a local liboqs build (CI builds it in the `liboqs` jo
 OQS_INSTALL_PATH=/path/to/liboqs-install QRP2P_REQUIRE_LIBOQS=1 uv run pytest -m liboqs
 ```
 
+Formal model (ProVerif 2.05; CI job "Formal model (ProVerif)" runs it on every push):
+
+```bash
+python formal/verify.py                 # every model; checks each result against its EXPECT line
+```
+
+Mutation testing of `qrp2p.core` (CI job "Mutation testing (core)"):
+
+```bash
+uv run mutmut run && uv run python -m tests.mutation_gate
+```
+
+A surviving mutant that changes code (not just a message) fails the gate unless
+`tests/mutation_allowlist.txt` explains why it is equivalent. Prefer a test to an allowlist entry.
+
 Our own known-answer files are regenerated only for a deliberate spec change:
-`uv run python -m tests.vectors.generate --force` (see `tests/vectors/SOURCES.md`).
+`uv run python -m tests.vectors.generate --force` and `uv run python -m tests.reference.generate
+--force` (see `tests/vectors/SOURCES.md`).
 
 Research spikes (frozen; kept runnable as evidence for VERIFIED_FACTS):
 
