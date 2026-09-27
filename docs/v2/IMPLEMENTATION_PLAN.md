@@ -7,7 +7,8 @@ work up next, human or a Claude Code session on a local machine. Start with the 
 **Status (2026-09-27):** Step 0 done except the PyPI placeholder (needs the owner's account).
 **M0 is complete; its gate is met.** CI run 36334481736 is green on Linux, Windows and macOS:
 lint, types, layers, audit, the full test suite, and liboqs built, bundled and exercised on all
-three OSes (see the M0 status notes). Next: M1, formal model first.
+three OSes (see the M0 status notes). Next: M1, formal model first. Steps that need the owner's
+accounts (tag, ruleset, merge, PyPI, the liboqs bug report) are in [OWNER_TODO.md](OWNER_TODO.md).
 
 ---
 
