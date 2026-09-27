@@ -1,0 +1,37 @@
+(* QRP2P v2 handshake (DESIGN §7): secrecy of the traffic keys and mutual injective agreement.
+
+   Any number of honest users run any number of sessions in both roles, with each other and with
+   identities the attacker controls. Properties are stated for sessions whose peer is honest.
+
+   - Responder authenticates the initiator at Confirm: identities, profile, gb_request, transcript.
+   - Initiator authenticates the whole handshake at Admit, including the admission decision and
+     the glass-box flag.
+   - Responder gets the same guarantee on th_final at the initiator's first record (key
+     confirmation; there is no fifth handshake message). *)
+
+(* EXPECT false: not event(IDone) *)
+query event(IDone).
+(* EXPECT false: not event(RDone) *)
+query event(RDone).
+
+(* EXPECT true: not attacker(secretI *)
+query attacker(secretI).
+(* EXPECT true: not attacker(secretR *)
+query attacker(secretR).
+
+(* EXPECT true: inj-event(RConfirmOk *)
+query a: bitstring, b: bitstring, p: bitstring, g: bitstring, t: bitstring;
+  inj-event(RConfirmOk(a, b, p, g, t)) ==> inj-event(IConfirmSent(a, b, p, g, t)).
+(* EXPECT true: inj-event(IAdmitOk *)
+query a: bitstring, b: bitstring, p: bitstring, g: bitstring, d: bitstring, t: bitstring;
+  inj-event(IAdmitOk(a, b, p, g, d, t)) ==> inj-event(RAdmitSent(a, b, p, g, d, t)).
+(* EXPECT true: inj-event(RKeyConfirmed *)
+query a: bitstring, b: bitstring, p: bitstring, g: bitstring, d: bitstring, t: bitstring;
+  inj-event(RKeyConfirmed(a, b, p, g, d, t)) ==> inj-event(IAdmitOk(a, b, p, g, d, t)).
+
+process
+  !( new sk: sseed;
+     let pk = spk(sk) in
+     insert honest(pk);
+     out(c, pk);
+     ( (!Initiator(sk, pk)) | (!Responder(sk, pk)) ) )

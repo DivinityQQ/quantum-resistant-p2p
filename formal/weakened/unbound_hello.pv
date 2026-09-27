@@ -1,0 +1,142 @@
+(* WEAKENED ENGINE (DESIGN §11.8): the transcript records Hello without its profile and flags.
+   Expected attack: downgrade. The attacker changes the profile or strips gb_request in transit and
+   neither side notices (compare Attack Lab scenario 6, where the real engine fails to decrypt
+   Reply). *)
+
+(* EXPECT false: not event(IDone) *)
+query event(IDone).
+(* EXPECT false: not event(RDone) *)
+query event(RDone).
+(* EXPECT true: not attacker(secretI *)
+query attacker(secretI).
+(* EXPECT true: not attacker(secretR *)
+query attacker(secretR).
+(* EXPECT false: inj-event(RConfirmOk *)
+query a: bitstring, b: bitstring, p: bitstring, g: bitstring, t: bitstring;
+  inj-event(RConfirmOk(a, b, p, g, t)) ==> inj-event(IConfirmSent(a, b, p, g, t)).
+(* EXPECT false: inj-event(IAdmitOk *)
+query a: bitstring, b: bitstring, p: bitstring, g: bitstring, d: bitstring, t: bitstring;
+  inj-event(IAdmitOk(a, b, p, g, d, t)) ==> inj-event(RAdmitSent(a, b, p, g, d, t)).
+(* EXPECT false: inj-event(RKeyConfirmed *)
+query a: bitstring, b: bitstring, p: bitstring, g: bitstring, d: bitstring, t: bitstring;
+  inj-event(RKeyConfirmed(a, b, p, g, d, t)) ==> inj-event(IAdmitOk(a, b, p, g, d, t)).
+
+(* The initiator. Its user picks the profile, the glass-box request and, when connecting to a
+   contact, the pinned bundle; the attacker makes all of these choices. *)
+let WInitiator(skI: sseed, pkI: bitstring) =
+  in(c, (prof: bitstring, gbreq: bitstring, hasPin: bool, pinned: bitstring));
+  new eseed: kseed;
+  new nI: bitstring;
+  let ekI = (pkM(eseed), pkX(eseed)) in
+  let hello = (v2, prof, gbreq, nI, ekI) in
+  out(c, hello);
+  (* Reply *)
+  in(c, (nR: bitstring, ctm: bitstring, ctx: bitstring, rbox: bitstring));
+  let ss = combine(decM(eseed, ctm), decX(eseed, ctx), ctx, pkX(eseed)) in
+  let hs = hextract(cZero, ss) in
+  (* WEAKENED: profile and flags are not in the transcript *)
+  let tr1 = ((t10, (v2, nI, ekI)), (t11, (nR, (ctm, ctx)))) in
+  let hsR = hexpand(hs, lRhs, H(tr1)) in
+  let hsI = hexpand(hs, lIhs, H(tr1)) in
+  let (idR: bitstring, sigR: bitstring, finR: bitstring) = adec(hexpand(hsR, lKey, cEmpty), s0, hReply, rbox) in
+  let tr2 = (tr1, (t21, idR)) in
+  if checksign(idR, (rResponder, H(tr2)), sigR) = true then
+  let tr3 = (tr2, (t22, sigR)) in
+  if finR = hmac(hexpand(hsR, lFin, cEmpty), H(tr3)) then
+  (* the pin is checked before the initiator reveals itself *)
+  if hasPin = false || idR = pinned then
+  (* Confirm *)
+  let tr4 = ((tr3, (t23, finR)), (t31, pkI)) in
+  let sigI = sign(skI, (rInitiator, H(tr4))) in
+  let tr5 = (tr4, (t32, sigI)) in
+  let finI = hmac(hexpand(hsI, lFin, cEmpty), H(tr5)) in
+  let tr6 = (tr5, (t33, finI)) in
+  event IConfirmSent(pkI, idR, prof, gbreq, H(tr6));
+  out(c, aenc(hexpand(hsI, lKey, cEmpty), s0, hConfirm, (pkI, sigI, finI)));
+  (* Admit *)
+  in(c, abox: bitstring);
+  let (admitBody: bitstring, finA: bitstring) = adec(hexpand(hsR, lKey, cEmpty), s1, hAdmit, abox) in
+  let tr7 = (tr6, (t41, admitBody)) in
+  if finA = hmac(hexpand(hsR, lFin, cEmpty), H(tr7)) then
+  let thf = H((tr7, (t42, finA))) in
+  let (dec: bitstring, gbflag: bitstring, reason: bitstring) = admitBody in
+  get honest(=idR) in
+  event IAdmitOk(pkI, idR, prof, gbreq, admitBody, thf);
+  if dec = accept then
+  let cs0 = hextract(hexpand(hs, lDerived, H(cEmpty)), cZero) in
+  let apI = hexpand(cs0, lIap, thf) in
+  event IDone;
+  out(c, aenc(hexpand(apI, lKey, cEmpty), s0, hRecord, secretI)).
+
+(* The responder after a verified Confirm: admission (DESIGN §7.6), then Admit. *)
+let WResponderAdmit(pkR: bitstring, idI: bitstring, prof: bitstring, gbreq: bitstring,
+                    hs: bitstring, hsR: bitstring, tr6: bitstring, honestPeer: bool,
+                    dec: bitstring, gbflag: bitstring, reason: bitstring) =
+  let admitBody = (dec, gbflag, reason) in
+  let tr7 = (tr6, (t41, admitBody)) in
+  let finA = hmac(hexpand(hsR, lFin, cEmpty), H(tr7)) in
+  let thf = H((tr7, (t42, finA))) in
+  event RAdmitSent(idI, pkR, prof, gbreq, admitBody, thf);
+  out(c, aenc(hexpand(hsR, lKey, cEmpty), s1, hAdmit, (admitBody, finA)));
+  if dec = accept then
+  let cs0 = hextract(hexpand(hs, lDerived, H(cEmpty)), cZero) in
+  let apI = hexpand(cs0, lIap, thf) in
+  let apR = hexpand(cs0, lRap, thf) in
+  if honestPeer = true then
+  event RDone;
+  out(c, aenc(hexpand(apR, lKey, cEmpty), s0, hRecord, secretR));
+  (* The first record from the initiator confirms that it derived the same keys. *)
+  in(c, rec: bitstring);
+  let first = adec(hexpand(apI, lKey, cEmpty), s0, hRecord, rec) in
+  event RKeyConfirmed(idI, pkR, prof, gbreq, admitBody, thf).
+
+let WResponderDecide(pkR: bitstring, idI: bitstring, prof: bitstring, gbreq: bitstring,
+                     hs: bitstring, hsR: bitstring, tr6: bitstring, honestPeer: bool) =
+  in(c, (dec: bitstring, grant: bool, reason: bitstring));
+  (* glass_box = 1 only if the initiator asked for it *)
+  if grant = true && gbreq = gbOn then
+    WResponderAdmit(pkR, idI, prof, gbreq, hs, hsR, tr6, honestPeer, dec, gbOn, reason)
+  else
+    WResponderAdmit(pkR, idI, prof, gbreq, hs, hsR, tr6, honestPeer, dec, gbOff, reason).
+
+let WResponder(skR: sseed, pkR: bitstring) =
+  (* Hello *)
+  in(c, hello: bitstring);
+  let (=v2, prof: bitstring, gbreq: bitstring, nI: bitstring, ekI: bitstring) = hello in
+  let (ekM: bitstring, ekX: bitstring) = ekI in
+  (* Reply *)
+  new rM: bitstring;
+  new rX: bitstring;
+  new nR: bitstring;
+  let ctm = ctM(ekM, rM) in
+  let ctx = ctX(ekX, rX) in
+  let ss = combine(ssM(ekM, rM), ssX(ekX, rX), ctx, ekX) in
+  let hs = hextract(cZero, ss) in
+  let tr1 = ((t10, (v2, nI, ekI)), (t11, (nR, (ctm, ctx)))) in  (* WEAKENED *)
+  let hsR = hexpand(hs, lRhs, H(tr1)) in
+  let hsI = hexpand(hs, lIhs, H(tr1)) in
+  let tr2 = (tr1, (t21, pkR)) in
+  let sigR = sign(skR, (rResponder, H(tr2))) in
+  let tr3 = (tr2, (t22, sigR)) in
+  let finR = hmac(hexpand(hsR, lFin, cEmpty), H(tr3)) in
+  out(c, (nR, ctm, ctx, aenc(hexpand(hsR, lKey, cEmpty), s0, hReply, (pkR, sigR, finR))));
+  (* Confirm *)
+  in(c, cbox: bitstring);
+  let (idI: bitstring, sigI: bitstring, finI: bitstring) = adec(hexpand(hsI, lKey, cEmpty), s0, hConfirm, cbox) in
+  let tr4 = ((tr3, (t23, finR)), (t31, idI)) in
+  if checksign(idI, (rInitiator, H(tr4)), sigI) = true then
+  let tr5 = (tr4, (t32, sigI)) in
+  if finI = hmac(hexpand(hsI, lFin, cEmpty), H(tr5)) then
+  let tr6 = (tr5, (t33, finI)) in
+  get honest(=idI) in (
+    event RConfirmOk(idI, pkR, prof, gbreq, H(tr6));
+    WResponderDecide(pkR, idI, prof, gbreq, hs, hsR, tr6, true)
+  ) else
+    WResponderDecide(pkR, idI, prof, gbreq, hs, hsR, tr6, false).
+
+process
+  !( new sk: sseed;
+     let pk = spk(sk) in
+     insert honest(pk);
+     out(c, pk);
+     ( (!WInitiator(sk, pk)) | (!WResponder(sk, pk)) ) )

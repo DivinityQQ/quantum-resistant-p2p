@@ -21,6 +21,10 @@ env:
   # pinned; bump them together with liboqs-python.
   LIBOQS_TAG: "0.16.0"
   LIBOQS_COMMIT: "5a1a854b0dc9f2141bdc771c555ee60c37950183"
+  # ProVerif for the formal model (formal/README.md). The SHA-256 is the one in opam-repository's
+  # packages/proverif/proverif.2.05/opam.
+  PROVERIF_VERSION: "2.05"
+  PROVERIF_SHA256: "4871f53c32ab4a04669a060c4886ba5d9080496963fb980a9a62d2c429ceabc4"
 
 jobs:
   checks:
@@ -124,3 +128,46 @@ jobs:
           OQS_INSTALL_PATH: ${{ env.OQS_PREFIX }}
           QRP2P_REQUIRE_LIBOQS: "1"
         run: uv run pytest -m liboqs tests/lab
+
+  formal:
+    name: Formal model (ProVerif)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - name: Restore ProVerif
+        id: cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.local/proverif
+          key: proverif-${{ env.PROVERIF_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v1
+      - name: Build ProVerif
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ocaml-nox ocaml-findlib
+          curl -fsSL -o proverif.tar.gz "https://proverif.inria.fr/proverif${PROVERIF_VERSION}.tar.gz"
+          echo "${PROVERIF_SHA256}  proverif.tar.gz" | sha256sum -c -
+          tar xzf proverif.tar.gz
+          cd "proverif${PROVERIF_VERSION}"
+          # The interactive simulator needs lablgtk2, which Ubuntu no longer ships; the verifier
+          # itself builds without it.
+          ./build || true
+          test -x proverif
+          mkdir -p ~/.local/proverif
+          cp proverif ~/.local/proverif/
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Verify the models
+        run: >-
+          uv run --no-project python formal/verify.py
+          --proverif ~/.local/proverif/proverif --log-dir "$RUNNER_TEMP/proverif"
+      - name: Upload ProVerif output (attack traces)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: proverif-output
+          path: ${{ runner.temp }}/proverif
+          retention-days: 30

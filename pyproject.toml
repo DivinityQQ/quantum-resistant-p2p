@@ -93,6 +93,10 @@ max-args = 7  # Expand-Label(h, S, label, ctx, L, name) mirrors the spec's signa
     "SLF001",   # tests may look at private state
     "FBT",      # boolean parameters in test helpers are fine
 ]
+"formal/verify.py" = [
+    "INP001",   # a standalone script, not a package
+    "T201",     # its output is the report
+]
 
 [tool.ruff.format]
 docstring-code-format = true

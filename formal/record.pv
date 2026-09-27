@@ -1,0 +1,38 @@
+(* The record layer (DESIGN §8.1): implicit sequence numbers as AEAD nonces.
+
+   One session key per session; the sender sends a known plaintext and then a secret one. The
+   receiver opens record i with its own counter i. Nonces never repeat, so the known plaintext
+   reveals nothing about the secret record, and every record is accepted once, in order. *)
+
+const n0: bitstring.
+const n1: bitstring.
+const ping: bitstring.
+
+event Sent(bitstring, bitstring, bitstring).  (* key, sequence number, plaintext *)
+event Recv(bitstring, bitstring, bitstring).
+event RecvDone.
+
+let Sender(k: bitstring) =
+  event Sent(k, n0, ping);
+  out(c, seal(ks(k, n0), ping));
+  event Sent(k, n1, secretMsg);
+  out(c, seal(ks(k, n1), secretMsg)).
+
+let Receiver(k: bitstring) =
+  in(c, r0: bitstring);
+  let m0 = sopen(k, n0, r0) in
+  event Recv(k, n0, m0);
+  in(c, r1: bitstring);
+  let m1 = sopen(k, n1, r1) in
+  event Recv(k, n1, m1);
+  event RecvDone.
+
+(* EXPECT false: not event(RecvDone) *)
+query event(RecvDone).
+(* EXPECT true: not attacker(secretMsg *)
+query attacker(secretMsg).
+(* EXPECT true: inj-event(Recv *)
+query k: bitstring, n: bitstring, m: bitstring; inj-event(Recv(k, n, m)) ==> inj-event(Sent(k, n, m)).
+
+process
+  !( new k: bitstring; ( Sender(k) | Receiver(k) ) )

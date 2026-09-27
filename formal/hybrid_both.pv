@@ -1,0 +1,19 @@
+(* Hybrid secrecy (DESIGN §4.1, §15): a sanity check. With both components broken the traffic keys
+   leak; if this model ever proved secrecy, the break rules would not be doing anything. *)
+
+reduc forall p: bitstring, r: bitstring; breakM(ctM(p, r)) = ssM(p, r).
+reduc forall p: bitstring, r: bitstring; breakX(ctX(p, r)) = ssX(p, r).
+
+(* EXPECT false: not event(IDone) *)
+query event(IDone).
+(* EXPECT false: not attacker(secretI *)
+query attacker(secretI).
+(* EXPECT false: not attacker(secretR *)
+query attacker(secretR).
+
+process
+  !( new sk: sseed;
+     let pk = spk(sk) in
+     insert honest(pk);
+     out(c, pk);
+     ( (!Initiator(sk, pk)) | (!Responder(sk, pk)) ) )

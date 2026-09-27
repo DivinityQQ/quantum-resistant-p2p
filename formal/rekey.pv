@@ -1,0 +1,49 @@
+(* Post-compromise recovery through the signed PQ rekey (DESIGN §3.2 P9, §8.4).
+
+   A5 has read the whole state of every honest session between A (initiator) and B (responder):
+   the chaining secret, the exporter and so every traffic key. It stays active on the network.
+   After one signed rekey its knowledge is useless: the record sent under the new key stays secret,
+   and each side agrees with the other on the rekey transcript.
+
+   To make this hard to prove, A and B also rekey in either role with any peer on any state the
+   attacker supplies, and sign handshake transcripts for it in both handshake roles; the distinct
+   signature roles keep those signatures useless here. *)
+
+(* EXPECT false: not event(IRekeyDone) *)
+query event(IRekeyDone).
+(* EXPECT false: not event(RRekeyDone) *)
+query event(RRekeyDone).
+(* EXPECT true: not attacker(secretRekey *)
+query attacker(secretRekey).
+(* EXPECT true: inj-event(IAnswerOk *)
+query a: bitstring, b: bitstring, t: bitstring;
+  inj-event(IAnswerOk(a, b, t)) ==> inj-event(RAnswered(a, b, t)).
+(* EXPECT true: inj-event(RRekeyed *)
+query a: bitstring, b: bitstring, t: bitstring;
+  inj-event(RRekeyed(a, b, t)) ==> inj-event(IRekeyed(a, b, t)).
+
+process
+  new skA: sseed;
+  new skB: sseed;
+  let pkA = spk(skA) in
+  let pkB = spk(skB) in
+  insert honest(pkA);
+  insert honest(pkB);
+  out(c, (pkA, pkB));
+  (
+    (* Honest A-B sessions whose state A5 has read *)
+    !( new cs: bitstring;
+       new exp: bitstring;
+       out(c, (cs, exp));
+       ( RekeyInitiator(skA, pkA, pkB, cs, exp, true) | RekeyResponder(skB, pkB, pkA, cs, exp, true) ) )
+    (* Rekeys with any peer, on any state *)
+  | !( in(c, (p: bitstring, cs: bitstring, exp: bitstring)); RekeyInitiator(skA, pkA, p, cs, exp, false) )
+  | !( in(c, (p: bitstring, cs: bitstring, exp: bitstring)); RekeyResponder(skA, pkA, p, cs, exp, false) )
+  | !( in(c, (p: bitstring, cs: bitstring, exp: bitstring)); RekeyInitiator(skB, pkB, p, cs, exp, false) )
+  | !( in(c, (p: bitstring, cs: bitstring, exp: bitstring)); RekeyResponder(skB, pkB, p, cs, exp, false) )
+    (* Handshake signatures on anything *)
+  | !( in(c, x: bitstring); out(c, sign(skA, (rInitiator, x))) )
+  | !( in(c, x: bitstring); out(c, sign(skA, (rResponder, x))) )
+  | !( in(c, x: bitstring); out(c, sign(skB, (rInitiator, x))) )
+  | !( in(c, x: bitstring); out(c, sign(skB, (rResponder, x))) )
+  )

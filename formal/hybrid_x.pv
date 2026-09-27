@@ -1,0 +1,18 @@
+(* Hybrid secrecy (DESIGN §4.1, §15): X25519 is broken (as by a quantum computer): the attacker gets
+   ssX from any ctX. ML-KEM-768 alone keeps the traffic keys secret. *)
+
+reduc forall p: bitstring, r: bitstring; breakX(ctX(p, r)) = ssX(p, r).
+
+(* EXPECT false: not event(IDone) *)
+query event(IDone).
+(* EXPECT true: not attacker(secretI *)
+query attacker(secretI).
+(* EXPECT true: not attacker(secretR *)
+query attacker(secretR).
+
+process
+  !( new sk: sseed;
+     let pk = spk(sk) in
+     insert honest(pk);
+     out(c, pk);
+     ( (!Initiator(sk, pk)) | (!Responder(sk, pk)) ) )
