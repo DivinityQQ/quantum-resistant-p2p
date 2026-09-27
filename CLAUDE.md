@@ -40,7 +40,9 @@ solo lab, Attack Lab, weakened engines, Algorithm Lab and lessons.
 - **Tests come with every change.** Security checks need a test that fails if the check is
   removed (mutation testing enforces this in `core/`).
 - **Weakened engines and `LAB-CLASSICAL`** live only under `qrp2p/lab/` and must never be reachable
-  from real sessions.
+  from real sessions. Real sessions build their provider with `REAL_PROFILES` only.
+- **Never `import oqs` directly.** Use `qrp2p.lab.oqs_loader.load_oqs()`; liboqs-python otherwise
+  builds liboqs at import time and can raise `SystemExit`.
 
 ## Commands
 
@@ -52,6 +54,15 @@ uv run pyright                      # strict type check
 uv run lint-imports                 # layer rules
 uv run pip-audit                    # dependency audit
 ```
+
+Lab-algorithm test against a local liboqs build (CI builds it in the `liboqs` job):
+
+```bash
+OQS_INSTALL_PATH=/path/to/liboqs-install QRP2P_REQUIRE_LIBOQS=1 uv run pytest -m liboqs
+```
+
+Our own known-answer files are regenerated only for a deliberate spec change:
+`uv run python -m tests.vectors.generate --force` (see `tests/vectors/SOURCES.md`).
 
 Research spikes (frozen; kept runnable as evidence for VERIFIED_FACTS):
 

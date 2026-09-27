@@ -135,7 +135,9 @@ A **profile** fixes every algorithm of a session. There is no per-algorithm nego
 | `PQ-CNSA-1` | `0x02` | ML-KEM-1024 | ML-DSA-87 | AES-256-GCM | SHA-384 / HKDF-SHA-384 | Per-contact option; CNSA 2.0 parameter sets |
 | `LAB-CLASSICAL` | `0x7F` | X25519-KEM (below) | Ed25519 | ChaCha20-Poly1305 | SHA-256 / HKDF-SHA-256 | Solo lab only; MUST be refused in normal sessions |
 
-Lab-only algorithms (HQC, FrodoKEM, Classic McEliece, SLH-DSA) appear only in the Algorithm Lab (§11.8) and never protect a session.
+Lab-only algorithms (HQC, FrodoKEM, Classic McEliece, SLH-DSA) appear only in the Algorithm Lab (§11.9) and never protect a session.
+
+`LAB-CLASSICAL` is implemented in `qrp2p/lab/`, not in `qrp2p/core/`. Each profile object carries its KEM and signature scheme, and a crypto provider serves only the profiles it was constructed with; real sessions construct it with `HYBRID-1` and `PQ-CNSA-1` only, so they cannot reach `LAB-CLASSICAL` even if handed its ID.
 
 ### 4.1 Rationale
 
@@ -732,7 +734,8 @@ qrp2p/
     trace.py       # typed trace events
     errors.py      # close/abort reasons (Appendix B)
   services/        # asyncio: session_manager, transport, discovery, files, vault
-  lab/             # solo lab nodes, Mallory hooks, recorder/replayer, weakened/
+  lab/             # solo lab nodes, Mallory hooks, recorder/replayer, weakened/,
+                   # classical (LAB-CLASSICAL), oqs_loader (liboqs for the Algorithm Lab)
   ui/              # PySide6: bridge, viewmodels, qml/
   lessons/         # Markdown lessons + step metadata
 tests/             # vectors, state machines, property/fuzz, adversarial, canary leak, v1 regressions
@@ -764,7 +767,7 @@ Versions are the latest on PyPI as of 2026-09-27 and are pinned in `uv.lock`.
 
 SHA-3 and SHAKE come from the standard library's `hashlib`.
 
-**liboqs** is built from a pinned tag in CI and bundled, and `OQS_INSTALL_PATH` points at it. liboqs-python MUST NOT be allowed to fetch and compile liboqs at runtime, which it does by default when no library is found. If the library is missing, the Algorithm Lab shows "lab algorithms unavailable".
+**liboqs** is built from a pinned tag in CI and bundled, and `OQS_INSTALL_PATH` points at it. liboqs-python MUST NOT be allowed to fetch and compile liboqs at runtime, which it does by default when no library is found (and it raises `SystemExit` if that build fails). It has no opt-out, so the app loads the bundled library itself first and imports `oqs` only after that succeeded. If the library is missing, the Algorithm Lab shows "lab algorithms unavailable". The bundle is built with `OQS_DIST_BUILD=ON` (portable CPU dispatch) and `OQS_USE_OPENSSL=OFF`, so it does not depend on the system OpenSSL.
 
 **Development tooling:** `uv`, `ruff`, `pyright` (strict), `pytest` + `pytest-asyncio`, `hypothesis`, `mutmut`, `import-linter`, `pip-audit`, ProVerif and Tamarin. CI runs on GitHub Actions on Windows, macOS and Linux.
 
