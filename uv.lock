@@ -284,6 +284,15 @@ wheels = [
 ]
 
 [[package]]
+name = "dilithium-py"
+version = "1.4.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/5e/54/76bcb128610f7587695adb802304710b587ce60b71951b455269b12b8e55/dilithium_py-1.4.0.tar.gz", hash = "sha256:b6d455c6af34012062a0af906ad1617803bf46b37dc54938f68c478b2524252a", size = 6743333, upload-time = "2025-12-17T19:15:08.394Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/68/92/3e242ff1e2d9e459c599caef9127708b1f92606f38a9031a4b45549b427c/dilithium_py-1.4.0-py3-none-any.whl", hash = "sha256:dda3ae43e6e3d212ae1fe1b30d5b6dffe5e25a1f389d1fea26faad4afdc33ff8", size = 39936, upload-time = "2025-12-17T19:15:07.004Z" },
+]
+
+[[package]]
 name = "filelock"
 version = "4.0.4"
 source = { registry = "https://pypi.org/simple" }
@@ -435,6 +444,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/72/34/14ca021ce8e5dfedc35312d08ba8bf51fdd999c576889fc2c24cb97f4f10/iniconfig-2.3.0.tar.gz", hash = "sha256:c76315c77db068650d49c5b56314774a7804df16fee4402c1f19d6d15d8c4730", size = 20503, upload-time = "2025-10-18T21:55:43.219Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/cb/b1/3846dd7f199d53cb17f49cba7e651e9ce294d8497c8c150530ed11865bb8/iniconfig-2.3.0-py3-none-any.whl", hash = "sha256:f631c04d2c48c52b84d0d0549c99ff3859c98df65b3101406327ecc7d53fbf12", size = 7484, upload-time = "2025-10-18T21:55:41.639Z" },
+]
+
+[[package]]
+name = "kyber-py"
+version = "1.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ce/38/83a33d2bbb3e7d0b2d13ffd7e1438e513622dc652cf4c00865e9f925ee08/kyber_py-1.2.0.tar.gz", hash = "sha256:9062b7c307b4b84980ec6b775091558d60c488985c4e8081eeb66fd4bb29a354", size = 2384774, upload-time = "2025-12-17T19:07:44.796Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/eb/50/0eda99082660ead34aebe2c212e40ff371ce7dd327d80c0980a7398f2d43/kyber_py-1.2.0-py3-none-any.whl", hash = "sha256:517f4c8f5009f5b4dfb8f4bfd0f6d631bf56e0cad3f709282e6450e5d8eda6aa", size = 33749, upload-time = "2025-12-17T19:07:43.476Z" },
 ]
 
 [[package]]
@@ -739,8 +757,10 @@ lab = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "dilithium-py" },
     { name = "hypothesis" },
     { name = "import-linter" },
+    { name = "kyber-py" },
     { name = "pip-audit" },
     { name = "pyright" },
     { name = "pytest" },
@@ -757,8 +777,10 @@ provides-extras = ["lab"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "dilithium-py", specifier = ">=1.4.0" },
     { name = "hypothesis", specifier = ">=6.168.2" },
     { name = "import-linter", specifier = ">=2.15" },
+    { name = "kyber-py", specifier = ">=1.2.0" },
     { name = "pip-audit", specifier = ">=2.10.1" },
     { name = "pyright", specifier = ">=1.1.414" },
     { name = "pytest", specifier = ">=9.1.1" },

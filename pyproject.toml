@@ -33,8 +33,10 @@ Repository = "https://github.com/DivinityQQ/quantum-resistant-p2p"
 
 [dependency-groups]
 dev = [
+    "dilithium-py>=1.4.0",
     "hypothesis>=6.168.2",
     "import-linter>=2.15",
+    "kyber-py>=1.2.0",
     "pip-audit>=2.10.1",
     "pyright>=1.1.414",
     "pytest>=9.1.1",
