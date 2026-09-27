@@ -9,9 +9,9 @@
    attacker supplies, and sign handshake transcripts for it in both handshake roles; the distinct
    signature roles keep those signatures useless here. *)
 
-(* EXPECT false: not event(IRekeyDone) *)
+(* EXPECT reachable: not event(IRekeyDone) *)
 query event(IRekeyDone).
-(* EXPECT false: not event(RRekeyDone) *)
+(* EXPECT reachable: not event(RRekeyDone) *)
 query event(RRekeyDone).
 (* EXPECT true: not attacker(secretRekey *)
 query attacker(secretRekey).

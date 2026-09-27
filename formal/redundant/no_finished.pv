@@ -2,9 +2,9 @@
    checked). Result: no attack, because the handshake AEAD under keys derived
    from ss already proves possession of the handshake secret. See formal/README.md. *)
 
-(* EXPECT false: not event(IDone) *)
+(* EXPECT reachable: not event(IDone) *)
 query event(IDone).
-(* EXPECT false: not event(RDone) *)
+(* EXPECT reachable: not event(RDone) *)
 query event(RDone).
 (* EXPECT true: not attacker(secretI *)
 query attacker(secretI).

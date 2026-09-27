@@ -3,7 +3,7 @@
 
 reduc forall p: bitstring, r: bitstring; breakM(ctM(p, r)) = ssM(p, r).
 
-(* EXPECT false: not event(IDone) *)
+(* EXPECT reachable: not event(IDone) *)
 query event(IDone).
 (* EXPECT true: not attacker(secretI *)
 query attacker(secretI).

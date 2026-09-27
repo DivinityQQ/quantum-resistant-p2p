@@ -5,9 +5,12 @@ Each query in a model is preceded by a line such as::
     (* EXPECT true: inj-event(IAdmitOk *)
 
 meaning: the one ``RESULT`` line whose query starts with ``inj-event(IAdmitOk`` must say
-``is true``. ``false`` marks an expected attack (weakened models) or a reachable event (sanity
-checks that the model is not vacuous). A result without an EXPECT line, a missing result, or
-"cannot be proved" fails the run.
+``is true``. ``false`` marks an expected attack in a weakened model. ``reachable`` is for the
+sanity checks that a model is not vacuous (``query event(Done)``): it fails only on ``is true``
+(the event can never happen). ProVerif answers ``is false`` when it also reconstructs a trace,
+and ``cannot be proved`` when it derives the event but cannot rebuild a concrete trace; either
+shows that the derivation reaches the event. A result without an EXPECT line, a missing result,
+or "cannot be proved" for a true/false expectation fails the run.
 
 Usage::
 
@@ -29,7 +32,7 @@ FORMAL = Path(__file__).resolve().parent
 LIBRARY = FORMAL / "qrp2p"  # ProVerif adds the .pvl extension
 TIMEOUT_S = 3600
 
-EXPECT_RE = re.compile(r"\(\* EXPECT (true|false): (.+?) \*\)")
+EXPECT_RE = re.compile(r"\(\* EXPECT (true|false|reachable): (.+?) \*\)")
 RESULT_RE = re.compile(r"^RESULT (.*?) (is true|is false|cannot be proved)\.$")
 EXCERPT_LINES = 60
 
@@ -46,10 +49,16 @@ class Outcome:
     unexpected: list[str] = field(default_factory=list)
 
 
-def expectations(model: Path) -> list[tuple[bool, str]]:
+def expectations(model: Path) -> list[tuple[str, str]]:
     """Return ``(expected verdict, query prefix)`` for each EXPECT line of ``model``."""
-    text = model.read_text(encoding="utf-8")
-    return [(verdict == "true", prefix) for verdict, prefix in EXPECT_RE.findall(text)]
+    return EXPECT_RE.findall(model.read_text(encoding="utf-8"))
+
+
+ACCEPTED = {
+    "true": {"is true"},
+    "false": {"is false"},
+    "reachable": {"is false", "cannot be proved"},
+}
 
 
 def check(model: Path, output: str) -> tuple[list[tuple[str, str]], list[str], list[str]]:
@@ -63,15 +72,14 @@ def check(model: Path, output: str) -> tuple[list[tuple[str, str]], list[str], l
     if not expected:
         errors.append("no EXPECT lines")
     used: set[int] = set()
-    for want_true, prefix in expected:
+    for want, prefix in expected:
         hits = [i for i, (query, _) in enumerate(results) if query.startswith(prefix)]
         if len(hits) != 1:
             errors.append(f"{len(hits)} results match EXPECT prefix {prefix!r}")
             continue
         used.add(hits[0])
         query, verdict = results[hits[0]]
-        want = "is true" if want_true else "is false"
-        if verdict != want:
+        if verdict not in ACCEPTED[want]:
             errors.append(f"{query}: {verdict}, expected {want}")
             unexpected.append(query)
     errors.extend(

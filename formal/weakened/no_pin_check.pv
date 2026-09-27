@@ -2,9 +2,9 @@
    and the pin is never compared with it. Expected attack: MITM on a pinned contact. The initiator
    believes it reached its contact, but shares keys with the attacker. *)
 
-(* EXPECT false: not event(IDone) *)
+(* EXPECT reachable: not event(IDone) *)
 query event(IDone).
-(* EXPECT false: not event(RDone) *)
+(* EXPECT reachable: not event(RDone) *)
 query event(RDone).
 (* EXPECT false: not attacker(secretI *)
 query attacker(secretI).

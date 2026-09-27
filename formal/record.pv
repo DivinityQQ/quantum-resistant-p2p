@@ -27,7 +27,7 @@ let Receiver(k: bitstring) =
   event Recv(k, n1, m1);
   event RecvDone.
 
-(* EXPECT false: not event(RecvDone) *)
+(* EXPECT reachable: not event(RecvDone) *)
 query event(RecvDone).
 (* EXPECT true: not attacker(secretMsg *)
 query attacker(secretMsg).

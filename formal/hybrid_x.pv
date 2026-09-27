@@ -3,7 +3,7 @@
 
 reduc forall p: bitstring, r: bitstring; breakX(ctX(p, r)) = ssX(p, r).
 
-(* EXPECT false: not event(IDone) *)
+(* EXPECT reachable: not event(IDone) *)
 query event(IDone).
 (* EXPECT true: not attacker(secretI *)
 query attacker(secretI).

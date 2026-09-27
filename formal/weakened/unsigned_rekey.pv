@@ -3,9 +3,9 @@
    who has read the session state answers each side's rekey with a KEM exchange of its own and keeps
    reading the traffic after the rekey. Same setting as formal/rekey.pv. *)
 
-(* EXPECT false: not event(IRekeyDone) *)
+(* EXPECT reachable: not event(IRekeyDone) *)
 query event(IRekeyDone).
-(* EXPECT false: not event(RRekeyDone) *)
+(* EXPECT reachable: not event(RRekeyDone) *)
 query event(RRekeyDone).
 (* EXPECT false: not attacker(secretRekey *)
 query attacker(secretRekey).

@@ -3,9 +3,9 @@
    with Bob to learn a Reply signature, then replays it to Alice as Bob, with a key exchange of its
    own. *)
 
-(* EXPECT false: not event(IDone) *)
+(* EXPECT reachable: not event(IDone) *)
 query event(IDone).
-(* EXPECT false: not event(RDone) *)
+(* EXPECT reachable: not event(RDone) *)
 query event(RDone).
 (* EXPECT false: not attacker(secretI *)
 query attacker(secretI).

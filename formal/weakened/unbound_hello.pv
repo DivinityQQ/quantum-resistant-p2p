@@ -3,9 +3,9 @@
    neither side notices (compare Attack Lab scenario 6, where the real engine fails to decrypt
    Reply). *)
 
-(* EXPECT false: not event(IDone) *)
+(* EXPECT reachable: not event(IDone) *)
 query event(IDone).
-(* EXPECT false: not event(RDone) *)
+(* EXPECT reachable: not event(RDone) *)
 query event(RDone).
 (* EXPECT true: not attacker(secretI *)
 query attacker(secretI).
