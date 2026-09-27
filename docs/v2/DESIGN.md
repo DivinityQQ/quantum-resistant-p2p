@@ -873,7 +873,7 @@ The UI and README call the protocol "secure" only after every item below passes.
 
 | Question | Decision |
 | --- | --- |
-| Where the rewrite lives | A new branch of `quantum-resistant-p2p`; v1 stays on the default branch |
+| Where the rewrite lives | `main` of `quantum-resistant-p2p`; v1 is preserved at the tag `v1-final` |
 | Language of UI and lessons | English only |
 | Glass-box prerequisites | A pinned contact is enough (verification not required); mode fixed at session start |
 | CNSA profile scope | Chosen per contact |

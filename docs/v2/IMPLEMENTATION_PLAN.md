@@ -15,7 +15,7 @@ three OSes (see the M0 status notes). Next: M1, formal model first.
 
 1. **Remove v1 from this branch** in one commit: `quantum_resistant_p2p/`, `tests/`, `setup.py`,
    `requirements.txt`, `mkdocs.yml`, and v1 docs (everything in `docs/` except `docs/v2/`). v1
-   stays on the default branch and in history. `research/VERIFIED_FACTS.md` lists the v1 bugs that
+   stays in history; its last commit is tagged `v1-final`, and v2 then replaced it on `main`. `research/VERIFIED_FACTS.md` lists the v1 bugs that
    become regression tests. Keep `LICENSE`.
 2. Replace `README.md` with a short v2 README: what it is, status, how to run tests, links to the design.
 3. Reserve the `qrp2p` name on PyPI (a placeholder release) before anyone else takes it.

@@ -1,8 +1,8 @@
 # CLAUDE.md — QRP2P v2
 
-This branch is a ground-up rewrite (v2) of the quantum-resistant P2P messenger. v1 lives on the
-default branch; its code is still in this tree until Step 0 of the implementation plan removes it.
-**Do not build on v1 code.**
+This repository is a ground-up rewrite (v2) of the quantum-resistant P2P messenger. v1 is kept in
+history at the tag `v1-final`; none of its code is in the tree. **Do not build on v1 code.**
+`main` accepts changes only through pull requests with green CI (ruleset: `.github/rulesets/main.json`).
 
 ## Read first
 

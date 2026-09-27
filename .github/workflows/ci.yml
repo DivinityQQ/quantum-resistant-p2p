@@ -1,3 +1,5 @@
+# Job names are the required status checks of the `main` ruleset (.github/rulesets/main.json).
+# Rename a job only together with that file and the live ruleset, or merges into main will block.
 name: CI
 
 on:

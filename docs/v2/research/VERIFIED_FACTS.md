@@ -88,7 +88,7 @@ CPython 3.14 (cryptography abi3 and cp314t; msgspec and zeroconf cp314; PySide6 
 
 ## v1 bugs reproduced (for the regression suite)
 
-All reproduced against v1 on the default branch with two real nodes over localhost:
+All reproduced against v1 (now the tag `v1-final`) with two real nodes over localhost:
 
 1. A peer can set `sender_id` and `is_system` inside a signed and encrypted message; the receiver
    accepts them, so messages appear in another peer's conversation or as system notices.
