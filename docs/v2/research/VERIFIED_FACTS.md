@@ -1,7 +1,9 @@
 # Verified facts for implementation
 
 Facts the design depends on, each checked by running code on 2026-09-27 with
-`cryptography` 50.0.1 (bundled OpenSSL 4.0.2), `msgspec` 0.21.1 and CPython 3.11 (Linux x86-64). Re-run on 3.14 at M0.
+`cryptography` 50.0.1 (bundled OpenSSL 4.0.2), `msgspec` 0.21.1 and CPython 3.11 (Linux x86-64).
+Re-run at M0 on CPython 3.14.7 (same libraries): both spikes pass and every fact below still holds;
+most are now regression tests under `tests/`.
 Re-check them when a pinned version changes; most should become regression tests in M0.
 
 ## pyca/cryptography 50
@@ -10,12 +12,15 @@ Re-check them when a pinned version changes; most should become regression tests
 | --- | --- | --- |
 | `MLKEM768PublicKey.encapsulate()` takes **no arguments** and returns `(shared_secret, ciphertext)`, in that order (32 B, 1,088 B) | Called with an argument → `TypeError`; inspected return | No derandomised encapsulation; the X-Wing `eseed` vectors can't be replayed. Use the HPKE differential test and provider-boundary recording (DESIGN §11.6) |
 | `MLKEM768PrivateKey.from_seed_bytes(seed)` takes the 64-byte FIPS 203 seed `d‖z`; `private_bytes_raw()` returns that seed | X-Wing keygen vectors match | X-Wing expansion maps `e[0:64]` directly |
-| ML-KEM public keys with a coefficient ≥ q (3,329) are **rejected at import**. The error text wrongly says "public key is 1184 bytes long" | Coefficients 4,095 and 3,329 at several positions (including 0 and 767) → rejected; 3,328 accepted | The FIPS 203 check is present; wrap the error as `invalid_kem_key` |
+| ML-KEM public keys with a coefficient ≥ q (3,329) are **rejected at import**. The error text wrongly says "public key is 1184 bytes long" — the *same* message as for a key of the wrong length | Coefficients 4,095 and 3,329 at several positions (including 0 and 767) → rejected; 3,328 accepted; a 1,183-byte key gives the identical message | The FIPS 203 check is present. Check the length first, then map any remaining `ValueError` to `invalid_kem_key` |
 | ML-KEM-1024: public key 1,568 B, ciphertext 1,568 B, shared secret 32 B | Measured | Appendix A |
 | `MLDSA{44,65,87}PrivateKey.sign(data, context)` accepts a FIPS 204 context string; > 255 bytes → `ValueError` | Called | HybridSign context strings (DESIGN §4.4) |
 | ML-DSA signing is **hedged**: two signatures of the same message differ | Compared two signatures | Signatures can't be regenerated for replay or vectors |
 | ML-DSA-65: public key 1,952 B, signature 3,309 B. ML-DSA-87: public key 2,592 B, signature 4,627 B. `private_bytes_raw()` = 32-byte seed | Measured | Identity bundle 4,577 B; seeds stored in the vault |
-| `X25519PrivateKey.exchange()` with an all-zero or low-order public key raises `ValueError("Error computing shared key.")` | Called with 32 zero bytes | Map to `kem_failure`; add negative vectors |
+| `X25519PrivateKey.exchange()` with an all-zero or low-order public key raises `ValueError("Error computing shared key.")` | Called with 0, 1, the order-8 point `e0eb7a7c…b800`, p − 1, and the non-canonical p and p + 1 | Map to `kem_failure`; negative vectors in `tests/core/crypto/test_xwing.py` |
+| ML-KEM decapsulation of a wrong-length ciphertext raises `ValueError`; a right-length tampered ciphertext returns a different 32-byte secret (implicit rejection) | Called | Wrong length → `kem_failure`; tampering surfaces later as `decrypt_failed` |
+| ML-DSA `verify()` raises `InvalidSignature` for a wrong context or a truncated signature; `sign()` with no context uses the empty context | Called | HybridSign maps both to `signature_invalid` |
+| `HKDF.extract(algorithm, salt, ikm)` is a static method; `HKDFExpand` has no minimum PRK length (a 1-byte or empty key is accepted) | Called; `extract` matches stdlib HMAC | Our `hkdf_expand` enforces `len(prk) ≥ Hlen` itself |
 | `hpke.KEM.MLKEM768_X25519` **is X-Wing** (enc = 1,120 B). RFC 9180 suite id uses KEM id `0x647a` | `research/hpke_diff_spike.py`: 20/20 both directions | Differential test for the encapsulation side |
 | `hpke.MLKEM768X25519PrivateKey` / `PublicKey` are opaque wrappers around an ML-KEM and an X25519 key; no raw encapsulate/decapsulate API | Inspected | X-Wing must be built from parts (§4.2) |
 | `Argon2id` is available in `cryptography.hazmat.primitives.kdf.argon2` and releases the GIL | Timed alone and with a busy Python thread running alongside (the thread kept running) | Run in a worker thread; t=3, m=256 MiB, p=4 took 0.5–1.4 s on a 4-core container |
@@ -47,6 +52,18 @@ Re-check them when a pinned version changes; most should become regression tests
 - Ships only a `py3-none-any` wheel. When no liboqs shared library is found at import, it
   git-clones liboqs and builds it with CMake at runtime (`oqs/oqs.py`, `_install_liboqs`). We must bundle a CI-built liboqs and set
   `OQS_INSTALL_PATH` (DESIGN §13).
+- It has **no opt-out** from that fallback. `_load_liboqs()` first tries `ctypes.util.find_library`
+  (system paths), then `$OQS_INSTALL_PATH/lib`, `lib64` (Windows: `bin`, as `oqs.dll` or
+  `liboqs.dll`), defaulting to `~/_oqs`. If nothing loads it builds, and if the build fails it
+  raises **`SystemExit`**. `qrp2p.lab.oqs_loader` therefore loads the library itself first and
+  imports `oqs` only after that succeeded.
+- At import it attaches a `StreamHandler(stdout)` to the `oqs.oqs` logger and logs one INFO line;
+  the loader disables that logger. It warns if liboqs and liboqs-python differ in major.minor.
+- liboqs **0.16.0** (commit `5a1a854b`) builds with CMake + Ninja in about 4 minutes on a 4-core container. Enabled by
+  default: `HQC-1/3/5`, `FrodoKEM-*` and `eFrodoKEM-*`, `Classic-McEliece-*`, and
+  `SLH_DSA_PURE_*` / `SLH_DSA_*_PREHASH_*` (221 signature names in total). With default flags the
+  shared library links the system `libcrypto.so.3`; with `-DOQS_USE_OPENSSL=OFF` it links only
+  libc, which is what a bundle needs. `-DOQS_DIST_BUILD=ON` keeps it portable across CPUs.
 - liboqs upstream README: *"WE DO NOT CURRENTLY RECOMMEND RELYING ON THIS LIBRARY IN A
   PRODUCTION ENVIRONMENT OR TO PROTECT ANY SENSITIVE DATA."* It is used for lab algorithms only.
 
@@ -55,7 +72,8 @@ Re-check them when a pinned version changes; most should become regression tests
 PySide6 6.11.2 · cryptography 50.0.1 · msgspec 0.21.1 · zeroconf 0.151.3 · platformdirs 4.12.0 ·
 keyring 25.7.0 · filelock 4.0.4 · liboqs-python 0.16.0.1 · hypothesis 6.168.2 · pytest 9.1.1 ·
 pytest-asyncio 1.4.0 · import-linter 2.15 · Nuitka 4.2.2 · pyright 1.1.414 · ruff 0.16.9.
-The name `qrp2p` was unclaimed on PyPI.
+The name `qrp2p` was unclaimed on PyPI. Every runtime dependency ships wheels usable on
+CPython 3.14 (cryptography abi3 and cp314t; msgspec and zeroconf cp314; PySide6 abi3).
 
 ## v1 bugs reproduced (for the regression suite)
 

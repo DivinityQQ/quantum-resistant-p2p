@@ -4,8 +4,9 @@ This is the working plan for building [DESIGN.md](DESIGN.md). It is written for 
 work up next, human or a Claude Code session on a local machine. Start with the repository's
 `CLAUDE.md`, then this file.
 
-**Status (2026-09-27):** design complete; research spikes in `research/` pass; no v2 code yet.
-v1 still lives in this branch's tree until step 0 below.
+**Status (2026-09-27):** Step 0 done except the PyPI placeholder (needs the owner's account).
+M0.1–M0.9 implemented with tests; M0.10 has a working loader and a CI job that builds liboqs on
+3 OSes. The M0 gate is met once that CI run is green on all 3 OSes (see the M0 status notes).
 
 ---
 
@@ -28,17 +29,18 @@ tests/
   vectors/             # pinned X-Wing vectors (with source + SHA-256) and our own KATs
 formal/                # ProVerif / Tamarin models
 docs/v2/               # design, this plan, research
-.github/workflows/     # CI: lint, types, tests on windows/macos/ubuntu × 3.13/3.14
+.github/workflows/     # CI: lint, types, layers, audit; tests on windows/macos/ubuntu × 3.14; liboqs build
 ```
 
 `pyproject.toml` essentials:
 
-- `requires-python = ">=3.13"`
-- Runtime dependencies (pinned in the lock file): `cryptography>=50`, `msgspec`, `zeroconf`,
-  `platformdirs`, `keyring`, `filelock`, `PySide6` (UI extra or main — decide in M3).
+- `requires-python = ">=3.14"`
+- Runtime dependencies (pinned in the lock file): `cryptography>=50`, `msgspec` today; `zeroconf`,
+  `platformdirs`, `keyring`, `filelock` join in M2 and `PySide6` in M3 (UI extra or main — decide
+  in M3). Dependencies are added when first imported, not before.
 - Extras: `lab = ["liboqs-python"]`.
-- Dev group: `pytest`, `pytest-asyncio`, `hypothesis`, `mutmut`, `ruff`, `pyright`,
-  `import-linter`, `pip-audit`.
+- Dev group: `pytest`, `hypothesis`, `ruff`, `pyright`, `import-linter`, `pip-audit` today;
+  `mutmut` joins in M1 and `pytest-asyncio` in M2.
 - Tool config: `ruff` (strict rule set incl. `S` bandit rules), `pyright` strict on `src/`,
   import-linter contracts from DESIGN §12.2.
 
@@ -50,18 +52,31 @@ Everything here lives in `src/qrp2p/core/crypto/` and has no I/O.
 
 | # | Task | Done when |
 | --- | --- | --- |
-| M0.1 | Project scaffold as above; CI matrix (3 OSes × Python 3.13, 3.14) running ruff, pyright, pytest, import-linter, pip-audit | CI green on an empty package |
+| M0.1 | Project scaffold as above; CI matrix (3 OSes × Python 3.14) running ruff, pyright, pytest, import-linter, pip-audit | CI green on an empty package |
 | M0.2 | `secret.py`: `Secret` wrapper for key material — redacted `repr`/`str`, explicit `.reveal()`, constant-time equality, no pickling | Unit tests, including a check that `repr`, f-strings and exception text never show the value |
 | M0.3 | `profiles.py`: frozen dataclasses with every constant from DESIGN Appendix A | Tests assert each size against the live primitives (e.g. generate a key and measure) |
 | M0.4 | `xwing.py`: port `research/xwing_spike.py`; typed API `keygen() / public_key(sk) / encapsulate(pk) / decapsulate(sk, ct)`; error mapping `invalid_kem_key` and `kem_failure` | Official vectors (vendored in `tests/vectors/` with source URL and SHA-256), the HPKE differential test (port of `research/hpke_diff_spike.py`), an invalid ML-KEM key, low-order and zero X25519 points |
-| M0.5 | `mlkem1024.py` wrapper and `x25519kem.py` (lab profile, DESIGN §4.3) | Round trip, sizes, error mapping |
-| M0.6 | `hybrid_sig.py`: `HybridSign`/`verify` for all three profiles, roles as an enum, contexts per DESIGN §4.4 | Tampering with either half fails; cross-role replay fails; wrong profile fails; context ≤ 255 B |
+| M0.5 | `mlkem1024.py` wrapper; X25519-KEM for the lab profile (DESIGN §4.3) in `qrp2p/lab/classical.py`, not `core/` (CLAUDE.md: `LAB-CLASSICAL` lives only under `qrp2p/lab/`) | Round trip, sizes, error mapping |
+| M0.6 | `hybrid_sig.py`: `HybridSign`/`verify` for all three profiles (the Ed25519-only lab scheme in `lab/classical.py`), roles as an enum, contexts per DESIGN §4.4; `identity.py`: bundle, `peer_id`, short ID and safety number (DESIGN §5), because verification needs the peer's bundle | Tampering with either half fails; cross-role replay fails; wrong profile fails; context ≤ 255 B; identity KATs |
 | M0.7 | `kdf.py`: `HkdfLabel`, `Expand-Label`, `Derive-Secret`, `Keys` for SHA-256 and SHA-384 | Known-answer tests frozen in `tests/vectors/kdf.json`, cross-checked by an independent HMAC-only implementation inside the test |
-| M0.8 | `provider.py`: `CryptoProvider` protocol (keygen, encapsulate, decapsulate, sign, verify, random bytes), `PlainProvider`, and interface stubs for `RecordingProvider` / `ReplayProvider` / `RevealingProvider` | Protocol typed; `PlainProvider` passes the M0.4–M0.6 tests through the interface |
+| M0.8 | `provider.py`: `CryptoProvider` protocol (keygen, encapsulate, decapsulate, sign, verify, random bytes, plus KDF and AEAD so a revealing wrapper sees every derived secret), `PlainProvider` gated to the profiles it was built with, and a basic `RevealingProvider`. `RecordingProvider` / `ReplayProvider` move to M4 with the `.qrlab` format | Protocol typed; `PlainProvider` passes the M0.4–M0.6 tests through the interface |
 | M0.9 | `core/errors.py`: close, admit and file-cancel codes (DESIGN Appendix B) as enums, plus one exception type that carries a code | Every code has a test name reserved in a checklist |
 | M0.10 | **liboqs packaging spike:** a CI job builds liboqs at a pinned tag on all 3 OSes; the app sets `OQS_INSTALL_PATH`; liboqs-python loads HQC, FrodoKEM, Classic McEliece and SLH-DSA; when the library is absent, the lab reports "unavailable" and nothing tries to build | Artefacts on 3 OSes, or a written decision to ship the lab extra on fewer OSes |
 
 **Gate:** vectors and the differential test pass on all 3 OSes; own KATs committed; M0.10 resolved.
+
+**M0 status notes (2026-09-27)**
+
+- Local (Linux, CPython 3.14.7): all tests pass, including the official X-Wing vectors, the HPKE
+  differential test, RFC 5869 vectors and our KATs (`tests/vectors/`). Hand mutations of the
+  signature, provider-gate, nonce, combiner, bundle-version and PRK checks were each caught; full
+  `mutmut` runs start in M1.
+- `aead.py` (profile AEADs, `nonce = iv XOR u96(seq)`) was added to M0 because the provider needs
+  it; `record.py` in M1 builds on it.
+- `tests/reason_checklist.py` reserves a test name for every code in Appendix B; entries without
+  a milestone prefix are checked to exist.
+- liboqs: 0.16.0 built locally with the CI flags; HQC, FrodoKEM, Classic McEliece and SLH-DSA load
+  through `qrp2p.lab.oqs_loader`. Windows and macOS are proven only by the CI `liboqs` job.
 
 ---
 
@@ -157,17 +172,22 @@ address findings; signed installers; publish.
 
 | Topic | Options | Phase |
 | --- | --- | --- |
-| Vendoring the X-Wing vectors | Vendor with attribution (IETF code components are BSD-licensed) vs fetch in CI | M0 |
-| liboqs tag to pin and OSes for the lab extra | Latest 0.16.x on all 3 vs a subset | M0 |
-| Minimum Python | 3.13 as designed, or 3.14 only if a dependency forces it | M0 |
 | ProVerif-only vs ProVerif + Tamarin from day one | Tamarin can follow once ProVerif passes | M1 |
 | PySide6 as a core dependency or a `gui` extra | The CLI can run without Qt if it is an extra | M2/M3 |
 | Visual identity (palette, icon, name styling) | Mock-ups first | M3 |
 | Code-signing identities (Apple, Windows) | Buy when first installer ships | M3/M6 |
 
+### Decisions taken
+
+| Topic | Decision | When |
+| --- | --- | --- |
+| Vendoring the X-Wing vectors | Vendored with attribution and a SHA-256 pin (`tests/vectors/SOURCES.md`); IETF code components are Simplified-BSD licensed | M0 |
+| liboqs tag and OSes | 0.16.0 (commit `5a1a854b`), all 3 OSes, built with `OQS_DIST_BUILD=ON`, `OQS_USE_OPENSSL=OFF`; revisit if the CI job fails on an OS | M0 |
+| Minimum Python | 3.14 only (owner's decision: no reason to carry 3.13) | M0 |
+
 ## Starting a local session
 
 Suggested first prompt:
 
-> Read `CLAUDE.md`, `docs/v2/DESIGN.md` and `docs/v2/IMPLEMENTATION_PLAN.md`. Do Step 0, then
-> M0.1. Run the checks listed in CLAUDE.md before each commit.
+> Read `CLAUDE.md`, `docs/v2/DESIGN.md` and `docs/v2/IMPLEMENTATION_PLAN.md`. Continue with the
+> first unfinished phase. Run the checks listed in CLAUDE.md before each commit.
