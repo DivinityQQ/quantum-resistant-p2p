@@ -42,7 +42,7 @@ solo lab, Attack Lab, weakened engines, Algorithm Lab and lessons.
 - **Weakened engines and `LAB-CLASSICAL`** live only under `qrp2p/lab/` and must never be reachable
   from real sessions.
 
-## Commands (once M0.1 has created the project)
+## Commands
 
 ```bash
 uv sync --all-extras --dev          # install
@@ -53,7 +53,7 @@ uv run lint-imports                 # layer rules
 uv run pip-audit                    # dependency audit
 ```
 
-Research spikes (work before the project exists; need `cryptography>=50`):
+Research spikes (frozen; kept runnable as evidence for VERIFIED_FACTS):
 
 ```bash
 python docs/v2/research/xwing_spike.py
@@ -64,4 +64,4 @@ python docs/v2/research/hpke_diff_spike.py
 
 - English for code, docs, UI and lessons.
 - Small, focused commits; message says what and why.
-- Python 3.13+ (developed on 3.14); pyright strict; ruff formatting.
+- Python 3.14+ (use 3.14 features freely); pyright strict on `src/`; ruff formatting.

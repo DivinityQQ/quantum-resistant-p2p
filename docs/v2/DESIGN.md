@@ -2,7 +2,7 @@
 
 | | |
 | --- | --- |
-| Version | 1.0 |
+| Version | 1.1 |
 | Date | 2026-09-27 |
 | Status | Approved for implementation |
 | Scope | Complete rewrite of `quantum-resistant-p2p` (v1) |
@@ -62,7 +62,7 @@ QRP2P v2 is a desktop messenger for two people on the same local network. Its ch
 
 | Decision | Choice |
 | --- | --- |
-| Language | Python 3.13+ (developed on 3.14) |
+| Language | Python 3.14+ |
 | Network | LAN only; discovery via mDNS; manual connect by address |
 | Conversations | Two parties per session; many contacts, each a 1:1 channel |
 | History | Kept on disk, encrypted |
@@ -740,8 +740,8 @@ formal/            # ProVerif models (+ weakened variants), Tamarin cross-check
 
 ### 12.2 Import rules (enforced in CI by `import-linter`)
 
-- `core` imports nothing from `services`, `lab` or `ui`.
-- `services` never imports `lab.weakened`.
+- `core` imports nothing from `services`, `lab` or `ui`, and no third-party package other than `cryptography` and `msgspec`.
+- `services` never imports `lab.weakened` or liboqs (`oqs`).
 - `ui` may import types from `core.trace` and `core.wire` for the Inspector, but never drives `core` directly.
 
 ---

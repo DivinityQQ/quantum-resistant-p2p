@@ -21,7 +21,7 @@ can **watch, pause and attack that exact channel**.
 
 ## Development
 
-Requires [uv](https://docs.astral.sh/uv/) and Python 3.13 or newer.
+Requires [uv](https://docs.astral.sh/uv/) and Python 3.14 or newer.
 
 ```bash
 uv sync --all-extras --dev          # install
