@@ -178,7 +178,6 @@ address findings; signed installers; publish.
 
 | Topic | Options | Phase |
 | --- | --- | --- |
-| ProVerif-only vs ProVerif + Tamarin from day one | Tamarin can follow once ProVerif passes | M1 |
 | PySide6 as a core dependency or a `gui` extra | The CLI can run without Qt if it is an extra | M2/M3 |
 | Visual identity (palette, icon, name styling) | Mock-ups first | M3 |
 | Code-signing identities (Apple, Windows) | Buy when first installer ships | M3/M6 |
@@ -190,6 +189,7 @@ address findings; signed installers; publish.
 | Vendoring the X-Wing vectors | Vendored with attribution and a SHA-256 pin (`tests/vectors/SOURCES.md`); IETF code components are Simplified-BSD licensed | M0 |
 | liboqs tag and OSes | 0.16.0 (commit `5a1a854b`), all 3 OSes, built with `OQS_DIST_BUILD=ON`, `OQS_USE_OPENSSL=OFF`; revisit if the CI job fails on an OS | M0 |
 | Minimum Python | 3.14 only (owner's decision: no reason to carry 3.13) | M0 |
+| ProVerif only, or ProVerif + Tamarin in M1 | ProVerif in M1, run in CI on every push; the Tamarin cross-check (weakened KEM binding for `PQ-CNSA-1`) moves to M6, before outside review | M1 |
 
 ## Starting a local session
 

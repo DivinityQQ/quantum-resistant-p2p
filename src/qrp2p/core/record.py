@@ -236,12 +236,15 @@ class Channel:
 
         Raises:
             RuntimeError: The channel is closed, or it is closing and ``message`` is not the
-                final ``close``.
+                final ``close``, or ``message`` is a ``rekey_switch`` the channel did not queue.
         """
         if self._state is ChannelState.CLOSED or (
             self._state is ChannelState.CLOSING and not isinstance(message, Close)
         ):
             msg = f"cannot seal on a {self._state.value} channel"
+            raise RuntimeError(msg)
+        if isinstance(message, RekeySwitch) and (self._rekey is None or self._rekey.next is None):
+            msg = "rekey_switch before the new keys exist"
             raise RuntimeError(msg)
         send = self._send
         if send.seq > MAX_SEQ:

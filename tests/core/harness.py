@@ -6,6 +6,8 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from functools import cache
 
+from qrp2p.core.crypto import aead
+from qrp2p.core.crypto.aead import TAG_LEN
 from qrp2p.core.crypto.identity import IdentityBundle, IdentityKeyPair
 from qrp2p.core.crypto.profiles import HYBRID_1, REAL_PROFILES, Profile
 from qrp2p.core.crypto.provider import CryptoProvider, PlainProvider
@@ -13,8 +15,11 @@ from qrp2p.core.events import Closed, Deliver, Priority, Queue, Send, Trace
 from qrp2p.core.handshake import AdmissionRequired, Established, Initiator, Responder
 from qrp2p.core.record import Channel
 from qrp2p.core.trace import TraceEvent
-from qrp2p.core.wire import Frame, Inner
+from qrp2p.core.wire import Frame, FrameType, Inner, encode_inner, frame_header
 from tests.support import DeterministicRandom, identity_from_label
+
+ESTABLISHED_AT = 5.0
+"""The time at which :func:`handshake` opens both channels."""
 
 
 @cache
@@ -153,10 +158,10 @@ def handshake(
     run.on_confirm = list(run.r.receive(via("confirm", run.confirm), 3.0))
     if until == "confirm" or none_of(run.on_confirm, AdmissionRequired):
         return run
-    run.on_decision = list(run.r.accept(glass_box=glass_box, now=4.0))
+    run.on_decision = list(run.r.accept(glass_box=glass_box, now=ESTABLISHED_AT))
     if until == "decision":
         return run
-    run.on_admit = list(run.i.receive(via("admit", run.admit), 5.0))
+    run.on_admit = list(run.i.receive(via("admit", run.admit), ESTABLISHED_AT))
     assert until in steps
     return run
 
@@ -186,7 +191,7 @@ class Link:
         self.sides = {"i": Side(i), "r": Side(r)}
         self._order = itertools.count()
         self.tamper = tamper
-        self.now = 10.0
+        self.now = ESTABLISHED_AT
 
     def __getitem__(self, name: str) -> Side:
         return self.sides[name]
@@ -241,3 +246,22 @@ class Link:
         self.now = now
         for name, side in self.sides.items():
             self.absorb(name, side.channel.tick(now))
+
+    def advance(self, to: float, step: float = 20.0) -> None:
+        """Let time pass with both writers running, so pings keep the session alive."""
+        while self.now + step <= to:
+            self.tick(self.now + step)
+            self.run()
+        self.tick(to)
+        self.run()
+
+    def raw(self, name: str, message: Inner) -> Frame:
+        """Seal ``message`` with ``name``'s current send keys, bypassing its state machine
+        (what a misbehaving peer would send)."""
+        channel = self.sides[name].channel
+        send = channel._send
+        plaintext = encode_inner(message)
+        header = frame_header(FrameType.RECORD, len(plaintext) + TAG_LEN)
+        body = aead.seal(channel.profile.aead, send.keys, send.seq, header, plaintext)
+        send.seq += 1
+        return Frame(FrameType.RECORD, body)

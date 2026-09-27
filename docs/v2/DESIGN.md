@@ -2,7 +2,7 @@
 
 | | |
 | --- | --- |
-| Version | 1.1 |
+| Version | 1.2 |
 | Date | 2026-09-27 |
 | Status | Approved for implementation |
 | Scope | Complete rewrite of `quantum-resistant-p2p` (v1) |
@@ -271,6 +271,7 @@ frame = length:u32 ‖ type:u8 ‖ body[length]
 | Half-open handshakes (global / per source address) | 32 / 4 |
 | Hello rate (global token bucket) | 20 per second, burst 40 |
 | Handshake crypto deadline (Hello → Confirm received) | 10 s |
+| Initiator's wait for Admit after sending Confirm | 70 s (admission deadline + 10 s) |
 | Admission deadline (user prompt) | 60 s |
 | Live sessions | 64 |
 | Responder state per half-open slot | ≈ 15 KB (transcript + handshake secrets) |
@@ -317,7 +318,7 @@ AdmitInner   = AdmitBody ‖ FinA[Hlen]
 AdmitBody    = decision:u8 (0 accept, 1 reject) ‖ flags:u8 (bit0 = glass_box) ‖ reason:u8 (Appendix B)
 ```
 
-An unknown `version` or `profile`, or non-zero reserved flag bits, MUST close the connection silently.
+An unknown `version` or non-zero reserved flag bits MUST close the connection silently (`schema_error`). A `profile` the responder does not serve is answered with `ProfileUnsupported` and the connection closed (§7.5). An accept carries reason `none`; a reject carries any other reason and `glass_box = 0`; any other AdmitBody, an unknown decision or reason, or a reserved flag bit is `schema_error`.
 
 ### 7.3 Transcript
 
@@ -379,7 +380,9 @@ erase: ss, hs, hs_R, hs_I, fk_R, fk_I, the ephemeral KEM private key
 
 **Responder, on Confirm:** decrypt, verify SigI and FinI, reject our own bundle, then run admission (§7.6). Only after that send Admit.
 
-**Initiator, on Admit:** decrypt, verify FinA. On `reject`, show the named reason. On `accept`, derive the traffic keys and open the session. `glass_box` in Admit MUST be 0 if `gb_request` was 0.
+**Initiator, on Admit:** decrypt, verify FinA. On `reject`, show the named reason. On `accept`, derive the traffic keys and open the session. `glass_box` in Admit MUST be 0 if `gb_request` was 0; otherwise close with `policy`.
+
+**Key confirmation.** The responder has no fifth handshake message. Its agreement with the initiator on `th_final` (and so on the admission decision) is established by the first record it opens under `ap_I`. The formal model proves exactly this (`formal/handshake.pv`).
 
 ### 7.6 Admission policy (responder)
 
@@ -415,11 +418,11 @@ Record body = AEAD(Keys(ap_dir).key, nonce = Keys(ap_dir).iv XOR u96(seq_dir), a
 ```
 
 - `seq_dir` is a 64-bit counter per direction. It starts at 0 for every new traffic secret and is never transmitted. The receiver's own counter decides, so replay or reordering fails decryption (`decrypt_failed`).
-- Plaintext is at most 16,384 B, including the Inner encoding.
+- Plaintext is at most 16,384 B, including the Inner encoding, so a record body is at most 16,400 B; a longer one is `oversize`, a shorter than 16 B one `decrypt_failed`.
 
 ### 8.2 Inner messages
 
-Inner is MessagePack encoded with `msgspec` as a tagged union, decoded with a strict schema. Unknown tags, extra fields, wrong types or limit violations give `schema_error`. Inner is never hashed or signed, so MessagePack's non-canonical encoding is harmless here.
+Inner is MessagePack encoded with `msgspec` as a tagged union (tag field `kind`, values as in the table), decoded with a strict schema. Unknown tags, extra fields, wrong types or limit violations give `schema_error`. Byte limits on text fields count UTF-8 bytes; `u64` fields reject values above 2^64 − 1; the exact rekey sizes are checked by the record layer against the session's profile. Inner is never hashed or signed, so MessagePack's non-canonical encoding is harmless here.
 
 | Kind | Fields | Limits |
 | --- | --- | --- |
@@ -459,7 +462,7 @@ The sender sends `key_update` as its last record under the old secret, then swit
 
 **PQ rekey** (every 60 minutes, or the user's "Rekey now"):
 
-1. Only the session initiator starts a rekey; at most one per minute. Extra `rekey_offer` messages give `unexpected_message`.
+1. Only the session initiator starts a rekey; at most one per minute. Extra `rekey_offer` messages give `unexpected_message`: one while a rekey is in progress, one sent by the session responder, or one within 30 s of the previous offer (half the initiator's limit, so network delay cannot make an honest initiator look too fast).
 2. `rekey_offer { ek' }` from I, then `rekey_answer { ct', SigR' }` from R, then `rekey_finish { SigI' }` from I:
 
    ```text
@@ -475,7 +478,7 @@ The sender sends `key_update` as its last record under the old secret, then swit
    ap_I, ap_R = Derive-Secret(cs_{n+1}, "i ap traffic" | "r ap traffic", th_rekey)
    exporter_{n+1} = Derive-Secret(cs_{n+1}, "exporter", th_rekey)
    ```
-4. Each side sends `rekey_switch` as its last record under its old send key and switches its receive key when it receives the peer's `rekey_switch`.
+4. Each side sends `rekey_switch` as its last record under its old send key and switches its receive key when it receives the peer's `rekey_switch`. The rekey is complete, and `cs_n` and `exporter_n` are erased, when both directions have switched. A `rekey_switch` before the new keys exist is `unexpected_message`.
 
 | Mechanism | Guarantees |
 | --- | --- |
@@ -488,7 +491,7 @@ A failed rekey (bad signature, wrong size) closes the session.
 
 - Send `ping` after 30 s without outgoing records; close with `timeout` after 90 s without incoming records.
 - Every `chat` is answered by an encrypted `receipt`, so the UI shows *sent → delivered* truthfully.
-- **Close:** if the channel still works, send `close { reason }`, then drop the connection. Every exception from parsing or crypto maps to a named reason (Appendix B). Pre-authentication failures close silently.
+- **Close:** if the channel still works, send `close { reason }`, then drop the connection. Every exception from parsing or crypto maps to a named reason (Appendix B). Pre-authentication failures close silently. A failure while opening a record still sends `close { reason }` in the other direction, which works; the peer then reports the reason as the peer's.
 
 ---
 
@@ -645,13 +648,15 @@ Lab-only engine variants, each missing exactly one defence:
 | Weakened engine | Attack that now succeeds |
 | --- | --- |
 | Signatures verified against a key sent in the same message | MITM on a pinned contact |
-| No Finished MACs | Identity misbinding |
-| Identity missing from the signed transcript | Unknown key-share |
+| Signatures cover only the role and the signer's identity, not the transcript | Impersonation by replaying a signature recorded in an earlier handshake |
+| Hello's profile and flags missing from the transcript | Downgrade: the attacker strips `gb_request` or changes the profile unnoticed (compare scenario 6) |
 | AEAD nonce reuse | Keystream recovery and forgery |
 | Unsigned PQ rekey | Scenario 8b |
 | Replays accepted via a small dedup set | Scenario 5 |
 
-Each variant has a matching weakened formal model in `formal/`, so learners can compare the concrete attack with the attack trace the tool finds.
+Each variant has a matching weakened formal model in `formal/weakened/`, so learners can compare the concrete attack with the attack trace the tool finds.
+
+Two defences are **redundant** in this design, and the formal model shows it (`formal/redundant/`): removing the Finished MACs, or leaving the signer's identity out of the signed transcript, yields no attack, because the handshake AEAD under keys derived from `ss` already binds key possession and identity. They stay in the protocol as defence in depth (TLS 1.3 keeps Finished for the same reason). Earlier drafts listed them as weakened engines; the model showed that neither is attackable on its own, so they were replaced by the two variants above. Lesson 7 can use the pair to show why a single removed check is not always a hole.
 
 Guardrails:
 
@@ -816,7 +821,7 @@ The UI and README call the protocol "secure" only after every item below passes.
 
 | # | Evidence | Covers | When |
 | --- | --- | --- | --- |
-| 1 | **Formal model** (ProVerif; Tamarin cross-check with weakened KEM binding, since ML-KEM alone is not MAL-BIND) | Secrecy of traffic keys; mutual injective agreement on identities, profile, glass-box request and admission decision; forward secrecy; hybrid secrecy when either KEM component is revealed; signed-rekey recovery; each weakened model MUST yield an attack | Written before M1 code |
+| 1 | **Formal model** (ProVerif in CI; a Tamarin cross-check with weakened KEM binding, since ML-KEM alone is not MAL-BIND, follows before outside review in M6) | Secrecy of traffic keys; mutual injective agreement on identities, profile, glass-box request and admission decision; forward secrecy; hybrid secrecy when either KEM component is revealed; signed-rekey recovery; each weakened model MUST yield an attack | Written before M1 code |
 | 2 | **Known-answer tests** | X-Wing official vectors and the HPKE differential test. Key-schedule vectors as a function of `(ss, exact transcript bytes)`. Full-handshake vectors generated by a test-only derandomised pure-Python reference and verified with pyca | M0–M1 |
 | 3 | **State-machine tests** | Every transition, every invalid message in every state, the named reason for each | M1 |
 | 4 | **Mutation testing** of security checks | Removing or inverting any signature, Finished, pin, size or counter check fails at least one test | M1 |
