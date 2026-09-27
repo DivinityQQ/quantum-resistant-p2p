@@ -724,7 +724,8 @@ flowchart TB
 ```text
 qrp2p/
   core/            # sans-I/O; imports only stdlib, cryptography, msgspec
-    crypto/        # profiles, xwing, hybrid_sig, kdf, secret, provider (plain + Revealing)
+    crypto/        # profiles, kem, xwing, mlkem1024, identity, hybrid_sig, kdf, aead, secret,
+                   # provider (plain + Revealing)
     handshake.py   # initiator/responder state machines incl. admission
     record.py      # records, counters, KeyUpdate, PQ rekey
     wire.py        # fixed-layout handshake codecs, msgspec Inner schemas, limits
