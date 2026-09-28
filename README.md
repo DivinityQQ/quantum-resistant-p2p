@@ -10,8 +10,9 @@ can **watch, pause and attack that exact channel**.
 
 > **Status:** early development. M0 (crypto foundations) and M1 (protocol core: formal model,
 > handshake, record layer, rekey) are done; M2 (services and a headless CLI) is next, so nothing
-> talks over a network yet. Nothing here is ready for use, and the protocol must not be called
-> secure until every item in DESIGN §15 passes. v1 is preserved at the tag
+> talks over a network yet. `qrp2p` 2.0.0.dev0 on PyPI only reserves the name. Nothing here is
+> ready for use, and the protocol must not be called secure until every item in DESIGN §15 passes.
+> v1 is preserved at the tag
 > [`v1-final`](https://github.com/DivinityQQ/quantum-resistant-p2p/tree/v1-final).
 
 ## Documentation
@@ -27,12 +28,14 @@ Requires [uv](https://docs.astral.sh/uv/) and Python 3.14 or newer.
 
 ```bash
 uv sync --all-extras --dev          # install
-uv run pytest                       # tests
-uv run ruff check . && uv run ruff format --check .
-uv run pyright                      # strict type check
-uv run lint-imports                 # layer rules
-uv run pip-audit                    # dependency audit
+git config core.hooksPath .githooks # pre-commit and pre-push hooks
+uv run tools/check.py               # format, lint, layers, strict types, tests, lock (~5 s)
+uv run tools/check.py --audit       # plus the dependency audit
 ```
+
+CI runs the same checks, plus Windows and macOS, liboqs, mutation testing and the ProVerif models,
+each only when its inputs change. Releases go to [PyPI](https://pypi.org/project/qrp2p/) by
+trusted publishing.
 
 ## Licence
 
