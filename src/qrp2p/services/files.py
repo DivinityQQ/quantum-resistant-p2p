@@ -113,12 +113,12 @@ def sanitize_name(name: str) -> str:
     name = unicodedata.normalize("NFC", name)
     name = name.replace("\\", "/").rsplit("/", 1)[-1]
     name = "".join("_" if is_unsafe_char(c) or c in _WINDOWS_FORBIDDEN else c for c in name)
-    name = name.strip(" ").rstrip(". ")
+    name = name.strip().rstrip(". ")
     if name.startswith("."):
         name = "_" + name[1:]
     if not name.strip("._ "):
         name = "file"
-    stem = name.split(".", 1)[0].rstrip(" ").upper()
+    stem = name.split(".", 1)[0].rstrip().upper()
     if stem in _WINDOWS_RESERVED:
         name = "_" + name
     if len(name.encode("utf-8")) > NAME_BUDGET:
@@ -708,17 +708,7 @@ class FileTransfers:
         task = transfer.io.task
         if task is not None and task is not asyncio.current_task() and not task.done():
             task.cancel()
-        if transfer.direction is TransferDirection.IN and status is not FileStatus.COMPLETE:
-            self._schedule_discard(transfer)
         self._hooks.changed(transfer)
-
-    def _schedule_discard(self, transfer: Transfer) -> None:
-        if transfer.io.stream is None and transfer.io.part is None:
-            return
-        with contextlib.suppress(RuntimeError):  # no running loop: discard synchronously
-            asyncio.get_running_loop().create_task(self._discard(transfer))
-            return
-        _discard_now(transfer)
 
     async def _discard(self, transfer: Transfer) -> None:
         """Close and delete an incoming transfer's partial file."""

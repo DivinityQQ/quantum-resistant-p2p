@@ -1,6 +1,7 @@
 """File transfer (DESIGN §9): names, limits, integrity checks and full transfers between nodes."""
 
 import asyncio
+import errno
 import hashlib
 import os
 import shutil
@@ -19,6 +20,7 @@ from qrp2p.core.wire import (
     FileAccept,
     FileCancel,
     FileChunk,
+    FileDecline,
     FileDone,
     FileOffer,
     FileProgress,
@@ -129,19 +131,24 @@ def test_no_mark_on_linux(tmp_path: Path) -> None:
 class StubSession:
     """What FileTransfers needs from a session: an ID, the peer, and sending."""
 
-    def __init__(self, session_id: int = 1) -> None:
+    def __init__(self, session_id: int = 1, peer: str = "peer") -> None:
         self.id = session_id
-        self.peer = identity_from_label("peer").bundle
+        self.peer = identity_from_label(peer).bundle
         self.glass_box = False
         self.is_open = True
         self.sent: list[Inner] = []
+        self.priorities: list[tuple[str, Priority]] = []
+        self.yield_on_bulk = False
 
-    def send(self, message: Inner, priority: Priority) -> None:  # noqa: ARG002
+    def send(self, message: Inner, priority: Priority) -> None:
         if not self.is_open:
             raise SessionNotOpenError
         self.sent.append(message)
+        self.priorities.append((type(message).__name__, priority))
 
     async def send_bulk(self, message: Inner) -> None:
+        if self.yield_on_bulk:
+            await asyncio.sleep(0)  # like a real writer queue with room: others get a turn
         self.send(message, Priority.FILE)
 
 
@@ -557,3 +564,306 @@ async def test_work_finished_after_cancellation_is_released() -> None:
         await waiter
     gate.set()
     await until(lambda: released == ["handle"])
+
+
+# --- found by mutation testing of the services ----------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("offered", "saved"),
+    [
+        ("CON .txt", "_CON .txt"),  # Windows ignores the space: still the console device
+        ("con.tar.gz", "_con.tar.gz"),  # the stem is what precedes the first dot
+        ("\u2003doc.txt\u3000", "doc.txt"),  # any Unicode space at the ends
+    ],
+)
+def test_sanitize_more_names(offered: str, saved: str) -> None:
+    assert sanitize_name(offered) == saved
+
+
+def test_names_at_the_length_limits() -> None:
+    exact = "a" * NAME_BUDGET
+    assert sanitize_name(exact) == exact
+    assert len(sanitize_name(exact + "a").encode("utf-8")) == NAME_BUDGET
+    long_ext = "b" * 40
+    cut = sanitize_name("a" * 300 + "." + long_ext)
+    assert len(cut.encode("utf-8")) <= NAME_BUDGET
+    assert not cut.endswith("." + long_ext)  # a long "extension" is not kept whole
+    kept = sanitize_name("a" * 300 + "." + "c" * 31)
+    assert kept.endswith("." + "c" * 31)
+    dotted = sanitize_name("a" * (NAME_BUDGET - 5) + "." + "b" * 20 + ".txt")
+    assert ".." not in dotted
+    assert dotted.endswith("a.txt")
+
+
+def test_clash_suffix_goes_before_the_last_extension(tmp_path: Path) -> None:
+    for name in ("archive.tar.gz", "a.txt", "plain"):
+        (tmp_path / name).write_bytes(b"")
+    assert unique_path(tmp_path, "archive.tar.gz").name == "archive.tar (2).gz"
+    assert unique_path(tmp_path, "a.txt").name == "a (2).txt"
+    assert unique_path(tmp_path, "plain").name == "plain (2)"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the hard-link path is POSIX-only")
+def test_rename_falls_back_where_hard_links_are_unsupported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def no_links(_self: Path, _target: Path) -> None:
+        raise OSError(errno.EPERM, "operation not permitted")
+
+    monkeypatch.setattr(Path, "hardlink_to", no_links)
+    source, target = tmp_path / "a.part", tmp_path / "a"
+    source.write_bytes(b"data")
+    rename_no_replace(source, target)
+    assert target.read_bytes() == b"data"
+    source.write_bytes(b"new")
+    with pytest.raises(FileExistsError) as caught:
+        rename_no_replace(source, target)
+    assert caught.value.errno == errno.EEXIST
+    assert target.read_bytes() == b"data"
+
+    def broken(_self: Path, _target: Path) -> None:
+        raise OSError(errno.EIO, "I/O error")
+
+    monkeypatch.setattr(Path, "hardlink_to", broken)
+    with pytest.raises(OSError, match="I/O error"):
+        rename_no_replace(source, tmp_path / "b")
+
+
+def test_media_types() -> None:
+    assert files_module.media_type_of(Path("photo.jpg")) == "image/jpeg"
+    assert files_module.media_type_of(Path("x.no-such-extension")) == "application/octet-stream"
+    assert files_module.media_type_of(Path("x.pict")) == "image/pict"  # a non-strict type
+
+
+async def test_messages_travel_at_their_priorities(tmp_path: Path) -> None:
+    data = os.urandom(20_000)
+    transfers, stub, session = await accepted(tmp_path, data)
+    await feed(transfers, session, data)
+    await transfers.handle(session, FileDone(file_id=FID, sha256=hashlib.sha256(data).digest()))
+    await transfers.handle(
+        session, FileOffer(file_id=b"\x02" * 16, name="n", size=1, media_type="x/y")
+    )
+    transfers.decline(b"\x02" * 16)
+    source = tmp_path / "out.bin"
+    source.write_bytes(b"x" * 10)
+    ours = transfers.offer(session, source)
+    await transfers.handle(session, FileAccept(file_id=ours.file_id))
+    await until(lambda: any(kind == "FileDone" for kind, _ in stub.priorities))
+    await transfers.cancel(ours.file_id)
+    expected = {
+        "FileAccept": Priority.CHAT,
+        "FileDecline": Priority.CHAT,
+        "FileOffer": Priority.CHAT,
+        "FileCancel": Priority.CHAT,
+        "FileProgress": Priority.CONTROL,
+        "FileChunk": Priority.FILE,
+        "FileDone": Priority.FILE,
+    }
+    assert dict(stub.priorities) == expected
+
+
+async def sender(tmp_path: Path, size: int) -> tuple[FileTransfers, StubSession, Transfer, Path]:
+    transfers = FileTransfers(Hooks(), max_size=2**30)
+    stub = StubSession()
+    source = tmp_path / "source.bin"
+    source.write_bytes(os.urandom(size))
+    transfer = transfers.offer(cast("Session", stub), source)
+    return transfers, stub, transfer, source
+
+
+@pytest.mark.parametrize("change", ["shrink", "grow"])
+async def test_a_source_that_changed_since_the_offer_is_cancelled(
+    tmp_path: Path, change: str
+) -> None:
+    transfers, stub, transfer, source = await sender(tmp_path, 50_000)
+    with source.open("r+b") as stream:
+        if change == "shrink":
+            stream.truncate(30_000)
+        else:
+            stream.seek(0, os.SEEK_END)
+            stream.write(b"extra")
+    await transfers.handle(cast("Session", stub), FileAccept(file_id=transfer.file_id))
+    await until(lambda: transfer.finished)
+    assert transfer.status is FileStatus.CANCELLED
+    assert FileCancel(file_id=transfer.file_id, reason=FileCancelReason.SIZE_MISMATCH) in stub.sent
+    assert not any(isinstance(m, FileDone) for m in stub.sent)
+
+
+async def test_an_unreadable_source_fails_the_transfer(tmp_path: Path) -> None:
+    transfers, stub, transfer, source = await sender(tmp_path, 100)
+    source.unlink()
+    await transfers.handle(cast("Session", stub), FileAccept(file_id=transfer.file_id))
+    await until(lambda: transfer.finished)
+    assert transfer.status is FileStatus.FAILED
+    assert FileCancel(file_id=transfer.file_id, reason=FileCancelReason.USER) in stub.sent
+
+
+async def test_sender_stops_when_the_peer_cancels(tmp_path: Path) -> None:
+    transfers, stub, transfer, _ = await sender(tmp_path, 3 * 2**20)
+    stub.yield_on_bulk = True
+    session = cast("Session", stub)
+    await transfers.handle(session, FileAccept(file_id=transfer.file_id))
+    await until(lambda: transfer.transferred > 0)
+    await transfers.handle(
+        session, FileCancel(file_id=transfer.file_id, reason=FileCancelReason.USER)
+    )
+    chunks = sum(isinstance(m, FileChunk) for m in stub.sent)
+    await asyncio.sleep(0.1)
+    assert sum(isinstance(m, FileChunk) for m in stub.sent) == chunks  # nothing more was sent
+    assert transfer.status is FileStatus.CANCELLED
+    assert transfer.by_peer
+    assert not any(isinstance(m, FileCancel) for m in stub.sent)  # no cancel echoed back
+
+
+async def test_peer_cancels_or_declines_our_offer(tmp_path: Path) -> None:
+    transfers, stub, first, _ = await sender(tmp_path, 10)
+    session = cast("Session", stub)
+    await transfers.handle(session, FileCancel(file_id=first.file_id, reason=FileCancelReason.USER))
+    assert first.status is FileStatus.CANCELLED
+    second = transfers.offer(session, tmp_path / "source.bin")
+    await transfers.handle(session, FileDecline(file_id=second.file_id))
+    assert second.status is FileStatus.DECLINED
+    assert second.by_peer
+
+
+async def test_delivered_only_after_the_final_acknowledgement(tmp_path: Path) -> None:
+    transfers, stub, transfer, _ = await sender(tmp_path, 30_000)
+    session = cast("Session", stub)
+    await transfers.handle(session, FileAccept(file_id=transfer.file_id))
+    await until(lambda: any(isinstance(m, FileDone) for m in stub.sent))
+    await asyncio.sleep(0.01)
+    assert transfer.status is FileStatus.TRANSFERRING  # sent, not yet verified by the peer
+    await transfers.handle(session, FileProgress(file_id=transfer.file_id, received=30_000))
+    assert transfer.status is FileStatus.COMPLETE
+
+
+async def test_progress_must_move_forward_while_transferring(tmp_path: Path) -> None:
+    transfers, stub, transfer, _ = await sender(tmp_path, 30_000)
+    session = cast("Session", stub)
+    with pytest.raises(PeerMisbehavedError):  # before our offer was accepted
+        await transfers.handle(session, FileProgress(file_id=transfer.file_id, received=0))
+    transfers, stub, transfer, _ = await sender(tmp_path, 30_000)
+    session = cast("Session", stub)
+    await transfers.handle(session, FileAccept(file_id=transfer.file_id))
+    await until(lambda: transfer.transferred == 30_000)
+    await transfers.handle(session, FileProgress(file_id=transfer.file_id, received=20_000))
+    with pytest.raises(PeerMisbehavedError):
+        await transfers.handle(session, FileProgress(file_id=transfer.file_id, received=10_000))
+
+
+async def test_an_offer_may_not_reuse_a_finished_id() -> None:
+    transfers, _, _, session = receiver()
+    await offered(transfers, session, b"x")
+    transfers.decline(FID)
+    with pytest.raises(PeerMisbehavedError):
+        await offered(transfers, session, b"x")
+
+
+async def test_limits_are_inclusive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    transfers, hooks, stub, session = receiver(max_size=1000)
+    await offered(transfers, session, b"x" * 1000)  # exactly the limit
+    assert len(hooks.offers) == 1
+    need = 1000 + files_module.FREE_SPACE_MARGIN
+    monkeypatch.setattr(
+        files_module.shutil,
+        "disk_usage",
+        lambda _: shutil._ntuple_diskusage(need, 0, need),
+    )
+    transfer = await transfers.accept(FID, tmp_path / "a" / "b")  # nested, not yet created
+    assert transfer.status is FileStatus.TRANSFERRING
+    assert FileAccept(file_id=FID) in stub.sent
+    await transfers.session_ended(session)
+
+
+@pytest.mark.parametrize(
+    ("error", "reason"),
+    [(errno.ENOSPC, FileCancelReason.DISK_FULL), (errno.EIO, FileCancelReason.USER)],
+)
+async def test_write_failures_fail_the_transfer(
+    tmp_path: Path, error: int, reason: FileCancelReason
+) -> None:
+    data = os.urandom(2 * 2**20)
+    transfers, stub, session = await accepted(tmp_path, data)
+    transfer = transfers.get(FID)
+    assert transfer is not None
+    stream = transfer.io.stream
+    assert stream is not None
+
+    class FailingStream:
+        def write(self, _: bytes) -> int:
+            raise OSError(error, "write failed")
+
+        def close(self) -> None:
+            stream.close()
+
+    transfer.io.stream = FailingStream()  # type: ignore[assignment]
+    await feed(transfers, session, data)
+    assert transfer.status is FileStatus.FAILED
+    assert FileCancel(file_id=FID, reason=reason) in stub.sent
+    assert not any(tmp_path.iterdir())  # noqa: ASYNC240
+
+
+async def test_a_file_that_appears_meanwhile_is_not_overwritten(tmp_path: Path) -> None:
+    data = os.urandom(10_000)
+    transfers, _, session = await accepted(tmp_path, data)
+    (tmp_path / "f.bin").write_bytes(b"someone else's")
+    await feed(transfers, session, data)
+    await transfers.handle(session, FileDone(file_id=FID, sha256=hashlib.sha256(data).digest()))
+    assert (tmp_path / "f.bin").read_bytes() == b"someone else's"
+    assert (tmp_path / "f (2).bin").read_bytes() == data
+
+
+async def test_a_part_file_name_taken_at_the_last_moment_is_skipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "f.bin.part").write_bytes(b"another writer's")
+    names = iter([tmp_path / "f.bin", tmp_path / "f (2).bin"])
+    monkeypatch.setattr(files_module, "unique_path", lambda *_: next(names))
+    transfers, _, _, session = receiver()
+    await offered(transfers, session, b"x" * 10)
+    transfer = await transfers.accept(FID, tmp_path)
+    assert transfer.path == tmp_path / "f (2).bin"
+    assert (tmp_path / "f.bin.part").read_bytes() == b"another writer's"
+    await transfers.session_ended(session)
+
+
+async def test_pending_offers_are_counted_per_peer() -> None:
+    hooks = Hooks()
+    transfers = FileTransfers(hooks, max_size=2**30)
+    carol = cast("Session", StubSession(1, "carol"))
+    dave = cast("Session", StubSession(2, "dave"))
+    for n in range(3):
+        await transfers.handle(
+            carol, FileOffer(file_id=bytes([n]) * 16, name="a", size=1, media_type="x/y")
+        )
+    await transfers.handle(
+        dave, FileOffer(file_id=b"\x09" * 16, name="a", size=1, media_type="x/y")
+    )
+    assert len(hooks.offers) == 4  # Carol's three do not count against Dave
+
+
+async def test_ending_a_session_forgets_its_finished_transfers() -> None:
+    transfers, _, _, session = receiver()
+    await offered(transfers, session, b"x")
+    transfers.decline(FID)
+    await transfers.session_ended(session)
+    assert transfers._finished == {}
+
+
+async def test_failed_work_after_cancellation_is_not_released() -> None:
+    gate = threading.Event()
+    released: list[object] = []
+
+    def fail_slowly() -> str:
+        gate.wait(5)
+        raise OSError(errno.EIO, "failed")
+
+    waiter = asyncio.create_task(files_module._owned_in_thread(fail_slowly, released.append))
+    await asyncio.sleep(0.01)
+    waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    gate.set()
+    await asyncio.sleep(0.05)
+    assert released == []

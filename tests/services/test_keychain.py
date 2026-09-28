@@ -99,3 +99,16 @@ def test_the_real_os_keychain() -> None:
     finally:
         keychain.delete(vault_id)
     assert keychain.get(vault_id) is None
+
+
+def test_invalid_base64_reads_as_absent() -> None:
+    backend = MemoryBackend()
+    backend.store[(SERVICE, "01" * 16)] = "AAAA$AAA"  # lenient decoding would skip the "$"
+    assert OsKeychain(backend).get(b"\x01" * 16) is None
+
+
+def test_the_active_backend_is_used_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    backend = MemoryBackend()
+    monkeypatch.setattr("keyring.get_keyring", lambda: backend)
+    OsKeychain().set(b"\x01" * 16, b"k" * 32)
+    assert backend.store

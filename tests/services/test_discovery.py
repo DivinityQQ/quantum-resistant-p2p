@@ -2,20 +2,25 @@
 
 import asyncio
 import os
-from typing import cast
+from types import SimpleNamespace
+from typing import ClassVar, cast
 
 import pytest
+from zeroconf import ServiceStateChange
 from zeroconf.asyncio import AsyncServiceInfo
 
+from qrp2p.services import discovery as discovery_module
 from qrp2p.services.discovery import (
     MAX_ADDRESSES,
     MAX_LABEL_BYTES,
     SERVICE_TYPE,
     Discovery,
     instance_name,
+    local_addresses,
     parse_txt,
     txt_properties,
 )
+from tests.services.support import until
 from tests.support import identity_from_label
 
 PEER_ID = identity_from_label("alice").bundle.peer_id
@@ -128,3 +133,194 @@ async def test_two_nodes_find_each_other() -> None:
     finally:
         await a.stop()
         await b.stop()
+
+
+# --- found by mutation testing of the services ----------------------------------------------------
+
+
+def test_txt_profile_field_bounds() -> None:
+    base = {b"v": b"2", b"id": b"00" * 8}
+    assert parse_txt({**base, b"pf": b"ff"}) == (bytes(8), 255)
+    assert parse_txt({**base, b"pf": b"a"}) == (bytes(8), 10)  # hex, not decimal
+    assert parse_txt({**base, b"pf": b"abc"}) is None
+
+
+def test_instance_name_cut() -> None:
+    suffix = " (ABCD-EFGH)"
+    budget = MAX_LABEL_BYTES - len(suffix)
+    exact = "a" * budget
+    assert instance_name(exact, "ABCD-EFGH") == exact + suffix
+    assert instance_name("b" * 100, "ABCD-EFGH") == "b" * budget + suffix
+    spaced = "c" * (budget - 1) + " " + "d" * 10  # the cut falls just after a space
+    assert instance_name(spaced, "ABCD-EFGH") == "c" * (budget - 1) + suffix
+
+
+@pytest.mark.parametrize(("port", "ok"), [(1, True), (65535, True), (0, False), (65536, False)])
+def test_announced_port_bounds(port: int, ok: bool) -> None:
+    name = f"Alice (ABCD-EFGH).{SERVICE_TYPE}"
+    peer = discovery().peer_from_info(name, info(port=port, addresses=["192.0.2.7", "fe80::1%2"]))
+    assert (peer is not None) is ok
+    if peer is not None:
+        assert peer.instance == name
+        assert peer.addresses == ("192.0.2.7", "fe80::1%2")
+
+
+class FakeZeroconf:
+    """Stands in for AsyncZeroconf: records what discovery asks of it."""
+
+    created: ClassVar[list[FakeZeroconf]] = []
+
+    def __init__(self, interfaces: object = None, ip_version: object = None) -> None:
+        self.interfaces = interfaces
+        self.ip_version = ip_version
+        self.zeroconf = object()
+        self.registered: list[tuple[object, bool]] = []
+        self.unregistered: list[object] = []
+        self.closed = False
+        FakeZeroconf.created.append(self)
+
+    async def async_register_service(self, info: object, allow_name_change: bool = False) -> object:
+        self.registered.append((info, allow_name_change))
+        return asyncio.sleep(0)
+
+    async def async_unregister_service(self, info: object) -> object:
+        self.unregistered.append(info)
+        return asyncio.sleep(0)
+
+    async def async_close(self) -> None:
+        self.closed = True
+
+
+class FakeBrowser:
+    last: FakeBrowser | None = None
+
+    def __init__(self, _zc: object, types: list[str], handlers: list[object]) -> None:
+        self.types = types
+        self.handlers = handlers
+        self.cancelled = False
+        FakeBrowser.last = self
+
+    async def async_cancel(self) -> None:
+        self.cancelled = True
+
+
+class FakeServiceInfo:
+    """Registration records its arguments; resolving answers from RESOLVABLE."""
+
+    RESOLVABLE: ClassVar[dict[str, tuple[dict[bytes, bytes | None], int, list[str]]]] = {}
+
+    def __init__(self, type_: str, name: str, **kwargs: object) -> None:
+        self.type_ = type_
+        self.name = name
+        self.kwargs = kwargs
+        self.properties: dict[bytes, bytes | None] = {}
+        self.port: int | None = None
+        self._addresses: list[str] = []
+
+    async def async_request(self, _zc: object, _timeout_ms: int) -> bool:
+        found = self.RESOLVABLE.get(self.name)
+        if found is None:
+            return False
+        self.properties, self.port, self._addresses = found
+        return True
+
+    def parsed_scoped_addresses(self, _version: object) -> list[str]:
+        return self._addresses
+
+
+@pytest.fixture
+def fake_zeroconf(monkeypatch: pytest.MonkeyPatch) -> None:
+    FakeZeroconf.created.clear()
+    FakeServiceInfo.RESOLVABLE.clear()
+    monkeypatch.setattr(discovery_module, "AsyncZeroconf", FakeZeroconf)
+    monkeypatch.setattr(discovery_module, "AsyncServiceBrowser", FakeBrowser)
+    monkeypatch.setattr(discovery_module, "AsyncServiceInfo", FakeServiceInfo)
+
+
+def change(name: str, state: ServiceStateChange, service_type: str = SERVICE_TYPE) -> None:
+    browser = FakeBrowser.last
+    assert browser is not None
+    (handler,) = browser.handlers
+    handler(zeroconf=None, service_type=service_type, name=name, state_change=state)  # type: ignore[operator]
+
+
+@pytest.mark.usefixtures("fake_zeroconf")
+async def test_announce_browse_and_stop() -> None:
+    changes: list[int] = []
+    node = Discovery(on_change=lambda: changes.append(1), own_id_hint=b"\x00" * 8)
+    await node.start(
+        instance="Alice (ABCD-EFGH)",
+        port=47470,
+        peer_id=PEER_ID,
+        profiles=3,
+        addresses=["192.0.2.1"],
+    )
+    await node.start(instance="again", port=1, peer_id=PEER_ID, profiles=3)  # no-op
+    (zc,) = FakeZeroconf.created
+    ((registered, rename_allowed),) = zc.registered
+    assert isinstance(registered, FakeServiceInfo)
+    assert rename_allowed
+    assert registered.name == f"Alice (ABCD-EFGH).{SERVICE_TYPE}"
+    assert registered.kwargs["port"] == 47470
+    assert registered.kwargs["properties"] == txt_properties(PEER_ID, 3)
+    assert registered.kwargs["parsed_addresses"] == ["192.0.2.1"]
+    assert registered.kwargs["server"] == f"qrp2p-{PEER_ID[:8].hex()}.local."
+    assert FakeBrowser.last is not None
+    assert FakeBrowser.last.types == [SERVICE_TYPE]
+    assert node.running
+
+    bob = f"Bob (XXXX-YYYY).{SERVICE_TYPE}"
+    txt: dict[bytes, bytes | None] = {b"v": b"2", b"id": b"11" * 8, b"pf": b"1"}
+    FakeServiceInfo.RESOLVABLE[bob] = (txt, 47471, ["192.0.2.2"])
+    change(bob, ServiceStateChange.Added)
+    await until(lambda: len(node.peers()) == 1)
+    assert node.peers()[0].addresses == ("192.0.2.2",)
+    assert changes == [1]
+    change(bob, ServiceStateChange.Updated)  # the same record again: nothing changes
+    await asyncio.sleep(0.01)
+    assert changes == [1]
+    change(bob, ServiceStateChange.Removed, service_type="_other._tcp.local.")  # not ours
+    assert len(node.peers()) == 1
+    change(f"Nobody.{SERVICE_TYPE}", ServiceStateChange.Added)  # does not resolve
+    await asyncio.sleep(0.01)
+    assert len(node.peers()) == 1
+    change(bob, ServiceStateChange.Removed)
+    assert node.peers() == []
+    assert changes == [1, 1]
+
+    change(bob, ServiceStateChange.Added)
+    await until(lambda: len(node.peers()) == 1)
+    await node.stop()
+    assert zc.unregistered == [registered]
+    assert zc.closed
+    assert FakeBrowser.last.cancelled
+    assert node.peers() == []
+    assert not node.running
+    await node.stop()  # twice is harmless
+
+
+@pytest.mark.usefixtures("fake_zeroconf")
+async def test_nothing_to_announce_still_browses() -> None:
+    node = Discovery(on_change=lambda: None, own_id_hint=b"\x00" * 8, interfaces=["127.0.0.1"])
+    await node.start(instance="x", port=1, peer_id=PEER_ID, profiles=1, addresses=[])
+    (zc,) = FakeZeroconf.created
+    assert zc.registered == []
+    assert zc.interfaces == ["127.0.0.1"]
+    assert FakeBrowser.last is not None
+    await node.stop()
+    assert zc.unregistered == []
+
+
+def test_local_addresses_skip_loopback_link_local_and_duplicates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def adapter(*ips: object) -> SimpleNamespace:
+        return SimpleNamespace(ips=[SimpleNamespace(ip=ip) for ip in ips])
+
+    adapters = [
+        adapter("127.0.0.1", ("::1", 0, 0)),
+        adapter("192.168.1.5", ("fe80::1", 0, 2), ("2001:db8::5", 0, 0), "not an address"),
+        adapter("192.168.1.5", "169.254.3.4", "224.0.0.251"),
+    ]
+    monkeypatch.setattr(discovery_module.ifaddr, "get_adapters", lambda: adapters)
+    assert local_addresses() == ["192.168.1.5", "2001:db8::5"]

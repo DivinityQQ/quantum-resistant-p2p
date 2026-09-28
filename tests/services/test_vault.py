@@ -3,6 +3,7 @@
 import json
 import sqlite3
 import sys
+import time
 from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
@@ -38,6 +39,7 @@ from qrp2p.services.vault import (
     VaultCorruptError,
     VaultExistsError,
     VaultFile,
+    VaultHeader,
     VaultInUseError,
     VaultLockedError,
     WrongPasswordError,
@@ -597,3 +599,282 @@ def test_retention(tmp_path: Path) -> None:
     vault.unlock("correct horse")
     assert vault.history(ephemeral.conv_id) == []
     assert len(vault.history(forever.conv_id)) == 2
+
+
+# --- found by mutation testing of the services ----------------------------------------------------
+
+
+def test_header_layout_matches_the_design() -> None:
+    """Known answer for DESIGN §10.2: every field, width and byte order."""
+    header = VaultHeader(bytes(range(16)), KdfParams(t=3, m_kib=262_144, p=4), bytes(range(16, 32)))
+    expected = (
+        b"\x00\x13qrp2p2 vault header"
+        b"\x00\x01"  # format_version
+        + bytes(range(16))  # vault_id
+        + b"\x01"  # Argon2id
+        + b"\x00\x00\x00\x03"
+        + b"\x00\x04\x00\x00"
+        + b"\x00\x00\x00\x04"
+        + bytes(range(16, 32))
+    )
+    assert header.encode() == expected
+
+
+@pytest.mark.parametrize(
+    ("params", "ok"),
+    [
+        (KdfParams(t=1000, m_kib=64, p=1), True),
+        (KdfParams(t=1001, m_kib=64, p=1), False),
+        (KdfParams(t=1, m_kib=512, p=64), True),
+        (KdfParams(t=1, m_kib=520, p=65), False),
+        (KdfParams(t=1, m_kib=32, p=4), True),  # m = 8p exactly
+        (KdfParams(t=1, m_kib=31, p=4), False),
+        (KdfParams(t=1, m_kib=4 * 2**20, p=1), True),
+        (KdfParams(t=1, m_kib=4 * 2**20 + 1, p=1), False),
+    ],
+)
+def test_kdf_parameter_bounds(params: KdfParams, ok: bool) -> None:
+    if ok:
+        params.check()
+    else:
+        with pytest.raises(VaultCorruptError):
+            params.check()
+
+
+@pytest.mark.parametrize(
+    ("elapsed", "expected_t"),
+    [
+        (0.5, 1),  # half the target: good enough
+        (0.6, 1),
+        (0.4, 3),  # too fast: scale t up to reach about 1 s
+        (0.125, 8),
+    ],
+)
+def test_calibration_thresholds(elapsed: float, expected_t: int) -> None:
+    ticks = iter([100.0, 100.0 + elapsed, 200.0, 201.0])
+    policy = KdfPolicy(CHEAP.floor, target_seconds=1.0)
+    params, _ = calibrated_kek("pw", bytes(16), policy, lambda: next(ticks))
+    assert params.t == expected_t
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("format", "qrp2p-vaultz"), ("vault_id", "00" * 15), ("salt", "00" * 15)],
+)
+def test_vault_json_fields_are_each_checked(tmp_path: Path, field: str, value: str) -> None:
+    vault = make_vault(tmp_path)
+    doc = json.loads((vault.directory / VAULT_FILE).read_text())
+    doc[field] = value
+    with pytest.raises(VaultCorruptError):
+        VaultFile.from_json(json.dumps(doc).encode())
+
+
+def test_padding_with_a_whole_block_of_zeros_is_not_canonical() -> None:
+    with pytest.raises(VaultCorruptError):
+        unpad(b"a" * 63 + b"\x80" + bytes(64))
+
+
+def test_second_process_is_refused_at_once(tmp_path: Path) -> None:
+    vault = make_vault(tmp_path)
+    started = time.monotonic()
+    with pytest.raises(VaultInUseError):
+        Vault(vault.directory, kdf=CHEAP).acquire()
+    assert time.monotonic() - started < 0.5
+
+
+def test_device_unlock_after_an_interrupted_password_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    keychain = MemoryKeychain()
+    vault = make_vault(tmp_path)
+    vault.enable_device_unlock(keychain)
+    real_write = vault_module.write_private_file
+
+    def crash_on_vault_json(path: Path, data: bytes) -> None:
+        if path.name == VAULT_FILE:
+            raise KeyboardInterrupt
+        real_write(path, data)
+
+    monkeypatch.setattr(vault_module, "write_private_file", crash_on_vault_json)
+    with pytest.raises(KeyboardInterrupt):
+        vault.change_password("correct horse", "new", keychain)
+    monkeypatch.undo()
+    assert vault._open is not None
+    vault._open.db.close()
+    vault._open = None
+    vault.close()
+    fresh = Vault(vault.directory, kdf=CHEAP)
+    fresh.unlock_with_device(keychain)  # the old vault.json does not match; .new does
+    assert not (vault.directory / VAULT_FILE_NEW).exists()
+    fresh.close()
+    attempt(vault.directory, "new")
+
+
+def test_a_device_key_of_the_wrong_length_is_refused(tmp_path: Path) -> None:
+    keychain = MemoryKeychain()
+    vault = make_vault(tmp_path)
+    vault.enable_device_unlock(keychain)
+    for vault_id in keychain.items:
+        keychain.items[vault_id] = b"short"
+    vault.change_password("correct horse", "new", keychain)
+    assert not vault.device_unlock_enabled  # the key could not wrap the new KEK
+    vault.close()
+    with pytest.raises(WrongPasswordError):
+        Vault(vault.directory, kdf=CHEAP).unlock_with_device(keychain)
+
+
+def test_password_can_change_twice(tmp_path: Path) -> None:
+    vault = make_vault(tmp_path)
+    vault.change_password("correct horse", "second")
+    vault.change_password("second", "third")
+    attempt(reopen_path(vault), "third")
+
+
+def reopen_path(vault: Vault) -> Path:
+    vault.close()
+    return vault.directory
+
+
+def test_a_failed_rekey_leaves_the_vault_as_it_was(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    vault = make_vault(tmp_path)
+    bob = contact(vault)
+    vault.save_contact(bob)
+    vault.add_entry(bob.conv_id, chat_entry(vault, "kept"))
+
+    def broken(*_: object) -> None:
+        msg = "disk I/O error"
+        raise sqlite3.OperationalError(msg)
+
+    monkeypatch.setattr(vault, "_put_identity", broken)
+    with pytest.raises(sqlite3.OperationalError):
+        vault.change_password("correct horse", "new")
+    monkeypatch.undo()
+    assert [e.text for e in vault.history(bob.conv_id)] == ["kept"]  # old keys still work
+    assert not (vault.directory / VAULT_FILE_NEW).exists()
+    attempt(reopen_path(vault), "correct horse")
+
+
+def test_unlocking_again_closes_the_previous_database(tmp_path: Path) -> None:
+    vault = make_vault(tmp_path)
+    assert vault._open is not None
+    first = vault._open.db
+    vault.unlock("correct horse")
+    with pytest.raises(sqlite3.ProgrammingError):
+        first.execute("SELECT 1")
+
+
+@pytest.mark.parametrize("change", ["DELETE FROM meta", "UPDATE meta SET value = '2'"])
+def test_a_database_of_another_schema_does_not_open(tmp_path: Path, change: str) -> None:
+    vault = make_vault(tmp_path)
+    vault.close()
+    db = sqlite3.connect(vault.directory / DB_FILE)
+    db.execute(change)
+    db.commit()
+    db.close()
+    with pytest.raises(WrongPasswordError):
+        attempt(vault.directory, "correct horse")
+
+
+def test_every_setting_round_trips_in_one_row(tmp_path: Path) -> None:
+    vault = make_vault(tmp_path)
+    settings = Settings(
+        display_name="Zed",
+        announce_name=False,
+        default_profile=ProfileId.PQ_CNSA_1,
+        default_retention=Retention.DAYS_30,
+        auto_lock_minutes=3,
+        port=40000,
+        downloads_dir="/somewhere",
+        max_file_size=123,
+    )
+    vault.save_settings(Settings())
+    vault.save_settings(settings)
+    again = reopen(vault)
+    assert again.settings() == settings
+    assert again._state().db.execute("SELECT count(*) FROM settings").fetchone() == (1,)
+
+
+def test_every_contact_field_round_trips(tmp_path: Path) -> None:
+    vault = make_vault(tmp_path)
+    full = contact(
+        vault,
+        trust=TrustState.VERIFIED,
+        profile_id=ProfileId.PQ_CNSA_1,
+        retention=Retention.DAYS_30,
+        auto_accept_files=True,
+        auto_accept_limit=4096,
+        address=("fe80::1%eth0", 1234),
+        created=42.5,
+    )
+    vault.save_contact(full)
+    assert reopen(vault).contacts() == [full]
+
+
+def test_every_history_field_round_trips(tmp_path: Path) -> None:
+    vault = make_vault(tmp_path)
+    bob = contact(vault)
+    vault.save_contact(bob)
+    entry = HistoryEntry(
+        entry_id=vault.new_entry_id(),
+        kind=MessageKind.FILE,
+        direction=Direction.OUT,
+        time=7.25,
+        message_id=b"i" * 16,
+        status=MessageStatus.FAILED,
+        text="note",
+        file=FileInfo(
+            file_id=b"f" * 16,
+            name="x.bin",
+            size=9,
+            media_type="a/b",
+            status=FileStatus.CANCELLED,
+            sha256=b"h" * 32,
+            path="p",
+            reason="hash_mismatch",
+        ),
+        glass_box=True,
+    )
+    vault.add_entry(bob.conv_id, entry)
+    assert reopen(vault).history(bob.conv_id) == [entry]
+
+
+def test_deleting_a_contact_deletes_its_conversation(tmp_path: Path) -> None:
+    vault = make_vault(tmp_path)
+    bob = contact(vault)
+    vault.save_contact(bob)
+    vault.add_entry(bob.conv_id, chat_entry(vault, "gone"))
+    vault.delete_contact(bob)
+    db = vault._state().db
+    assert db.execute("SELECT count(*) FROM messages").fetchone() == (0,)
+    assert db.execute("SELECT count(*) FROM conv_keys").fetchone() == (0,)
+    assert bob.conv_id not in vault._state().conv_keys  # the key is gone from memory too
+
+
+def test_deleting_a_conversation_forgets_its_key(tmp_path: Path) -> None:
+    vault = make_vault(tmp_path)
+    bob = contact(vault)
+    vault.save_contact(bob)
+    vault.add_entry(bob.conv_id, chat_entry(vault, "gone"))
+    vault.delete_conversation(bob)
+    assert bob.conv_id not in vault._state().conv_keys
+
+
+def test_retention_boundaries_and_counts(tmp_path: Path) -> None:
+    vault = make_vault(tmp_path)
+    day = 86_400.0
+    now = 100 * day
+    keepers = [contact(vault, f"keeper{n}") for n in range(5)]  # forever, in any row order
+    monthly = [contact(vault, f"monthly{n}", retention=Retention.DAYS_30) for n in range(2)]
+    ephemeral = [contact(vault, f"eph{n}", retention=Retention.SESSION) for n in range(2)]
+    for c in (*keepers, *monthly, *ephemeral):
+        vault.save_contact(c)
+        vault.add_entry(c.conv_id, chat_entry(vault, "old", time=now - 31 * day))
+        vault.add_entry(c.conv_id, chat_entry(vault, "edge", time=now - 30 * day))
+    assert vault.purge_expired(now) == 2  # one per monthly contact; the edge is kept
+    for c in monthly:
+        assert [e.text for e in vault.history(c.conv_id)] == ["edge"]
+    assert vault.purge_expired(now) == 0
+    assert vault.purge_session_only() == 4
+    assert vault.purge_session_only() == 0

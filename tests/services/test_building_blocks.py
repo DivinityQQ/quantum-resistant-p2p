@@ -2,11 +2,13 @@
 
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from qrp2p.core.errors import AdmitReason
 from qrp2p.core.trace import StateChanged
+from qrp2p.services import paths as paths_module
 from qrp2p.services.admission import (
     DECLINES_TO_MUTE,
     MUTE_SECONDS,
@@ -20,7 +22,12 @@ from qrp2p.services.admission import (
 )
 from qrp2p.services.limits import SlotPool, TokenBucket
 from qrp2p.services.models import Contact, TrustState
-from qrp2p.services.paths import DATA_DIR_ENV, default_data_dir, write_private_file
+from qrp2p.services.paths import (
+    DATA_DIR_ENV,
+    default_data_dir,
+    ensure_private_dir,
+    write_private_file,
+)
 from qrp2p.services.text import display_text
 from qrp2p.services.trace_bus import ENDED_KEPT, RING_SIZE, TraceBus
 from tests.support import identity_from_label
@@ -180,3 +187,86 @@ def test_glass_box_limiter() -> None:
     limiter.accepted(peer)  # an accept resets the count
     limiter.declined(peer, now + MUTE_SECONDS)
     assert limiter.allows(peer, now + MUTE_SECONDS + PROMPT_INTERVAL)
+
+
+# --- found by mutation testing of the services ----------------------------------------------------
+
+
+def test_limiter_counts_declines_in_a_row() -> None:
+    limiter = GlassBoxLimiter()
+    peer, now = b"q" * 48, 0.0
+    limiter.declined(peer, now)  # a decline without an earlier prompt is fine
+    limiter.declined(peer, now)
+    limiter.accepted(peer)  # resets: two more declines do not mute
+    limiter.declined(peer, now)
+    limiter.declined(peer, now)
+    assert limiter.allows(peer, now + PROMPT_INTERVAL)
+    limiter.declined(peer, now)  # the third in a row
+    assert not limiter.allows(peer, now + PROMPT_INTERVAL)
+    later = now + MUTE_SECONDS
+    limiter.declined(peer, later)  # after a mute the count starts from zero
+    limiter.declined(peer, later)
+    assert limiter.allows(peer, later + PROMPT_INTERVAL)
+
+
+def test_display_text_limit_is_inclusive() -> None:
+    assert display_text("abcd", limit=4) == "abcd"
+
+
+def test_slot_counts_per_source() -> None:
+    pool = SlotPool(total=10, per_source=5)
+    for _ in range(3):
+        pool.acquire("a")
+    pool.release("a")
+    assert pool.in_use == 2
+
+
+def test_trace_records_and_the_ended_limit() -> None:
+    bus = TraceBus()
+    event = StateChanged("m", "s")
+    bus.publish(7, 1.5, event)
+    (record,) = bus.events(7)
+    assert (record.session_id, record.time, record.event) == (7, 1.5, event)
+    for session in range(ENDED_KEPT):
+        bus.publish(session + 100, 0.0, event)
+        bus.session_ended(session + 100)
+    assert all(bus.events(session + 100) for session in range(ENDED_KEPT))  # exactly kept
+    bus.session_ended(999)  # an ended session that never traced anything
+    bus.session_ended(998)
+    assert bus.events(100) == ()
+
+
+def test_private_directory(tmp_path: Path) -> None:
+    nested = tmp_path / "a" / "b"
+    ensure_private_dir(nested)
+    assert nested.is_dir()
+    if sys.platform != "win32":
+        loose = tmp_path / "loose"
+        loose.mkdir(mode=0o755)
+        loose.chmod(0o755)
+        ensure_private_dir(loose)
+        assert loose.stat().st_mode & 0o777 == 0o700
+
+
+def test_private_file_is_written_next_to_its_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[object] = []
+    real = paths_module.tempfile.mkstemp
+
+    def spy(**kwargs: Any) -> tuple[int, str]:  # noqa: ANN401
+        seen.append(kwargs.get("dir"))
+        return real(**kwargs)
+
+    monkeypatch.setattr(paths_module.tempfile, "mkstemp", spy)
+    write_private_file(tmp_path / "x", b"1")
+    assert seen == [tmp_path]  # same file system, so the rename is atomic
+
+
+def test_a_failed_private_write_leaves_no_temporary_file(tmp_path: Path) -> None:
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "occupied").write_bytes(b"")  # a non-empty directory cannot be replaced
+    with pytest.raises(OSError):  # noqa: PT011  # whichever the OS reports
+        write_private_file(target, b"data")
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["target"]
