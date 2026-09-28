@@ -4,12 +4,13 @@ This is the working plan for building [DESIGN.md](DESIGN.md). It is written for 
 work up next, human or a Claude Code session on a local machine. Start with the repository's
 `CLAUDE.md`, then this file.
 
-**Status (2026-09-27):** M0 and M1 are complete; their gates are met (see the status notes
-under each). CI runs lint, types, layers, audit, the tests on three OSes, liboqs on three OSes,
-the ProVerif models and mutation testing. **Next: M2** (services and headless CLI), which is the
-first phase that touches sockets and disks. Steps that need the owner's accounts (tag,
-ruleset, merging PR #3 and then the M1 PR, PyPI, the liboqs bug report) are in
-[OWNER_TODO.md](OWNER_TODO.md). Step 0's PyPI placeholder is still open there.
+**Status (2026-09-28):** M0 and M1 are complete and on `main`; their gates are met (see the
+status notes under each). v1 is tagged `v1-final`, and the `main` ruleset requires all nine CI
+checks: lint, types, layers, audit, the tests on three OSes, liboqs on three OSes, the ProVerif
+models and mutation testing. **Next: M2** (services and headless CLI), which is the first phase
+that touches sockets and disks. Steps that need the owner's accounts (the v1 Pages site, PyPI,
+the liboqs bug report) are in [OWNER_TODO.md](OWNER_TODO.md). Step 0's PyPI placeholder is still
+open there.
 
 ---
 
