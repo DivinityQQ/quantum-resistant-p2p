@@ -192,5 +192,7 @@ forbidden_modules = ["PySide6", "qrp2p.ui"]
 
 [tool.mutmut]
 paths_to_mutate = ["src/qrp2p/core/"]
-tests_dir = ["tests/"]
+# Core mutants must be killed by the core and lab tests (the M1 gate); the services, CLI and
+# packaging tests use sockets, processes and the project checkout, which mutant runs do not need.
+pytest_add_cli_args_test_selection = ["tests/core", "tests/lab"]
 also_copy = ["src/qrp2p/__init__.py", "src/qrp2p/py.typed", "src/qrp2p/lab/", "src/qrp2p/services/", "src/qrp2p/ui/", "src/qrp2p/cli/"]

@@ -195,12 +195,8 @@ def test_sizes() -> None:
 
 def test_arguments() -> None:
     args = parse_args(["--data-dir", "/x", "--port", "5", "--no-mdns", "--password-stdin"])
-    assert (str(args.data_dir), args.port, args.no_mdns, args.password_stdin) == (
-        "/x",
-        5,
-        True,
-        True,
-    )
+    assert args.data_dir == Path("/x")
+    assert (args.port, args.no_mdns, args.password_stdin) == (5, True, True)
 
 
 # --- two real processes ---------------------------------------------------------------------------
