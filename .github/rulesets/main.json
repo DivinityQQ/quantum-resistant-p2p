@@ -60,6 +60,14 @@
           {
             "context": "liboqs macos-latest",
             "integration_id": 15368
+          },
+          {
+            "context": "Formal model (ProVerif)",
+            "integration_id": 15368
+          },
+          {
+            "context": "Mutation testing (core)",
+            "integration_id": 15368
           }
         ]
       }

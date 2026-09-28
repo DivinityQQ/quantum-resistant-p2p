@@ -1,0 +1,59 @@
+# Surviving mutants of qrp2p.core that are equivalent or harmless, with the reason.
+# Format: <function> :: <removed line(s)> => <added line(s)>  # <reason>
+# tests/mutation_gate.py fails CI on any other survivor that changes code, and reports entries
+# here that no longer survive. Message-only mutants (error texts, labels) need no entry.
+# Prefer a test to a new entry; add one only for a mutant no behaviour can distinguish.
+
+qrp2p.core.crypto.identity.IdentityBundle.decode :: raise ProtocolError(CloseReason.SCHEMA_ERROR, 'invalid identity public key') from None => raise ProtocolError(None, 'invalid identity public key') from None  # unreachable: pyca 50 imports any correctly sized Ed25519/ML-DSA key (VERIFIED_FACTS); kept as a defence
+qrp2p.core.crypto.identity.IdentityBundle.decode :: raise ProtocolError(CloseReason.SCHEMA_ERROR, 'invalid identity public key') from None => raise ProtocolError('invalid identity public key') from None  # unreachable: pyca 50 imports any correctly sized Ed25519/ML-DSA key (VERIFIED_FACTS); kept as a defence
+qrp2p.core.crypto.mlkem1024.keygen :: dk = Secret(seed.reveal(), 'mlkem1024.dk') => dk = Secret(seed.reveal(), None)  # a Secret's label is public metadata only
+qrp2p.core.crypto.provider.PlainProvider.kem_keygen :: seed = Secret(self.random(profile.kem.seed_len), 'kem.seed') => seed = Secret(self.random(profile.kem.seed_len), None)  # a Secret's label is public metadata only
+qrp2p.core.crypto.provider.RevealingProvider.extract :: out = self._inner.extract(profile, salt, ikm, name=name) => out = self._inner.extract(profile, None, ikm, name=name)  # RFC 5869: a missing salt is Hlen zero bytes, which is what zero is
+qrp2p.core.crypto.xwing._expand :: expanded = hashlib.shake_256(sk.reveal()).digest(96) => expanded = hashlib.shake_256(sk.reveal()).digest(97)  # the X25519 key is the same 32 bytes either way
+qrp2p.core.crypto.xwing._expand :: sk_x = x25519.X25519PrivateKey.from_private_bytes(expanded[64:96]) => sk_x = x25519.X25519PrivateKey.from_private_bytes(expanded[64:97])  # the X25519 key is the same 32 bytes either way
+qrp2p.core.handshake._Machine.__init__ :: self._transcript: Transcript | None = None => self._transcript: Transcript | None = ''  # initial None is overwritten before any read
+qrp2p.core.handshake._Machine.__init__ :: self._secrets: HandshakeSecrets | None = None => self._secrets: HandshakeSecrets | None = ''  # initial None is overwritten before any read
+qrp2p.core.handshake._Machine._establish :: assert profile is not None and secrets is not None => assert profile is not None or secrets is not None  # internal invariant; every caller reaches it only in the asserted state
+qrp2p.core.handshake.Initiator.__init__ :: self._dk: Secret | None = None => self._dk: Secret | None = ''  # initial None is overwritten before any read
+qrp2p.core.handshake.Initiator.__init__ :: self._ek: bytes | None = None => self._ek: bytes | None = ''  # initial None is overwritten before any read
+qrp2p.core.handshake.Initiator.__init__ :: self._peer: IdentityBundle | None = None => self._peer: IdentityBundle | None = ''  # initial None is overwritten before any read
+qrp2p.core.handshake.Initiator._on_reply :: assert profile is not None and transcript is not None and (dk is not None) => assert profile is not None and transcript is not None or dk is not None  # internal invariant; every caller reaches it only in the asserted state
+qrp2p.core.handshake.Initiator._on_reply :: assert profile is not None and transcript is not None and (dk is not None) => assert profile is not None or (transcript is not None and dk is not None)  # internal invariant; every caller reaches it only in the asserted state
+qrp2p.core.handshake.Initiator._on_admit :: assert profile is not None and transcript is not None and (secrets is not None) => assert profile is not None and transcript is not None or secrets is not None  # internal invariant; every caller reaches it only in the asserted state
+qrp2p.core.handshake.Initiator._on_admit :: assert profile is not None and transcript is not None and (secrets is not None) => assert profile is not None or (transcript is not None and secrets is not None)  # internal invariant; every caller reaches it only in the asserted state
+qrp2p.core.handshake.Responder.__init__ :: self._gb_request = False => self._gb_request = None  # overwritten from the Hello before any read
+qrp2p.core.handshake.Responder.__init__ :: self._gb_request = False => self._gb_request = True  # overwritten from the Hello before any read
+qrp2p.core.handshake.Responder.__init__ :: self._peer: IdentityBundle | None = None => self._peer: IdentityBundle | None = ''  # initial None is overwritten before any read
+qrp2p.core.handshake.Responder._on_confirm :: assert profile is not None and transcript is not None and (secrets is not None) => assert profile is not None and transcript is not None or secrets is not None  # internal invariant; every caller reaches it only in the asserted state
+qrp2p.core.handshake.Responder._on_confirm :: assert profile is not None and transcript is not None and (secrets is not None) => assert profile is not None or (transcript is not None and secrets is not None)  # internal invariant; every caller reaches it only in the asserted state
+qrp2p.core.handshake.Responder.reject :: body = AdmitBody(Decision.REJECT, glass_box=False, reason=reason) => body = AdmitBody(Decision.REJECT, glass_box=None, reason=reason)  # None and False are both falsy; AdmitBody encodes and checks by truthiness
+qrp2p.core.handshake.Responder._send_admit :: assert profile is not None and transcript is not None and (secrets is not None) => assert profile is not None and transcript is not None or secrets is not None  # internal invariant; every caller reaches it only in the asserted state
+qrp2p.core.handshake.Responder._send_admit :: assert profile is not None and transcript is not None and (secrets is not None) => assert profile is not None or (transcript is not None and secrets is not None)  # internal invariant; every caller reaches it only in the asserted state
+qrp2p.core.handshake.Responder._send_admit :: self._establish(self._peer, th_final, glass_box=body.glass_box, is_initiator=False, now=now) => self._establish(self._peer, th_final, glass_box=body.glass_box, is_initiator=None, now=now)  # None and False are both falsy
+qrp2p.core.handshake.Responder._on_deadline :: timeout = AdmitBody(Decision.REJECT, glass_box=False, reason=AdmitReason.TIMEOUT) => timeout = AdmitBody(Decision.REJECT, glass_box=None, reason=AdmitReason.TIMEOUT)  # None and False are both falsy; AdmitBody encodes and checks by truthiness
+qrp2p.core.handshake.Responder._on_deadline :: self._send_admit(timeout, self._deadline) => self._send_admit(timeout, None)  # a reject never uses the time (only an accept opens a channel)
+qrp2p.core.record.Channel.__init__ :: self._recv = self._direction(recv, epoch.epoch, now) => self._recv = self._direction(recv, epoch.epoch, None)  # the receive direction never reads its start time (only sending triggers KeyUpdate)
+qrp2p.core.record.Channel.__init__ :: self._ping_queued = False => self._ping_queued = None  # None and False are both falsy flags
+qrp2p.core.record.Channel.__init__ :: self._key_update_queued = False => self._key_update_queued = None  # None and False are both falsy flags
+qrp2p.core.record.Channel.seal_next :: if send.seq > MAX_SEQ: => if send.seq >= MAX_SEQ:  # unreachable: KeyUpdate resets the counter every 2^16 records
+qrp2p.core.record.Channel.seal_next :: self._emit(Trace(FrameTraced(Direction.OUT, frame, dissect(frame, self._profile)))) => self._emit(Trace(FrameTraced(Direction.OUT, frame, dissect(frame, None))))  # records are dissected the same way with or without a profile
+qrp2p.core.record.Channel.seal_next :: self._ping_queued = False => self._ping_queued = None  # None and False are both falsy flags
+qrp2p.core.record.Channel.seal_next :: case _: | pass =>  # a match without a default does nothing for other messages, like the default
+qrp2p.core.record.Channel.seal_next :: self._key_update_queued = False => self._key_update_queued = None  # None and False are both falsy flags
+qrp2p.core.record.Channel._receive :: self._emit(Trace(FrameTraced(Direction.IN, frame, dissect(frame, self._profile)))) => self._emit(Trace(FrameTraced(Direction.IN, frame, dissect(frame, None))))  # records are dissected the same way with or without a profile
+qrp2p.core.record.Channel._dispatch :: self._recv = self._updated(self._recv, Direction.IN, now) => self._recv = self._updated(self._recv, Direction.IN, None)  # the receive direction never reads its start time (only sending triggers KeyUpdate)
+qrp2p.core.record.Channel._on_rekey_finish :: if self._is_initiator or rekey is None or rekey.ss is None or (rekey.next is not None): => if self._is_initiator or rekey is None or (rekey.ss is None and rekey.next is not None):  # equivalent: ss and next are never both None or both set when a finish can arrive
+qrp2p.core.record.Channel._switch_send :: assert rekey is not None and rekey.next is not None => assert rekey is not None or rekey.next is not None  # internal invariant; every caller reaches it only in the asserted state
+qrp2p.core.record.Channel._switch_recv :: self._recv = self._direction(new.ap_r if self._is_initiator else new.ap_i, new.epoch, now) => self._recv = self._direction(new.ap_r if self._is_initiator else new.ap_i, new.epoch, None)  # the receive direction never reads its start time (only sending triggers KeyUpdate)
+qrp2p.core.record.Channel._finish_rekey_if_done :: assert rekey is not None and rekey.next is not None => assert rekey is not None or rekey.next is not None  # internal invariant; every caller reaches it only in the asserted state
+qrp2p.core.schedule.handshake_secrets :: zero = bytes(profile.hash_len) => zero = None  # RFC 5869: a missing salt is Hlen zero bytes, which is what zero is
+qrp2p.core.schedule.handshake_secrets :: hs = provider.extract(profile, zero, ss, name='hs') => hs = provider.extract(profile, None, ss, name='hs')  # RFC 5869: a missing salt is Hlen zero bytes, which is what zero is
+qrp2p.core.schedule._derived :: return provider.derive_secret(profile, secret, 'derived', empty_hash, name=f'derived[{epoch}]') => return provider.derive_secret(profile, secret, 'derived', empty_hash, name=None)  # changes only the traced label of the derived secret
+qrp2p.core.schedule.first_epoch :: salt = _derived(provider, profile, hs, 0) => salt = _derived(provider, profile, hs, None)  # changes only the traced label of the derived secret
+qrp2p.core.schedule.first_epoch :: salt = _derived(provider, profile, hs, 0) => salt = _derived(provider, profile, hs, 1)  # changes only the traced label of the derived secret
+qrp2p.core.schedule.next_epoch :: salt = _derived(provider, profile, current.cs, n) => salt = _derived(provider, profile, current.cs, None)  # changes only the traced label of the derived secret
+qrp2p.core.wire.FrameReader.feed :: continue => break  # the loop only continues here when the input is exhausted
+qrp2p.core.wire.transcript_entry :: if len(value) > _MAX_U32: => if len(value) >= _MAX_U32:  # unreachable: the boundary is a 4 GiB transcript value
+qrp2p.core.wire.Chat.__post_init__ :: _check_utf8_len(self.text, MAX_TEXT_BYTES, 'text') => _check_utf8_len(self.text, MAX_TEXT_BYTES, None)  # the argument only names the field in the error message
+qrp2p.core.wire.FileOffer.__post_init__ :: _check_utf8_len(self.name, MAX_NAME_BYTES, 'name') => _check_utf8_len(self.name, MAX_NAME_BYTES, None)  # the argument only names the field in the error message
+qrp2p.core.wire.FileOffer.__post_init__ :: _check_utf8_len(self.media_type, MAX_MEDIA_TYPE_BYTES, 'media type') => _check_utf8_len(self.media_type, MAX_MEDIA_TYPE_BYTES, None)  # the argument only names the field in the error message

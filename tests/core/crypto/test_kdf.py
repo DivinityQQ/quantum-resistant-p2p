@@ -187,3 +187,12 @@ def test_extract_matches_reference(salt: bytes, ikm: bytes) -> None:
     for name, h in HASHES.items():
         got = kdf.hkdf_extract(h, salt, Secret(ikm, "ikm"), name="prk")
         assert got.reveal() == ref_extract(name, salt, ikm)
+
+
+def test_hkdf_label_bounds() -> None:
+    assert kdf.hkdf_label(0, "x", b"")[:2] == b"\x00\x00"
+    assert kdf.hkdf_label(0xFFFF, "x", b"")[:2] == b"\xff\xff"
+    with pytest.raises(ValueError, match="u16"):
+        kdf.hkdf_label(0x10000, "x", b"")
+    with pytest.raises(ValueError, match="u16"):
+        kdf.hkdf_label(-1, "x", b"")

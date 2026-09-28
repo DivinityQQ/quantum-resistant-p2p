@@ -1,0 +1,89 @@
+(* WEAKENED ENGINE (DESIGN §11.8): the PQ rekey is not signed; both sides still send the
+   signatures, but nobody checks them. Expected attack (Attack Lab scenario 8b): an active attacker
+   who has read the session state answers each side's rekey with a KEM exchange of its own and keeps
+   reading the traffic after the rekey. Same setting as formal/rekey.pv. *)
+
+(* EXPECT reachable: not event(IRekeyDone) *)
+query event(IRekeyDone).
+(* EXPECT reachable: not event(RRekeyDone) *)
+query event(RRekeyDone).
+(* EXPECT false: not attacker(secretRekey *)
+query attacker(secretRekey).
+(* EXPECT false: inj-event(IAnswerOk *)
+query a: bitstring, b: bitstring, t: bitstring;
+  inj-event(IAnswerOk(a, b, t)) ==> inj-event(RAnswered(a, b, t)).
+(* EXPECT false: inj-event(RRekeyed *)
+query a: bitstring, b: bitstring, t: bitstring;
+  inj-event(RRekeyed(a, b, t)) ==> inj-event(IRekeyed(a, b, t)).
+
+let WRekeyInitiator(skI: sseed, pkI: bitstring, pkR: bitstring, cs: bitstring, exp: bitstring,
+                   honestSession: bool) =
+  new eseed: kseed;
+  let ek = (pkM(eseed), pkX(eseed)) in
+  out(c, ek);  (* rekey_offer *)
+  in(c, (ctm: bitstring, ctx: bitstring, sigR: bitstring));  (* rekey_answer *)
+  let ss = combine(decM(eseed, ctm), decX(eseed, ctx), ctx, pkX(eseed)) in
+  let rt = ((t51, ek), (t52, (ctm, ctx))) in
+  (* WEAKENED: the answer's signature is not checked *)
+  let sigI = sign(skI, (rRekeyFinish, H(((rt, (t53, sigR)), exp)))) in
+  let th = H(((rt, (t53, sigR)), (t54, sigI))) in
+  event IRekeyed(pkI, pkR, th);
+  out(c, sigI);  (* rekey_finish *)
+  let cs1 = hextract(hexpand(cs, lDerived, H(cEmpty)), ss) in
+  let apI = hexpand(cs1, lIap, th) in
+  get honest(=pkR) in
+  event IAnswerOk(pkI, pkR, H(rt));
+  if honestSession = true then
+  event IRekeyDone;
+  out(c, aenc(hexpand(apI, lKey, cEmpty), s0, hRecord, secretRekey)).
+
+let WRekeyResponder(skR: sseed, pkR: bitstring, pkI: bitstring, cs: bitstring, exp: bitstring,
+                   honestSession: bool) =
+  in(c, ek: bitstring);  (* rekey_offer *)
+  let (ekM: bitstring, ekX: bitstring) = ek in
+  new rM: bitstring;
+  new rX: bitstring;
+  let ctm = ctM(ekM, rM) in
+  let ctx = ctX(ekX, rX) in
+  let ss = combine(ssM(ekM, rM), ssX(ekX, rX), ctx, ekX) in
+  let rt = ((t51, ek), (t52, (ctm, ctx))) in
+  let sigR = sign(skR, (rRekeyAnswer, H((rt, exp)))) in
+  event RAnswered(pkI, pkR, H(rt));
+  out(c, (ctm, ctx, sigR));  (* rekey_answer *)
+  in(c, sigI: bitstring);  (* rekey_finish *)
+  (* WEAKENED: the finish signature is not checked *)
+  let th = H(((rt, (t53, sigR)), (t54, sigI))) in
+  let cs1 = hextract(hexpand(cs, lDerived, H(cEmpty)), ss) in
+  let apR = hexpand(cs1, lRap, th) in
+  get honest(=pkI) in
+  event RRekeyed(pkI, pkR, th);
+  if honestSession = true then
+  event RRekeyDone;
+  out(c, aenc(hexpand(apR, lKey, cEmpty), s0, hRecord, secretRekey)).
+
+process
+  new skA: sseed;
+  new skB: sseed;
+  let pkA = spk(skA) in
+  let pkB = spk(skB) in
+  insert honest(pkA);
+  insert honest(pkB);
+  out(c, (pkA, pkB));
+  (
+    (* Honest A-B sessions whose state A5 has read *)
+    !( new cs: bitstring;
+       new sid: bitstring;
+       let exp = expo(pkA, pkB, sid) in
+       out(c, (cs, exp));
+       ( WRekeyInitiator(skA, pkA, pkB, cs, exp, true) | WRekeyResponder(skB, pkB, pkA, cs, exp, true) ) )
+    (* Rekeys with any peer, on any chaining secret and any session of that pair *)
+  | !( in(c, (p: bitstring, cs: bitstring, sid: bitstring)); WRekeyInitiator(skA, pkA, p, cs, expo(pkA, p, sid), false) )
+  | !( in(c, (p: bitstring, cs: bitstring, sid: bitstring)); WRekeyResponder(skA, pkA, p, cs, expo(p, pkA, sid), false) )
+  | !( in(c, (p: bitstring, cs: bitstring, sid: bitstring)); WRekeyInitiator(skB, pkB, p, cs, expo(pkB, p, sid), false) )
+  | !( in(c, (p: bitstring, cs: bitstring, sid: bitstring)); WRekeyResponder(skB, pkB, p, cs, expo(p, pkB, sid), false) )
+    (* Handshake signatures on anything *)
+  | !( in(c, x: bitstring); out(c, sign(skA, (rInitiator, x))) )
+  | !( in(c, x: bitstring); out(c, sign(skA, (rResponder, x))) )
+  | !( in(c, x: bitstring); out(c, sign(skB, (rInitiator, x))) )
+  | !( in(c, x: bitstring); out(c, sign(skB, (rResponder, x))) )
+  )

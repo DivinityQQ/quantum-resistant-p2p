@@ -1,0 +1,21 @@
+(* Forward secrecy (DESIGN §3.2 P3): identity keys are revealed after the sessions ran (phase 1),
+   and the traffic of those sessions stays secret. Two honest users, A and B, in both roles. *)
+
+(* EXPECT reachable: not event(IDone) *)
+query event(IDone).
+(* EXPECT true: not attacker_p1(secretI *)
+query attacker(secretI).
+(* EXPECT true: not attacker_p1(secretR *)
+query attacker(secretR).
+
+process
+  new skA: sseed;
+  new skB: sseed;
+  let pkA = spk(skA) in
+  let pkB = spk(skB) in
+  insert honest(pkA);
+  insert honest(pkB);
+  out(c, (pkA, pkB));
+  ( (!Initiator(skA, pkA)) | (!Responder(skA, pkA))
+  | (!Initiator(skB, pkB)) | (!Responder(skB, pkB))
+  | (phase 1; out(c, (skA, skB))) )

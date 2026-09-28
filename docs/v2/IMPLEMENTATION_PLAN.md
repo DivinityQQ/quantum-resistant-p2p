@@ -4,11 +4,13 @@ This is the working plan for building [DESIGN.md](DESIGN.md). It is written for 
 work up next, human or a Claude Code session on a local machine. Start with the repository's
 `CLAUDE.md`, then this file.
 
-**Status (2026-09-27):** Step 0 done except the PyPI placeholder (needs the owner's account).
-**M0 is complete; its gate is met.** CI run 36334481736 is green on Linux, Windows and macOS:
-lint, types, layers, audit, the full test suite, and liboqs built, bundled and exercised on all
-three OSes (see the M0 status notes). Next: M1, formal model first. Steps that need the owner's
-accounts (tag, ruleset, merge, PyPI, the liboqs bug report) are in [OWNER_TODO.md](OWNER_TODO.md).
+**Status (2026-09-28):** M0 and M1 are complete and on `main`; their gates are met (see the
+status notes under each). v1 is tagged `v1-final`, and the `main` ruleset requires all nine CI
+checks: lint, types, layers, audit, the tests on three OSes, liboqs on three OSes, the ProVerif
+models and mutation testing. **Next: M2** (services and headless CLI), which is the first phase
+that touches sockets and disks. Steps that need the owner's accounts (the v1 Pages site, PyPI,
+the liboqs bug report) are in [OWNER_TODO.md](OWNER_TODO.md). Step 0's PyPI placeholder is still
+open there.
 
 ---
 
@@ -121,6 +123,41 @@ Order matters: **model first, code second.**
 
 **Gate:** model verified (and weakened models attacked); all of the above green in CI.
 
+**M1 status notes (2026-09-27)** — what was built, and where it differs from the list above:
+
+- **Formal model** (`formal/`, see its README): ProVerif 2.05 runs in CI on every push
+  ("Formal model (ProVerif)"); `formal/verify.py` checks every result against an `EXPECT` line.
+  All queries hold for the real protocol: secrecy both ways, the three injective agreements
+  (the responder's agreement on `th_final` comes from the first record, DESIGN §7.5), forward
+  secrecy, hybrid secrecy with either X-Wing component broken, post-compromise recovery after a
+  signed rekey, implicit record counters. Each weakened model yields its attack.
+- **The model changed the design twice.** (1) Removing Finished MACs, or the signer's identity
+  from the signed transcript, is *not* attackable here: the handshake AEAD already binds key and
+  identity. Those are now `formal/redundant/`, and DESIGN §11.8 lists two variants that are
+  attackable (signatures not bound to the transcript; Hello's profile and flags not in the
+  transcript). (2) The rekey's agreement relies on the exporter binding both identities; the
+  model now says so explicitly (`expo(pk_I, pk_R, session)`).
+- ProVerif cannot rebuild a concrete trace for the honest initiator's completion event (it
+  derives it; the derivation in the CI log is an ordinary honest run). Reachability checks
+  therefore use `EXPECT reachable`, which fails only if the event is unreachable.
+- **Tamarin** moved to M6 (decision below).
+- **Code:** `core/wire.py`, `schedule.py`, `handshake.py`, `record.py`, `trace.py`, `events.py`.
+  The API follows the suggestion above, with `now` passed to every call; admission is
+  `accept(glass_box=…)` / `reject(reason)`; `Established` carries a `Channel`. Everything the
+  channel wants to send comes back as `Queue(message, priority)`; the writer calls
+  `seal_next()` at dequeue.
+- **Tests:** every message in every state; tampering at each check; deadlines; admission and
+  glass-box rules; KeyUpdate, rekey, liveness and close; scenarios 4, 5, 6, 8a and the 8b
+  substitution against the real engine; v1 regressions 1-4; the canary leak test with its
+  glass-box control; Hypothesis fuzzing of codecs, handshake and records; and full-handshake
+  plus rekey vectors from `tests/reference/` (an independent derandomised implementation using
+  `kyber-py` and `dilithium-py`) that `qrp2p` reproduces byte for byte.
+- **Mutation testing:** `mutmut` over `qrp2p.core`, gated by `tests/mutation_gate.py`: every
+  survivor must be message-only or explained in `tests/mutation_allowlist.txt`. CI job
+  "Mutation testing (core)".
+- Scenario 9's "memory graph flat" and the weakened engines themselves are M5 work; the core
+  already refuses oversize input before allocating.
+
 ---
 
 ## M2 — Services and headless CLI
@@ -178,7 +215,6 @@ address findings; signed installers; publish.
 
 | Topic | Options | Phase |
 | --- | --- | --- |
-| ProVerif-only vs ProVerif + Tamarin from day one | Tamarin can follow once ProVerif passes | M1 |
 | PySide6 as a core dependency or a `gui` extra | The CLI can run without Qt if it is an extra | M2/M3 |
 | Visual identity (palette, icon, name styling) | Mock-ups first | M3 |
 | Code-signing identities (Apple, Windows) | Buy when first installer ships | M3/M6 |
@@ -190,6 +226,7 @@ address findings; signed installers; publish.
 | Vendoring the X-Wing vectors | Vendored with attribution and a SHA-256 pin (`tests/vectors/SOURCES.md`); IETF code components are Simplified-BSD licensed | M0 |
 | liboqs tag and OSes | 0.16.0 (commit `5a1a854b`), all 3 OSes, built with `OQS_DIST_BUILD=ON`, `OQS_USE_OPENSSL=OFF`; revisit if the CI job fails on an OS | M0 |
 | Minimum Python | 3.14 only (owner's decision: no reason to carry 3.13) | M0 |
+| ProVerif only, or ProVerif + Tamarin in M1 | ProVerif in M1, run in CI on every push; the Tamarin cross-check (weakened KEM binding for `PQ-CNSA-1`) moves to M6, before outside review | M1 |
 
 ## Starting a local session
 
@@ -197,3 +234,16 @@ Suggested first prompt:
 
 > Read `CLAUDE.md`, `docs/v2/DESIGN.md` and `docs/v2/IMPLEMENTATION_PLAN.md`. Continue with the
 > first unfinished phase. Run the checks listed in CLAUDE.md before each commit.
+
+Before starting M2 locally:
+
+1. Check which branch holds the latest work. Until the owner merges them, M0 is on
+   `claude/v2-m0-crypto-foundations` (PR #3) and M1 on `claude/v2-m1-protocol-core` (its PR is
+   based on the M0 branch). Start M2 from `main` once both are merged, otherwise from the M1
+   branch, and base its PR accordingly.
+2. `uv sync --all-extras --dev`, then the checks in CLAUDE.md. ProVerif and mutmut are optional
+   locally; CI runs both.
+3. M2 adds `zeroconf`, `platformdirs`, `keyring`, `filelock` and `pytest-asyncio`. The services
+   drive the core only through its events: see `tests/core/harness.py` (`Link`) for a working
+   in-memory writer queue, time and a transport, which is what `services/` has to provide for
+   real.

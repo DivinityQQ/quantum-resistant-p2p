@@ -1,0 +1,18 @@
+(* Hybrid secrecy (DESIGN §4.1, §15): ML-KEM-768 is broken: the attacker gets ssM from any ctM.
+   X25519 alone keeps the traffic keys secret. *)
+
+reduc forall p: bitstring, r: bitstring; breakM(ctM(p, r)) = ssM(p, r).
+
+(* EXPECT reachable: not event(IDone) *)
+query event(IDone).
+(* EXPECT true: not attacker(secretI *)
+query attacker(secretI).
+(* EXPECT true: not attacker(secretR *)
+query attacker(secretR).
+
+process
+  !( new sk: sseed;
+     let pk = spk(sk) in
+     insert honest(pk);
+     out(c, pk);
+     ( (!Initiator(sk, pk)) | (!Responder(sk, pk)) ) )

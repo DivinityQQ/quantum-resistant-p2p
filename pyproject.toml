@@ -33,8 +33,11 @@ Repository = "https://github.com/DivinityQQ/quantum-resistant-p2p"
 
 [dependency-groups]
 dev = [
+    "dilithium-py>=1.4.0",
     "hypothesis>=6.168.2",
     "import-linter>=2.15",
+    "kyber-py>=1.2.0",
+    "mutmut>=3.8.0",
     "pip-audit>=2.10.1",
     "pyright>=1.1.414",
     "pytest>=9.1.1",
@@ -92,7 +95,13 @@ max-args = 7  # Expand-Label(h, S, label, ctx, L, name) mirrors the spec's signa
     "PLR2004",  # sizes from the spec are clearer inline than as named constants
     "SLF001",   # tests may look at private state
     "FBT",      # boolean parameters in test helpers are fine
+    "PT017",    # fuzz tests assert on the reason of whatever error they get
 ]
+"formal/verify.py" = [
+    "INP001",   # a standalone script, not a package
+    "T201",     # its output is the report
+]
+"tests/mutation_gate.py" = ["T201"]  # its output is the report
 
 [tool.ruff.format]
 docstring-code-format = true
@@ -139,3 +148,10 @@ forbidden_modules = ["qrp2p.core"]
 ignore_imports = ["qrp2p.ui.** -> qrp2p.core.trace", "qrp2p.ui.** -> qrp2p.core.wire"]
 allow_indirect_imports = true
 unmatched_ignore_imports_alerting = "none"
+
+# --- mutmut (DESIGN §15 row 4) -------------------------------------------------------------------
+
+[tool.mutmut]
+paths_to_mutate = ["src/qrp2p/core/"]
+tests_dir = ["tests/"]
+also_copy = ["src/qrp2p/__init__.py", "src/qrp2p/py.typed", "src/qrp2p/lab/", "src/qrp2p/services/", "src/qrp2p/ui/"]
