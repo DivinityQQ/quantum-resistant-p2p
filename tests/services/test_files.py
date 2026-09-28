@@ -590,8 +590,10 @@ def test_names_at_the_length_limits() -> None:
     cut = sanitize_name("a" * 300 + "." + long_ext)
     assert len(cut.encode("utf-8")) <= NAME_BUDGET
     assert not cut.endswith("." + long_ext)  # a long "extension" is not kept whole
-    kept = sanitize_name("a" * 300 + "." + "c" * 31)
+    kept = sanitize_name("a" * 300 + "." + "c" * 31)  # a 32-byte extension is kept
     assert kept.endswith("." + "c" * 31)
+    dropped = sanitize_name("a" * 300 + "." + "c" * 32)  # a 33-byte one is not
+    assert not dropped.endswith("." + "c" * 32)
     dotted = sanitize_name("a" * (NAME_BUDGET - 5) + "." + "b" * 20 + ".txt")
     assert ".." not in dotted
     assert dotted.endswith("a.txt")
@@ -661,7 +663,8 @@ async def test_messages_travel_at_their_priorities(tmp_path: Path) -> None:
         "FileChunk": Priority.FILE,
         "FileDone": Priority.FILE,
     }
-    assert dict(stub.priorities) == expected
+    assert {kind for kind, _ in stub.priorities} == set(expected)
+    assert all(priority is expected[kind] for kind, priority in stub.priorities)
 
 
 async def sender(tmp_path: Path, size: int) -> tuple[FileTransfers, StubSession, Transfer, Path]:
@@ -922,7 +925,8 @@ async def test_a_closed_session_does_not_break_answers(tmp_path: Path) -> None:
     transfers, _, stub, session = receiver()
     await offered(transfers, session, b"x")
     stub.is_open = False
-    transfers.decline(FID)  # nothing can be sent; declining still works
+    declined = transfers.decline(FID)  # nothing can be sent; declining still works
+    assert declined.status is FileStatus.DECLINED
     data = os.urandom(10_000)
     transfers, stub, session = await accepted(tmp_path, data)
     await feed(transfers, session, data)

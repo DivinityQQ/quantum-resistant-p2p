@@ -202,6 +202,20 @@ design (DESIGN 1.3):
   v1 regressions 5 (stale lock), 6 (locking never raises) and 7 (the wheel carries every module) are
   covered. Every Appendix B code now names an existing test. Real multicast is tested only when
   `QRP2P_TEST_MDNS=1` (CI runners do not route it reliably); it passes on the workstation LAN.
+- **Hardening pass (2026-09-28)** after review: tests for untested paths, Hypothesis property
+  tests for everything the services parse (names, mDNS records, vault files and rows, the
+  file-transfer state machine under arbitrary peer sequences, which reaches every end state), and
+  a one-off mutmut run over the non-network services (vault, files, admission, text, limits,
+  keychain, paths, trace bus, discovery). It found and fixed: both sessions lost when peers connect
+  to each other at once without a pin (DESIGN §7.8 now applies the lower-`peer_id` rule at
+  establishment too; core `Initiator.peer` lets the services see the responder after Reply);
+  `Vault.lock()` failing on a damaged row; CLI crashes on non-ASCII digits and `inf`; mDNS names
+  over 63 bytes; file handles leaked by a cancel during a thread's open; a `.part` file left when
+  the peer cancelled during `accept`. Mutation results: 2,989 mutants, 2,467 killed; the 160
+  behaviour-changing survivors left were reviewed and are equivalent (OS-specific branches,
+  cosmetic formatting, caches that fall back to the database, retry bounds, `None` for `False`).
+  To repeat it, point `[tool.mutmut]` in a scratch worktree at those modules with
+  `pytest_add_cli_args_test_selection` set to the non-network `tests/services` files.
 - **Not in M2:** glass-box sessions are admitted, labelled and bound into the transcript, but the
   secrets are shown only by the Inspector (M4); scenario 9's memory graph is M5.
 - **Gate (owner):** on two machines on one LAN, run `uv run qrp2p-cli` on each (or

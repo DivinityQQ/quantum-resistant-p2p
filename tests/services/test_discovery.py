@@ -209,7 +209,7 @@ class FakeServiceInfo:
     """Registration records its arguments; resolving answers from RESOLVABLE."""
 
     RESOLVABLE: ClassVar[dict[str, tuple[dict[bytes, bytes | None], int, list[str]]]] = {}
-    requests: ClassVar[list[tuple[object, object]]] = []
+    requests: ClassVar[list[tuple[object, object, str]]] = []
     hold: ClassVar[asyncio.Event | None] = None
 
     def __init__(self, type_: str, name: str, **kwargs: object) -> None:
@@ -221,7 +221,7 @@ class FakeServiceInfo:
         self._addresses: list[str] = []
 
     async def async_request(self, zc: object, timeout_ms: int) -> bool:
-        self.requests.append((zc, timeout_ms))
+        self.requests.append((zc, timeout_ms, self.type_))
         if self.hold is not None:
             await self.hold.wait()
         found = self.RESOLVABLE.get(self.name)
@@ -269,7 +269,11 @@ async def test_announce_browse_and_stop() -> None:
     ((registered, rename_allowed),) = zc.registered
     assert isinstance(registered, FakeServiceInfo)
     assert rename_allowed
-    assert registered.name == f"Alice (ABCD-EFGH).{SERVICE_TYPE}"
+    assert (registered.type_, registered.name) == (
+        SERVICE_TYPE,
+        f"Alice (ABCD-EFGH).{SERVICE_TYPE}",
+    )
+    assert zc.ip_version is IPVersion.All
     assert registered.kwargs["port"] == 47470
     assert registered.kwargs["properties"] == txt_properties(PEER_ID, 3)
     assert registered.kwargs["parsed_addresses"] == ["192.0.2.1"]
@@ -315,6 +319,7 @@ async def test_nothing_to_announce_still_browses() -> None:
     (zc,) = FakeZeroconf.created
     assert zc.registered == []
     assert zc.interfaces == ["127.0.0.1"]
+    assert zc.ip_version is IPVersion.All
     assert FakeBrowser.last is not None
     await node.stop()
     assert zc.unregistered == []
@@ -368,8 +373,10 @@ async def test_discovery_details(monkeypatch: pytest.MonkeyPatch) -> None:
     assert [p.label for p in node.peers()] == ["Alpha", "bravo", "charlie"]
     assert FakeServiceInfo.requests
     assert all(
-        r == (zc.zeroconf, discovery_module.RESOLVE_TIMEOUT_MS) for r in FakeServiceInfo.requests
+        r == (zc.zeroconf, discovery_module.RESOLVE_TIMEOUT_MS, SERVICE_TYPE)
+        for r in FakeServiceInfo.requests
     )
+    await until(lambda: not node._tasks)  # finished resolves are forgotten
     change(f"never-seen.{SERVICE_TYPE}", ServiceStateChange.Removed)  # unknown: no error
     await node.stop()
 
