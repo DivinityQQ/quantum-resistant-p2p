@@ -290,6 +290,14 @@ class Initiator(_Machine):
         """Our outstanding ``ek_I``, for the services' reflection check (DESIGN §7.5)."""
         return self._ek if self._state is State.WAIT_REPLY else None
 
+    @property
+    def peer(self) -> IdentityBundle | None:
+        """The responder, once Reply proved it (pin and reflection checked), else ``None``.
+
+        The services need it before Admit, to recognise a simultaneous open (DESIGN §7.8).
+        """
+        return self._peer
+
     def start(self) -> list[HandshakeEvent]:
         """Send Hello."""
         if self._state is not State.START:

@@ -1,5 +1,6 @@
 """Only OS keychains may hold the device key (DESIGN §10.4)."""
 
+import os
 from types import SimpleNamespace
 from typing import cast
 
@@ -83,3 +84,18 @@ def test_a_refusing_keychain_is_reported() -> None:
     backend.refuse = True
     with pytest.raises(KeychainUnavailableError):
         OsKeychain(backend).set(b"\x01" * 16, b"k" * 32)
+
+
+@pytest.mark.skipif(
+    os.environ.get("QRP2P_TEST_KEYCHAIN") != "1",
+    reason="uses the real OS keychain (may prompt); set QRP2P_TEST_KEYCHAIN=1 to run",
+)
+def test_the_real_os_keychain() -> None:
+    keychain = OsKeychain()
+    vault_id, key = os.urandom(16), os.urandom(32)
+    try:
+        keychain.set(vault_id, key)
+        assert keychain.get(vault_id) == key
+    finally:
+        keychain.delete(vault_id)
+    assert keychain.get(vault_id) is None

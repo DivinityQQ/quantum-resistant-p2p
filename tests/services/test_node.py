@@ -1,7 +1,7 @@
 """Two whole nodes over loopback: contacts, admission, chat, trust, lock (DESIGN §5, §7.6, §10)."""
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import replace
 from pathlib import Path
 
@@ -9,6 +9,7 @@ import pytest
 
 from qrp2p.core.crypto.profiles import PQ_CNSA_1
 from qrp2p.core.errors import AdmitReason, CloseReason
+from qrp2p.services import node as node_module
 from qrp2p.services.admission import PromptKind
 from qrp2p.services.events import (
     AdmissionPrompt,
@@ -25,6 +26,7 @@ from qrp2p.services.models import MessageKind, MessageStatus, Retention, TrustSt
 from qrp2p.services.node import NodeError, NotConnectedError, profile_by_name
 from qrp2p.services.vault import WrongPasswordError
 from tests.services.support import LOOPBACK, NodeHarness, befriend, until
+from tests.services.test_vault import MemoryKeychain
 
 
 @pytest.fixture
@@ -321,3 +323,83 @@ async def test_a_second_node_on_the_same_directory_is_refused(tmp_path: Path) ->
     finally:
         await first.node.close()
         await second.node.close()
+
+
+async def test_connecting_both_ways_at_once_keeps_one_session(
+    nodes: tuple[NodeHarness, NodeHarness],
+) -> None:
+    """Alice dials Bob's address (no pin) while Bob dials his contact Alice."""
+    alice, bob = nodes
+    bob_id, alice_id = await befriend(alice, bob)
+    await alice.node.disconnect(bob_id)
+    await until(lambda: not bob.node.is_online(alice_id))
+    # Bob learns where Alice listens (from mDNS in real life).
+    bob.node._contacts[alice_id] = replace(
+        bob.node.contact(alice_id), address=(LOOPBACK, alice.port)
+    )
+    alice.events.clear()
+    bob.events.clear()
+    results = await asyncio.gather(
+        alice.node.connect_address(LOOPBACK, bob.port), bob.node.connect_contact(alice_id)
+    )
+    assert results[0] == bob_id
+    await asyncio.sleep(0.2)
+    a = alice.node.session_info(bob_id)
+    b = bob.node.session_info(alice_id)
+    assert a is not None
+    assert b is not None
+    assert a.channel is not None
+    assert b.channel is not None
+    assert a.channel._epoch.exporter == b.channel._epoch.exporter
+    for harness in (alice, bob):
+        assert harness.of(ConnectFailed) == []
+        assert harness.of(SessionEnded) == []  # the loser was replaced, nobody disconnected
+    await alice.node.send_chat(bob_id, "one session")
+    await bob.next(HistoryChanged, lambda e: e.entry.text == "one session")
+
+
+async def test_device_unlock_through_the_node(tmp_path: Path) -> None:
+    keychain = MemoryKeychain()
+    harness = NodeHarness(tmp_path, "solo", keychain=lambda: keychain)
+    await harness.start()
+    try:
+        assert not await harness.node.device_unlock_available()
+        await harness.node.set_device_unlock(enabled=True)
+        assert await harness.node.device_unlock_enabled()
+        await harness.node.change_password("pw", "new password")  # keeps device unlock
+        await harness.node.lock()
+        assert await harness.node.device_unlock_available()
+        await harness.node.unlock_with_device()
+        assert harness.node.state is NodeState.UNLOCKED
+        await harness.node.set_device_unlock(enabled=False)
+        await harness.node.lock()
+        assert not await harness.node.device_unlock_available()
+        with pytest.raises(WrongPasswordError):
+            await harness.node.unlock_with_device()
+        await harness.node.unlock("new password")
+    finally:
+        await harness.node.close()
+
+
+async def test_expired_history_is_purged_while_running(
+    nodes: tuple[NodeHarness, NodeHarness], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice, bob = nodes
+    bob_id, _ = await befriend(alice, bob)
+    await alice.node.update_contact(bob_id, retention=Retention.DAYS_30)
+    await alice.node.send_chat(bob_id, "old news")
+    alice.wall.advance(31 * 86_400)
+    await alice.node.send_chat(bob_id, "fresh")
+    monkeypatch.setattr(node_module, "RETENTION_CHECK", 0.01)
+    alice.node._timers.append(asyncio.create_task(alice.node._retention_loop()))
+    await until_async(lambda: history_texts(alice, bob_id), ["fresh"])
+
+
+async def history_texts(harness: NodeHarness, contact_id: bytes) -> list[str]:
+    return [e.text for e in await harness.node.history(contact_id)]
+
+
+async def until_async[T](read: Callable[[], Awaitable[T]], expected: T) -> None:
+    async with asyncio.timeout(10):
+        while await read() != expected:  # noqa: ASYNC110  # polls the vault
+            await asyncio.sleep(0.01)

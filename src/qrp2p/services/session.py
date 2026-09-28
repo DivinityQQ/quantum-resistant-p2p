@@ -214,7 +214,10 @@ class Session:
 
     @property
     def peer(self) -> IdentityBundle | None:
-        """The authenticated peer: once admission is asked for (responder) or once open."""
+        """The authenticated peer: after Reply (initiator), at admission (responder), when open."""
+        machine = self._machine
+        if self._peer is None and isinstance(machine, Initiator):
+            return machine.peer
         return self._peer
 
     @property

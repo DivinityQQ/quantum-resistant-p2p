@@ -183,6 +183,18 @@ def test_pin_mismatch_aborts_before_confirm() -> None:
     assert sent(run.on_reply) == []  # the initiator never revealed itself
 
 
+def test_initiator_knows_the_responder_only_after_reply() -> None:
+    """The services see who answered before Admit (simultaneous open, DESIGN §7.8)."""
+    run = handshake(initiator(pin=False), until="hello")
+    assert run.i.peer is None
+    run.on_reply = run.i.receive(run.reply, 2.0)
+    assert run.i.peer == bob().bundle
+    mismatch = handshake(initiator(pinned=identity("carol").bundle), until="reply")
+    assert mismatch.i.peer is None  # a responder that failed the pin check is not "the peer"
+    reflected = handshake(initiator(pin=False), responder(me=alice()), until="reply")
+    assert reflected.i.peer is None
+
+
 def test_own_bundle_is_reflection() -> None:
     # Initiator: the responder proves our own identity (our Hello reflected to our own node).
     run = handshake(initiator(pin=False), responder(me=alice()), until="reply")

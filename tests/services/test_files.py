@@ -38,7 +38,7 @@ from qrp2p.services.files import (
 )
 from qrp2p.services.models import FileStatus, MessageKind, TrustState
 from qrp2p.services.session import Session, SessionNotOpenError
-from tests.services.support import NodeHarness, befriend, until
+from tests.services.support import LOOPBACK, NodeHarness, befriend, until
 from tests.support import identity_from_label
 
 # --- names ----------------------------------------------------------------------------------------
@@ -454,3 +454,63 @@ async def test_session_end_fails_the_transfer(
     await alice.node.disconnect(bob_id)
     await until(lambda: file_event(alice, FileStatus.FAILED) is not None)
     await until(lambda: file_event(bob, FileStatus.FAILED) is not None)
+
+
+def test_window_leaves_room_for_the_receivers_reports() -> None:
+    """Liveness: the receiver reports only after writing a whole block, so the sender's window
+    must hold more than a block plus one report interval, or both sides would wait forever."""
+    assert files_module.WINDOW >= files_module.READ_BLOCK + files_module.PROGRESS_EVERY
+
+
+@pytest.fixture
+def slow_disk(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Receivers write slowly, so a transfer is still running when the test acts."""
+    original = FileTransfers._flush
+
+    async def slow_flush(self: FileTransfers, transfer: Transfer) -> None:
+        await asyncio.sleep(0.05)
+        await original(self, transfer)
+
+    monkeypatch.setattr(FileTransfers, "_flush", slow_flush)
+
+
+async def start_big_transfer(
+    tmp_path: Path, alice: NodeHarness, bob: NodeHarness, bob_id: bytes
+) -> Path:
+    source = tmp_path / "big.bin"
+    source.write_bytes(os.urandom(16 * 2**20))
+    await alice.node.send_file(bob_id, source)
+    await until(lambda: file_event(bob, FileStatus.OFFERED) is not None)
+    offer = file_event(bob, FileStatus.OFFERED)
+    assert offer is not None
+    assert offer.entry.file is not None
+    downloads = tmp_path / "downloads"
+    await bob.node.accept_file(offer.entry.file.file_id, downloads)
+    await until(lambda: any(p.name.endswith(PART_SUFFIX) for p in downloads.iterdir()))
+    await until(lambda: any(t.transferred > 0 for t in bob.node.transfers()))
+    return downloads
+
+
+@pytest.mark.usefixtures("slow_disk")
+async def test_lock_during_a_transfer_deletes_the_partial_file(
+    tmp_path: Path, friends: tuple[NodeHarness, NodeHarness, bytes, bytes]
+) -> None:
+    alice, bob, bob_id, _ = friends
+    downloads = await start_big_transfer(tmp_path, alice, bob, bob_id)
+    await bob.node.lock()
+    assert list(downloads.iterdir()) == []
+    await until(lambda: file_event(alice, FileStatus.FAILED) is not None)
+    assert alice.node.transfers() == []
+
+
+@pytest.mark.usefixtures("slow_disk")
+async def test_replacing_the_session_fails_its_transfers(
+    tmp_path: Path, friends: tuple[NodeHarness, NodeHarness, bytes, bytes]
+) -> None:
+    alice, bob, bob_id, _ = friends
+    downloads = await start_big_transfer(tmp_path, alice, bob, bob_id)
+    await alice.node.connect_address(LOOPBACK, bob.port)  # a new session replaces the old one
+    await until(lambda: file_event(alice, FileStatus.FAILED) is not None)
+    await until(lambda: file_event(bob, FileStatus.FAILED) is not None)
+    await until(lambda: not any(downloads.iterdir()))
+    assert alice.node.is_online(bob_id)  # the new session carries on

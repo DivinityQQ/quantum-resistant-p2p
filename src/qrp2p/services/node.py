@@ -1240,15 +1240,18 @@ class Node:
         await self._fail_unsent(session)
         outgoing = self._outgoing.pop(session.id, None)
         contact_id = self._session_contact.pop(session.id, None)
-        if contact_id is not None:
+        still_live = contact_id is not None and self._live_session(contact_id) is not None
+        if contact_id is not None and not still_live:  # a replaced session is no disconnect
             self._emit(SessionEnded(contact_id, end.reason, end.by_peer))
         elif outgoing is not None and not superseded:
             self._emit(
                 ConnectFailed(outgoing.target, end.reason, end.admit_reason, outgoing.supported)
             )
         if outgoing is not None and not outgoing.result.done():
-            if superseded and outgoing.contact_id is not None:
-                outgoing.result.set_result(outgoing.contact_id)
+            peer = session.peer or session.expected_peer
+            winner = self.contact_for_peer(peer.peer_id) if superseded and peer else None
+            if winner is not None:  # the other session with this peer carries on
+                outgoing.result.set_result(winner.contact_id)
             else:
                 outgoing.result.set_exception(NodeError(_describe_failure(end, outgoing)))
 

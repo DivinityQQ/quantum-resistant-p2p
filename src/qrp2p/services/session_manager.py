@@ -85,8 +85,8 @@ class ManagerHooks(Protocol):
     def ended(self, session: Session, end: SessionEnd, /, *, superseded: bool) -> None:
         """A session or handshake ended.
 
-        ``superseded``: our handshake lost a simultaneous open, and another session with the same
-        peer exists; this is not a failure to show.
+        ``superseded``: the session lost a simultaneous open and another session with the same
+        peer exists or survives; this is not a failure to show.
         """
         ...
 
@@ -142,6 +142,8 @@ class SessionManager:
         self._own_eks = _OwnEphemeralKeys(self._sessions)
         self._ticker: asyncio.Task[None] | None = None
         self._accepting = False
+        self._superseded: set[int] = set()
+        """Sessions closed because another session with the same peer won a simultaneous open."""
 
     # -- lifecycle ------------------------------------------------------------------------------
 
@@ -320,6 +322,7 @@ class SessionManager:
         peer_id = request.peer.peer_id
         if self._overlapping_outgoing(session, peer_id) and self._identity.bundle.peer_id < peer_id:
             _log.info("simultaneous open with %s: ours survives", request.peer.short_id)
+            self._superseded.add(session.id)
             session.reject(AdmitReason.BUSY)
             return
         if len(self._live) >= MAX_LIVE_SESSIONS and peer_id not in self._live:
@@ -336,12 +339,36 @@ class SessionManager:
         """See :class:`~qrp2p.services.session.SessionHooks`."""
         self._hooks.profile_rejected(session, event)
 
+    def _initiator_id(self, session: Session) -> bytes:
+        """The ``peer_id`` of the side that opened the session."""
+        if session.role is SessionRole.INITIATOR:
+            return self._identity.bundle.peer_id
+        assert session.peer is not None  # noqa: S101  # open sessions know their peer
+        return session.peer.peer_id
+
     def established(self, session: Session) -> None:
-        """Release the half-open slot; replace the peer's previous session."""
+        """Release the half-open slot; keep one live session per peer (DESIGN §7.8).
+
+        A newer session replaces an older one, unless their handshakes overlapped: then this was
+        a simultaneous open that admission could not see (the initiator had no pin), and the
+        session opened by the lower ``peer_id`` survives, as on the other side.
+        """
         self._release_slot(session)
         peer = session.peer
         assert peer is not None  # noqa: S101  # an open session has an authenticated peer
         previous = self._live.get(peer.peer_id)
+        if previous is not None and previous is not session:
+            overlapped = (
+                previous.established_at is not None
+                and session.started_at <= previous.established_at
+            )
+            if overlapped and self._initiator_id(previous) < self._initiator_id(session):
+                _log.info("simultaneous open with %s: the earlier session survives", peer.short_id)
+                self._superseded.add(session.id)
+                session.close(CloseReason.REPLACED)
+                return
+            if overlapped:
+                self._superseded.add(previous.id)
         self._live[peer.peer_id] = session
         if previous is not None and previous is not session:
             previous.close(CloseReason.REPLACED)
@@ -368,12 +395,13 @@ class SessionManager:
         peer = session.peer or session.expected_peer
         if session.peer is not None and self._live.get(session.peer.peer_id) is session:
             del self._live[session.peer.peer_id]
-        superseded = (
+        superseded = session.id in self._superseded or (
             session.role is SessionRole.INITIATOR
             and end.admit_reason is AdmitReason.BUSY
             and peer is not None
             and self._other_session_with(session, peer.peer_id)
         )
+        self._superseded.discard(session.id)
         _log.info(
             "session %d ended: %s%s",
             session.id,

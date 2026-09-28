@@ -27,11 +27,12 @@ LOOPBACK = "127.0.0.1"
 class Clock:
     """Monotonic time that tests can move forward."""
 
-    def __init__(self) -> None:
+    def __init__(self, source: Callable[[], float] = time.monotonic) -> None:
         self.offset = 0.0
+        self._source = source
 
     def __call__(self) -> float:
-        return time.monotonic() + self.offset
+        return self._source() + self.offset
 
     def advance(self, seconds: float) -> None:
         self.offset += seconds
@@ -163,6 +164,7 @@ class NodeHarness:
     def __init__(self, directory: Path, name: str, **kwargs: object) -> None:
         self.name = name
         self.clock = Clock()
+        self.wall = Clock(time.time)
         self.events: list[NodeEvent] = []
         self.node = Node(
             directory / name,
@@ -171,6 +173,7 @@ class NodeHarness:
             port=0,
             discovery=False,
             clock=self.clock,
+            wall=self.wall,
             **kwargs,  # type: ignore[arg-type]
         )
         self.node.subscribe(self.events.append)

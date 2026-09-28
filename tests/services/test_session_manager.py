@@ -16,9 +16,10 @@ from qrp2p.core.record import IDLE_TIMEOUT
 from qrp2p.core.wire import Chat, FrameType, Receipt
 from qrp2p.services import session as session_module
 from qrp2p.services import session_manager
+from qrp2p.services import transport as transport_module
 from qrp2p.services.limits import MAX_HALF_OPEN_PER_SOURCE, TokenBucket
 from qrp2p.services.session import Phase, Session, SessionNotOpenError, SessionRole
-from qrp2p.services.transport import ConnectionLost, FrameStream
+from qrp2p.services.transport import PORT_ATTEMPTS, ConnectionLost, FrameStream, Listener
 from tests.services.support import LOOPBACK, Clock, Peer, until
 from tests.support import DeterministicRandom
 
@@ -404,3 +405,108 @@ async def test_write_timeout_gives_up_on_a_stalled_peer(monkeypatch: pytest.Monk
     session.start()
     end = await asyncio.wait_for(session.run(), 5)
     assert end.reason is CloseReason.TIMEOUT
+
+
+async def test_simultaneous_open_without_pins_keeps_one_session() -> None:
+    """Initiators without a pin: admission sees the overlap only after Reply; establishment
+    catches the rest."""
+    alice = await Peer("alice").start()
+    bob = await Peer("bob").start()
+    try:
+        from_alice, from_bob = await asyncio.gather(
+            alice.connect(bob, pin=False), bob.connect(alice, pin=False)
+        )
+        await until(lambda: len(alice.record.ended) == 1 and len(bob.record.ended) == 1)
+        a = alice.manager.live(bob.identity.bundle.peer_id)
+        b = bob.manager.live(alice.identity.bundle.peer_id)
+        assert a is not None
+        assert b is not None
+        assert a.channel is not None
+        assert b.channel is not None
+        # The two ends of one connection share the exporter secret.
+        assert a.channel._epoch.exporter == b.channel._epoch.exporter
+        lower = min(alice, bob, key=lambda p: p.identity.bundle.peer_id)
+        survivor = from_alice if lower is alice else from_bob
+        assert (
+            lower.manager.live((bob if lower is alice else alice).identity.bundle.peer_id)
+            is survivor
+        )
+        for peer in (alice, bob):
+            ((_, end, superseded),) = peer.record.ended
+            # Rejected at admission once Reply revealed the peer, or replaced at establishment.
+            assert end.reason is CloseReason.REPLACED or end.admit_reason is AdmitReason.BUSY
+            assert superseded
+    finally:
+        await alice.stop()
+        await bob.stop()
+
+
+async def test_closing_drops_what_was_queued_behind_the_close(pair: tuple[Peer, Peer]) -> None:
+    alice, bob = pair
+    a, b = await established(alice, bob)
+    for n in range(20):
+        a.send(chat(n), Priority.CHAT)
+    a.close()  # before the writer ran: close goes first, the chats never
+    await until(lambda: bob.record.ended_for(b) is not None)
+    end = bob.record.ended_for(b)
+    assert end is not None
+    assert end.reason is CloseReason.NORMAL
+    await asyncio.sleep(0.05)
+    assert bob.record.messages == []
+    assert not any(isinstance(m, Chat) for _, m in alice.record.sent)
+
+
+class StalledUntilAborted(StalledStream):
+    """Like a stalled peer, and closing gracefully never completes either."""
+
+    async def close(self) -> None:
+        await self.aborted.wait()
+
+
+async def test_final_frames_get_a_bounded_flush(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A close that cannot flush aborts the connection after FLUSH_TIMEOUT."""
+    monkeypatch.setattr(session_module, "FLUSH_TIMEOUT", 0.05)
+    peer = Peer("alice")
+    stream = StalledUntilAborted()
+    session = Session(
+        machine=Initiator(
+            provider=PlainProvider(DeterministicRandom("flush")),
+            profile=HYBRID_1,
+            identity=peer.identity,
+            pinned=None,
+            glass_box_request=False,
+            now=0.0,
+        ),
+        stream=cast("FrameStream", stream),
+        hooks=peer.manager,
+        clock=peer.clock,
+    )
+    session.start()
+    running = asyncio.create_task(session.run())
+    await asyncio.sleep(0.02)  # the writer is now stuck draining the Hello
+    session.close(CloseReason.NORMAL)
+    end = await asyncio.wait_for(running, 2)
+    assert end.reason is CloseReason.NORMAL
+    assert stream.aborted.is_set()
+
+
+async def test_busy_port_moves_to_the_next(pair: tuple[Peer, Peer]) -> None:
+    _, bob = pair
+    taken = bob.port  # Bob listens here; a second listener must pick another port
+    listener = Listener(Peer("carol").manager.handle_incoming)
+    try:
+        port = await listener.start(LOOPBACK, taken)
+        assert taken < port < taken + PORT_ATTEMPTS
+    finally:
+        await listener.close()
+
+
+async def test_no_free_port_is_an_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(transport_module, "PORT_ATTEMPTS", 1)
+    holder = Listener(Peer("dave").manager.handle_incoming)
+    port = await holder.start(LOOPBACK, 0)
+    try:
+        with pytest.raises(OSError):  # noqa: PT011  # the OS's "address in use"
+            await Listener(Peer("erin").manager.handle_incoming).start(LOOPBACK, port)
+    finally:
+        await holder.close()
