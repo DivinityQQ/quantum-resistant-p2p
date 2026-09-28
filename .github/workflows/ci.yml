@@ -1,10 +1,17 @@
-# Job names are the required status checks of the `main` ruleset (.github/rulesets/main.json).
-# Rename a job only together with that file and the live ruleset, or merges into main will block.
+# The `main` ruleset (.github/rulesets/main.json) requires one check: "CI result", which passes
+# when every other job passed or was not needed. Keep that job's name; the others may change.
+#
+# Each job runs only when its inputs changed (the `changes` job); a docs-only PR runs none of them.
+# The weekly run and manual runs check everything, which catches new pip-audit advisories and
+# runner-image drift. Locally, `uv run tools/check.py` runs the fast checks in seconds.
 name: CI
 
 on:
-  push:
   pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 4 * * 1"  # Mondays 04:17 UTC
   workflow_dispatch:
 
 permissions:
@@ -12,7 +19,7 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   UV_VERSION: "0.12.19"
@@ -27,8 +34,57 @@ env:
   PROVERIF_SHA256: "4871f53c32ab4a04669a060c4886ba5d9080496963fb980a9a62d2c429ceabc4"
 
 jobs:
+  changes:
+    name: Changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      python: ${{ steps.paths.outputs.python }}
+      core: ${{ steps.paths.outputs.core }}
+      lab: ${{ steps.paths.outputs.lab }}
+      formal: ${{ steps.paths.outputs.formal }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Decide which checks this change needs
+        id: paths
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        # A pull request is checked out as a merge commit whose first parent is the base branch.
+        # Anything unexpected (schedule, manual run, unknown base) selects every check.
+        run: |
+          case "$EVENT" in
+            pull_request) base=$(git rev-parse HEAD^1) ;;
+            push) base=$BEFORE ;;
+            *) base= ;;
+          esac
+          if [ -n "$base" ] && git cat-file -e "$base^{commit}" 2>/dev/null; then
+            files=$(git diff --name-only "$base" HEAD)
+          else
+            files=ALL
+          fi
+          printf 'Changed:\n%s\n' "$files"
+          want() {
+            if [ "$files" = ALL ] || grep -qE "$2" <<< "$files"; then
+              echo "$1=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "$1=false" >> "$GITHUB_OUTPUT"
+            fi
+          }
+          ci='^\.github/workflows/ci\.yml$'
+          py_env="$ci|^(tools/|pyproject\.toml$|uv\.lock$|\.python-version$)"
+          want python "$py_env|^(src|tests)/"
+          want core "$py_env|^(src/qrp2p/core/|tests/)"
+          want lab "$py_env|^(src/qrp2p/lab/|tests/lab/)"
+          want formal "$ci|^formal/"
+          cat "$GITHUB_OUTPUT"
+
   checks:
-    name: Lint, types, layers, audit
+    name: Checks and tests (ubuntu), audit
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -38,18 +94,17 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           enable-cache: true
       - run: uv sync --locked --all-extras
-      - run: uv run ruff check .
-      - run: uv run ruff format --check .
-      - run: uv run pyright
-      - run: uv run lint-imports
-      - run: uv run pip-audit
+      # The same fast suite as the pre-push hook, plus pip-audit.
+      - run: uv run tools/check.py --audit
 
   tests:
     name: Tests (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [windows-latest, macos-latest]  # ubuntu runs in `checks`
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -63,6 +118,8 @@ jobs:
 
   liboqs:
     name: liboqs ${{ matrix.os }}
+    needs: changes
+    if: needs.changes.outputs.lab == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -131,6 +188,8 @@ jobs:
 
   formal:
     name: Formal model (ProVerif)
+    needs: changes
+    if: needs.changes.outputs.formal == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -174,6 +233,8 @@ jobs:
 
   mutation:
     name: Mutation testing (core)
+    needs: changes
+    if: needs.changes.outputs.core == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -188,3 +249,17 @@ jobs:
       - run: uv run mutmut run --max-children 4
       - name: Every surviving mutant is message-only or allowlisted
         run: uv run python -m tests.mutation_gate
+
+  result:
+    name: CI result
+    if: always()
+    needs: [changes, checks, tests, liboqs, formal, mutation]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every job passed or was not needed
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          echo "$NEEDS" | jq -e '.changes.result == "success"
+            and all(.[]; .result == "success" or .result == "skipped")' > /dev/null

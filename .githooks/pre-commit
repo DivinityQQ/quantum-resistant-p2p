@@ -1,0 +1,4 @@
+#!/bin/sh
+# Format and lint the staged Python files as staged (tools/check.py). Enable with:
+#   git config core.hooksPath .githooks
+exec uv run --frozen tools/check.py --pre-commit
