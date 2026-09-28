@@ -5,9 +5,10 @@ work up next, human or a Claude Code session on a local machine. Start with the 
 `CLAUDE.md`, then this file.
 
 **Status (2026-09-28):** M0 and M1 are complete and on `main`; their gates are met (see the
-status notes under each). v1 is tagged `v1-final`, and the `main` ruleset requires all nine CI
-checks: lint, types, layers, audit, the tests on three OSes, liboqs on three OSes, the ProVerif
-models and mutation testing. **Next: M2** (services and headless CLI), which is the first phase
+status notes under each). v1 is tagged `v1-final`. CI runs lint, types, layers, audit, the tests on
+three OSes, liboqs on three OSes, the ProVerif models and mutation testing, each job only when its
+inputs changed; the `main` ruleset requires the gate job "CI result". Local hooks run the fast
+suite (`tools/check.py`) before every push. **Next: M2** (services and headless CLI), which is the first phase
 that touches sockets and disks. `qrp2p` 2.0.0.dev0 is on PyPI, published by
 `.github/workflows/release.yml` (trusted publishing). Steps that need the owner's accounts (the v1
 Pages site, the liboqs bug report) are in [OWNER_TODO.md](OWNER_TODO.md).
@@ -126,8 +127,8 @@ Order matters: **model first, code second.**
 
 **M1 status notes (2026-09-27)** — what was built, and where it differs from the list above:
 
-- **Formal model** (`formal/`, see its README): ProVerif 2.05 runs in CI on every push
-  ("Formal model (ProVerif)"); `formal/verify.py` checks every result against an `EXPECT` line.
+- **Formal model** (`formal/`, see its README): ProVerif 2.05 runs in CI
+  ("Formal model (ProVerif)") when the models change, and weekly; `formal/verify.py` checks every result against an `EXPECT` line.
   All queries hold for the real protocol: secrecy both ways, the three injective agreements
   (the responder's agreement on `th_final` comes from the first record, DESIGN §7.5), forward
   secrecy, hybrid secrecy with either X-Wing component broken, post-compromise recovery after a
@@ -238,12 +239,10 @@ Suggested first prompt:
 
 Before starting M2 locally:
 
-1. Check which branch holds the latest work. Until the owner merges them, M0 is on
-   `claude/v2-m0-crypto-foundations` (PR #3) and M1 on `claude/v2-m1-protocol-core` (its PR is
-   based on the M0 branch). Start M2 from `main` once both are merged, otherwise from the M1
-   branch, and base its PR accordingly.
-2. `uv sync --all-extras --dev`, then the checks in CLAUDE.md. ProVerif and mutmut are optional
-   locally; CI runs both.
+1. M0 and M1 are on `main`; start M2 on a new branch from `main` and open a PR against it.
+2. `uv sync --all-extras --dev`, `git config core.hooksPath .githooks`, then
+   `uv run tools/check.py`. Run mutation testing locally before pushing a change to `core/`;
+   ProVerif is optional locally, and CI runs it whenever `formal/` changes.
 3. M2 adds `zeroconf`, `platformdirs`, `keyring`, `filelock` and `pytest-asyncio`. The services
    drive the core only through its events: see `tests/core/harness.py` (`Link`) for a working
    in-memory writer queue, time and a transport, which is what `services/` has to provide for

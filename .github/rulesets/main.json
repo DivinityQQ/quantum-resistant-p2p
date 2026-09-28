@@ -34,39 +34,7 @@
         "strict_required_status_checks_policy": false,
         "required_status_checks": [
           {
-            "context": "Lint, types, layers, audit",
-            "integration_id": 15368
-          },
-          {
-            "context": "Tests (ubuntu-latest)",
-            "integration_id": 15368
-          },
-          {
-            "context": "Tests (windows-latest)",
-            "integration_id": 15368
-          },
-          {
-            "context": "Tests (macos-latest)",
-            "integration_id": 15368
-          },
-          {
-            "context": "liboqs ubuntu-latest",
-            "integration_id": 15368
-          },
-          {
-            "context": "liboqs windows-latest",
-            "integration_id": 15368
-          },
-          {
-            "context": "liboqs macos-latest",
-            "integration_id": 15368
-          },
-          {
-            "context": "Formal model (ProVerif)",
-            "integration_id": 15368
-          },
-          {
-            "context": "Mutation testing (core)",
+            "context": "CI result",
             "integration_id": 15368
           }
         ]

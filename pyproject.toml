@@ -102,6 +102,12 @@ max-args = 7  # Expand-Label(h, S, label, ctx, L, name) mirrors the spec's signa
     "T201",     # its output is the report
 ]
 "tests/mutation_gate.py" = ["T201"]  # its output is the report
+"tools/**" = [
+    "INP001",   # standalone scripts, not a package
+    "T201",     # their output is the report
+    "S603",     # they run the project's own tools, with fixed arguments
+    "S607",     # tools are found on PATH, which `uv run` sets to the project's environment
+]
 
 [tool.ruff.format]
 docstring-code-format = true
@@ -109,7 +115,7 @@ docstring-code-format = true
 # --- pyright ------------------------------------------------------------------------------------
 
 [tool.pyright]
-include = ["src", "tests"]
+include = ["src", "tests", "tools"]
 exclude = ["docs/v2/research"]
 pythonVersion = "3.14"
 typeCheckingMode = "standard"

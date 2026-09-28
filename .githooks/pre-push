@@ -1,0 +1,3 @@
+#!/bin/sh
+# The fast suite on exactly what is pushed (tools/check.py). Git passes the pushed refs on stdin.
+exec uv run --frozen tools/check.py --pre-push

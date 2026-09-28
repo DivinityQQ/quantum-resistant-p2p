@@ -2,7 +2,8 @@
 
 Symbolic models of the QRP2P v2 handshake (DESIGN §7), record layer (§8.1) and signed PQ rekey
 (§8.4), written before the protocol code (IMPLEMENTATION_PLAN M1). CI runs them in the job
-"Formal model (ProVerif)"; the job uploads ProVerif's full output, attack traces included.
+"Formal model (ProVerif)" whenever `formal/` or the CI workflow changes, and weekly; the job
+uploads ProVerif's full output, attack traces included.
 
 ```bash
 python formal/verify.py                      # all models; needs proverif on PATH

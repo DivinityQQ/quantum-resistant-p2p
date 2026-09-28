@@ -50,12 +50,19 @@ solo lab, Attack Lab, weakened engines, Algorithm Lab and lessons.
 
 ```bash
 uv sync --all-extras --dev          # install
-uv run pytest                       # tests
-uv run ruff check . && uv run ruff format --check .
-uv run pyright                      # strict type check
-uv run lint-imports                 # layer rules
-uv run pip-audit                    # dependency audit
+git config core.hooksPath .githooks # once per clone: pre-commit and pre-push hooks
+uv run tools/check.py               # the fast suite, about 5 s: run it after every change
+uv run tools/check.py types tests   # only some: format, lint, layers, types, tests, lock, audit
+uv run tools/check.py --audit       # plus pip-audit (network)
+uv run tools/check.py --slow        # plus mutation testing, and ProVerif if installed
+uv run pytest tests/core -k record  # iterate on a subset
 ```
+
+**Where checks run.** The pre-commit hook formats and lints the staged Python files; the pre-push
+hook runs the fast suite on exactly what is pushed (a clean tree at `HEAD`). CI is the backstop:
+Windows and macOS, liboqs, pip-audit, mutation testing and ProVerif, each job only when its inputs
+changed (see the `changes` job in `.github/workflows/ci.yml`), and everything weekly. The `main`
+ruleset requires the single check "CI result". Do not push with `--no-verify`.
 
 Lab-algorithm test against a local liboqs build (CI builds it in the `liboqs` job):
 
@@ -63,13 +70,14 @@ Lab-algorithm test against a local liboqs build (CI builds it in the `liboqs` jo
 OQS_INSTALL_PATH=/path/to/liboqs-install QRP2P_REQUIRE_LIBOQS=1 uv run pytest -m liboqs
 ```
 
-Formal model (ProVerif 2.05; CI job "Formal model (ProVerif)" runs it on every push):
+Formal model (ProVerif 2.05; CI runs it when `formal/` or `ci.yml` changes, and weekly):
 
 ```bash
 python formal/verify.py                 # every model; checks each result against its EXPECT line
 ```
 
-Mutation testing of `qrp2p.core` (CI job "Mutation testing (core)"):
+Mutation testing of `qrp2p.core` (about 6 min; CI runs it when `core/`, `tests/` or dependencies
+change). Run it locally before pushing a change to `core/`:
 
 ```bash
 uv run mutmut run && uv run python -m tests.mutation_gate
