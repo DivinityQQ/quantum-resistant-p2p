@@ -1,10 +1,9 @@
 # Owner to-do (needs your accounts or admin rights)
 
-Things a Claude Code cloud session cannot do for you: its GitHub access refuses tag pushes and
-repository-settings changes, and it has no PyPI account. Work top to bottom; delete items as you
-finish them, and this file once it is empty.
+Things a Claude Code session cannot do for you. Work top to bottom; delete items as you finish
+them, and this file once it is empty.
 
-_Last updated: 2026-09-28 (v2 on `main`)._
+_Last updated: 2026-09-28 (v2 on `main`, 2.0.0.dev0 on PyPI)._
 
 ## 1. GitHub: turn off the v1 Pages site
 
@@ -13,39 +12,7 @@ gone. One item is left, because the API refuses it: `gh-pages` still serves the 
 documentation site. Settings → Pages → *Unpublish site* (then delete the `gh-pages` branch if you
 like; `v1-final` does not need it).
 
-## 2. PyPI: reserve the name `qrp2p` (trusted publishing)
-
-The name was still free on 2026-09-27. Only an actual upload claims it. Releases go through
-`.github/workflows/release.yml` with trusted publishing: PyPI accepts an upload only from that
-workflow in this repository, so no API token exists to leak.
-
-1. **PyPI account**: enable two-factor authentication (Account settings; uploads require it).
-2. **Pending publisher** (pypi.org → Your account → Publishing → *Add a new pending publisher*,
-   GitHub tab):
-   - PyPI Project Name: `qrp2p`
-   - Owner: `DivinityQQ`
-   - Repository name: `quantum-resistant-p2p`
-   - Workflow name: `release.yml`
-   - Environment name: `pypi`
-
-   A pending publisher does not reserve the name; the first upload does, and turns it into a
-   normal publisher.
-3. **Tag the release** on `main` (after the release workflow is merged):
-
-   ```bash
-   git switch main && git pull
-   git tag -a v2.0.0.dev0 -m "qrp2p 2.0.0.dev0: name placeholder (M0+M1)"
-   git push origin v2.0.0.dev0
-   ```
-
-4. **Approve** the run: Actions → Release → *Review deployments* → `pypi` → Approve. The page
-   https://pypi.org/project/qrp2p/ appears a minute later.
-
-Notes: a version number can never be reused once uploaded, even after deletion. `2.0.0.dev0` is a
-pre-release, so plain `pip install qrp2p` ignores it (`pip install --pre qrp2p` finds it).
-PyPI's name-squatting policy (PEP 541) is not a concern because the package contains real code.
-
-## 3. Report the liboqs SLH-DSA bug (optional, about 30 minutes)
+## 2. Report the liboqs SLH-DSA bug (optional, about 30 minutes)
 
 Facts are in `docs/v2/research/VERIFIED_FACTS.md` (liboqs section). Summary:
 
@@ -68,7 +35,7 @@ exists, open an issue (ideally with the one-line PR) on `pq-code-package/slhdsa-
 correctness bug that makes verification fail (fail-closed), not a forgery, so a public issue is
 appropriate. A Claude session can draft both texts on request.
 
-## 4. Claude Code cloud environment (optional)
+## 3. Claude Code cloud environment (optional)
 
 The cloud container blocks `opam.ocaml.org`, `gitlab.inria.fr` and `bblanche.gitlabpages.inria.fr`,
 so a session there cannot run ProVerif itself and relies on CI for it. To let sessions run the

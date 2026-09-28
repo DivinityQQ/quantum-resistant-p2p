@@ -8,9 +8,9 @@ work up next, human or a Claude Code session on a local machine. Start with the 
 status notes under each). v1 is tagged `v1-final`, and the `main` ruleset requires all nine CI
 checks: lint, types, layers, audit, the tests on three OSes, liboqs on three OSes, the ProVerif
 models and mutation testing. **Next: M2** (services and headless CLI), which is the first phase
-that touches sockets and disks. Steps that need the owner's accounts (the v1 Pages site, PyPI,
-the liboqs bug report) are in [OWNER_TODO.md](OWNER_TODO.md). Step 0's PyPI placeholder is still
-open there.
+that touches sockets and disks. `qrp2p` 2.0.0.dev0 is on PyPI, published by
+`.github/workflows/release.yml` (trusted publishing). Steps that need the owner's accounts (the v1
+Pages site, the liboqs bug report) are in [OWNER_TODO.md](OWNER_TODO.md).
 
 ---
 
@@ -21,7 +21,8 @@ open there.
    stays in history; its last commit is tagged `v1-final`, and v2 then replaced it on `main`. `research/VERIFIED_FACTS.md` lists the v1 bugs that
    become regression tests. Keep `LICENSE`.
 2. Replace `README.md` with a short v2 README: what it is, status, how to run tests, links to the design.
-3. Reserve the `qrp2p` name on PyPI (a placeholder release) before anyone else takes it.
+3. Reserve the `qrp2p` name on PyPI (a placeholder release) before anyone else takes it. Done: 2.0.0.dev0,
+   2026-09-28.
 
 ## Target layout
 
