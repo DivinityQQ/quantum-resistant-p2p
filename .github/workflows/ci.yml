@@ -1,0 +1,126 @@
+# Job names are the required status checks of the `main` ruleset (.github/rulesets/main.json).
+# Rename a job only together with that file and the live ruleset, or merges into main will block.
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_VERSION: "0.12.19"
+  PYTHON_VERSION: "3.14"
+  # liboqs for the lab extra (DESIGN §13, IMPLEMENTATION_PLAN M0.10). Tag and its commit are both
+  # pinned; bump them together with liboqs-python.
+  LIBOQS_TAG: "0.16.0"
+  LIBOQS_COMMIT: "5a1a854b0dc9f2141bdc771c555ee60c37950183"
+
+jobs:
+  checks:
+    name: Lint, types, layers, audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+      - run: uv sync --locked --all-extras
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run pyright
+      - run: uv run lint-imports
+      - run: uv run pip-audit
+
+  tests:
+    name: Tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+      - run: uv sync --locked --all-extras
+      - run: uv run pytest
+
+  liboqs:
+    name: liboqs ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      OQS_PREFIX: ${{ github.workspace }}/_oqs
+    steps:
+      - uses: actions/checkout@v7
+      - name: Restore liboqs build
+        id: cache
+        uses: actions/cache@v6
+        with:
+          path: _oqs
+          key: liboqs-${{ env.LIBOQS_COMMIT }}-${{ runner.os }}-${{ runner.arch }}-v2
+      - name: Check out liboqs
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/checkout@v7
+        with:
+          repository: open-quantum-safe/liboqs
+          ref: ${{ env.LIBOQS_TAG }}
+          path: _liboqs-src
+      - name: Verify the tag's commit
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: test "$(git -C _liboqs-src rev-parse HEAD)" = "$LIBOQS_COMMIT"
+      - name: Build liboqs
+        if: steps.cache.outputs.cache-hit != 'true'
+        # Shared library only; portable CPU dispatch (OQS_DIST_BUILD); no OpenSSL dependency so
+        # the bundle is self-contained.
+        # MSVC: liboqs 0.16.0's SLH-DSA tests `__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__`; MSVC
+        # defines neither, so the test is 0 == 0 and SHA-2 takes the big-endian path. Define the
+        # GCC macros (via CFLAGS, which keeps MSVC's default flags). VERIFIED_FACTS has the details.
+        run: |
+          extra=()
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            extra+=(-DCMAKE_WINDOWS_EXPORT_ALL_SYMBOLS=TRUE)
+            export CFLAGS="-D__ORDER_LITTLE_ENDIAN__=1234 -D__ORDER_BIG_ENDIAN__=4321 -D__BYTE_ORDER__=1234"
+          fi
+          cmake -S _liboqs-src -B _liboqs-build \
+            -DBUILD_SHARED_LIBS=ON -DOQS_BUILD_ONLY_LIB=ON -DOQS_DIST_BUILD=ON \
+            -DOQS_USE_OPENSSL=OFF -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$OQS_PREFIX" "${extra[@]}"
+          cmake --build _liboqs-build --config Release --parallel 4
+          cmake --install _liboqs-build --config Release
+      - name: Show the built library
+        run: ls -la "$OQS_PREFIX"/lib* "$OQS_PREFIX"/bin 2>/dev/null || true
+      - uses: actions/upload-artifact@v7
+        with:
+          name: liboqs-${{ env.LIBOQS_TAG }}-${{ runner.os }}-${{ runner.arch }}
+          path: _oqs
+          retention-days: 30
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+      - run: uv sync --locked --all-extras
+      - name: Lab algorithms load from the bundle
+        env:
+          OQS_INSTALL_PATH: ${{ env.OQS_PREFIX }}
+          QRP2P_REQUIRE_LIBOQS: "1"
+        run: uv run pytest -m liboqs tests/lab
