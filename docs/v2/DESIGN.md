@@ -2,8 +2,8 @@
 
 | | |
 | --- | --- |
-| Version | 1.2 |
-| Date | 2026-09-27 |
+| Version | 1.3 |
+| Date | 2026-09-28 |
 | Status | Approved for implementation |
 | Scope | Complete rewrite of `quantum-resistant-p2p` (v1) |
 
@@ -238,10 +238,12 @@ Rules:
 - TXT record: `v=2`, `id=<hex of peer_id[0:8]>`, `pf=<hex bitmask of supported profiles: bit0 HYBRID-1, bit1 PQ-CNSA-1>`.
 - Showing the display name is a setting (on by default). All mDNS data is an unauthenticated hint.
 - Announcements stop while the app is locked.
+- Records are parsed strictly: `v` must be `2`, `id` exactly 16 hex digits, `pf` one or two hex digits; anything else is ignored, as is our own record. At most 8 addresses are kept per peer. Instance names are displayed as plain text with control and bidirectional characters replaced (§14.3); a dot in the display name is replaced by U+2024 so it cannot split the DNS name, which is cut to one 63-byte label.
+- Only non-loopback, non-link-local addresses are announced.
 
 ### 6.2 Transport
 
-- TCP over IPv4 and IPv6. Default port **47470** (configurable); if busy, the next free port, announced via mDNS.
+- TCP over IPv4 and IPv6. Default port **47470** (configurable); if busy, the next free port (up to 16 are tried), announced via mDNS.
 - Manual connect by `host:port` is always available.
 - One TCP connection per session.
 
@@ -276,9 +278,19 @@ frame = length:u32 ‖ type:u8 ‖ body[length]
 | Live sessions | 64 |
 | Responder state per half-open slot | ≈ 15 KB (transcript + handshake secrets) |
 | Idle timeout | 90 s without any record |
+| Write stall (the peer stops reading) | 90 s, then the session ends with `timeout` |
+| Writer backlog per session | 4,096 queued messages, then `close { rate_limited }` |
 | Pending file offers per contact | 3 |
 
 Each Hello costs the responder one encapsulation and one hybrid signature, about 1.5 ms on a modern laptop, so these limits also bound CPU use.
+
+Enforcement:
+
+- A half-open slot is taken when TCP accepts the connection and released when the session is established or ends; a connection that finds no slot is dropped at once. The handshake deadline (from accept) frees slots held by silent peers.
+- The Hello token bucket is consulted when a connection's first frame arrives, before any cryptography; an empty bucket drops the connection.
+- Refusals before authentication are silent (§8.5): the peer sees the connection drop; the node logs `rate_limited`.
+- The live-session cap is applied at admission: beyond 64, a peer without a session to replace is rejected with `busy`.
+- The writer backlog bounds what a peer can make us queue by sending faster than it reads (pings to answer, chats to acknowledge).
 
 ---
 
@@ -391,12 +403,15 @@ erase: ss, hs, hs_R, hs_I, fk_R, fk_I, the ephemeral KEM private key
 | Blocked | any | reject `declined`, no prompt |
 | Unknown | 0 | Contact-request prompt; accept pins the contact |
 | Unknown | 1 | Contact-request prompt; glass-box refused (`glass_box = 0`) with an explanation |
-| Pinned / Verified | 0 | Accept automatically if the Hello profile equals the contact's configured profile, else reject `profile_policy` |
+| Pinned / Verified | any | First: reject `profile_policy` unless the Hello profile equals the contact's configured profile |
+| Pinned / Verified | 0 | Accept automatically |
 | Pinned / Verified | 1 | Glass-box consent prompt naming the authenticated contact; accept gives `glass_box = 1`, decline gives a normal session |
 
 - Prompts are bounded by the admission deadline; expiry gives reject `timeout`.
+- Accepting a contact request pins the initiator's bundle with the Hello's profile as the contact's profile.
 - The initiator shows "waiting for <contact>".
-- Glass-box prompts are rate-limited to one per contact per minute and muted for one hour after three declines.
+- Glass-box prompts are rate-limited to one per contact per minute and muted for one hour after three declines in a row (an accept resets the count). While a contact's prompts are rate-limited or muted, a glass-box request is admitted as a normal session without a prompt.
+- These rules run after the `busy` checks of §7.8 and §6.4.
 
 ### 7.7 Profile selection
 
@@ -404,8 +419,10 @@ The initiator offers the chosen contact's profile (default `HYBRID-1`). `Profile
 
 ### 7.8 Concurrent sessions
 
-- One live session per contact; a newly admitted session replaces the previous one, which closes with `replaced`.
+- One live session per contact; a newly established session replaces the previous one, which closes with `replaced`.
 - **Simultaneous open:** if both peers connect to each other at once, the session initiated by the lower `peer_id` (byte order) survives. The responder rejects the other with `busy` at admission.
+- "At once" means the two handshakes overlap in time. When a responder reaches admission for peer P, it checks whether it has itself initiated a handshake to P (by pin, or by the bundle proven in Reply) that is still in progress, or that was established after this incoming Hello arrived. If so, and our `peer_id` is the lower one, the incoming session is rejected with `busy`; otherwise admission proceeds, and P rejects our handshake by the same rule. With symmetric delays both ends reach the same verdict; if they ever disagree, replacement leaves exactly one session.
+- An initiator whose handshake was rejected with `busy` while another session with the same peer exists does not report a failure: it lost a simultaneous open.
 
 ---
 
@@ -492,6 +509,7 @@ A failed rekey (bad signature, wrong size) closes the session.
 - Send `ping` after 30 s without outgoing records; close with `timeout` after 90 s without incoming records.
 - Every `chat` is answered by an encrypted `receipt`, so the UI shows *sent → delivered* truthfully.
 - **Close:** if the channel still works, send `close { reason }`, then drop the connection. Every exception from parsing or crypto maps to a named reason (Appendix B). Pre-authentication failures close silently. A failure while opening a record still sends `close { reason }` in the other direction, which works; the peer then reports the reason as the peer's.
+- The final frames (a `close` record, a reject, `ProfileUnsupported`) get 5 s to flush; then the connection is aborted. A connection that ends without a `close` is reported as *connection lost*, which has no code because nothing named it.
 
 ---
 
@@ -499,15 +517,17 @@ A failed rekey (bad signature, wrong size) closes the session.
 
 1. **Offer:** `file_offer`. The receiver sees name, size and sender, then accepts or declines. Auto-accept is off by default; it can be enabled per *verified* contact up to a size limit.
 2. **Accept:** `file_accept` (or `file_decline`). Before accepting, the receiver checks free disk space.
-3. **Stream:** `file_chunk` records. The receiver sends `file_progress` every 1 MiB; the sender keeps at most 4 MiB unacknowledged. Disk I/O runs in a worker thread.
-4. **Finish:** `file_done { sha256 }`. The receiver checks size and hash, then atomically renames `<name>.part` to the final name.
+3. **Stream:** `file_chunk` records. The receiver sends `file_progress` every 1 MiB written; the sender keeps at most 4 MiB unacknowledged. Disk I/O runs in a worker thread.
+4. **Finish:** `file_done { sha256 }`. The receiver checks size and hash, then atomically renames `<name>.part` to the final name (never over an existing file) and sends `file_progress { received = size }`. Only this final report ever equals the size, so it tells the sender the file was delivered and verified.
 5. **Cancel:** `file_cancel` at any time; the partial file is deleted.
+
+Offers, answers and cancels travel at chat priority; chunks and `file_done` at file priority, so `file_done` follows the last chunk. A message for a `file_id` that never existed in the session closes it with `unexpected_message`, as does an offer reusing an ID, a chunk before the accept, or progress beyond what was sent. Messages for a transfer that has just ended (either side may cancel while chunks are in flight) are ignored. A transfer ends as failed when its session ends; resuming is out of scope.
 
 **Safety rules**
 
-- **Names:** reduced to a base name and NFC-normalised. Stripped or replaced: path separators, `..`, control and bidirectional-override characters, `:`, trailing dots and spaces. Windows reserved names (`CON`, `NUL`, `COM1`…) get a prefix. Names are capped at 255 bytes. Clashes are resolved case-insensitively as `name (2).ext`.
-- **Writing:** `.part` files are created with exclusive-create. Completed files get the OS "downloaded" mark (Windows Mark-of-the-Web, macOS quarantine attribute). Received files are never opened automatically.
-- **Limits:** default 4 GiB per file (configurable); at most 3 pending offers per contact. A size mismatch or extra data aborts the transfer.
+- **Names:** reduced to a base name and NFC-normalised. Replaced by `_`: path separators, control and bidirectional-override characters, `:` and the other characters Windows forbids (`<>"|?*`), and a leading dot (no hidden files, no `..`). Trailing dots and spaces are stripped; an empty result becomes `file`. Windows reserved names (`CON`, `NUL`, `COM1`…, also with an extension) get a `_` prefix. Names are cut to 255 bytes minus room for `.part` and a clash suffix, keeping a short extension. Clashes are resolved case-insensitively as `name (2).ext`.
+- **Writing:** `.part` files are created with exclusive-create and marked at once, so the mark survives the rename. Completed files get the OS "downloaded" mark (Windows Mark-of-the-Web with the Internet zone, macOS quarantine attribute); Linux has no equivalent. Received files are never opened automatically.
+- **Limits:** default 4 GiB per file (configurable); at most 3 pending offers per contact; an accept needs the file's size plus 16 MiB free. Anything over a limit is cancelled with `limit` or `disk_full`. A size mismatch or extra data aborts the transfer.
 - The SHA-256 is cryptographically redundant with AEAD records. It is kept so a learner can verify a file independently, and the Inspector says so.
 
 Resuming interrupted transfers is out of scope for v2.0.
@@ -524,8 +544,9 @@ Resuming interrupted transfers is out of scope for v2.0.
 | `data.sqlite3` (+ WAL) | Identity seeds, settings, contacts, conversation keys, messages, file metadata |
 | `lab/*.qrlab` | Saved glass-box and lab recordings (§11.5) |
 | `app.log` | Diagnostics only; never secrets or message text |
+| `qrp2p.lock` | The single-instance lock |
 
-A single-instance lock (`filelock`) prevents two processes from opening the same vault.
+A single-instance lock prevents two processes from opening the same vault. It is an OS file lock (`filelock`, no soft-lock fallback), so the OS releases it when a process dies and a left-over lock file never blocks. The data directory and its files are owner-only where the OS has modes; `vault.json` is replaced atomically (write, sync, rename).
 
 ### 10.2 Key hierarchy
 
@@ -536,7 +557,18 @@ DEK      ──HKDF-Expand-Label──▶ k_identity · k_settings · k_contacts
 k_convkeys ──AEAD wrap──▶ CK_c[32]   (random, one per conversation) ──▶ message and file-metadata rows
 ```
 
-The vault AEAD is ChaCha20-Poly1305 with random 96-bit nonces; data volumes are far below the collision bound.
+The vault AEAD is ChaCha20-Poly1305 with random 96-bit nonces; data volumes are far below the collision bound. Exact layouts:
+
+```text
+password    = NFC-normalised, UTF-8 (never empty)
+header      = u16(len) ‖ "qrp2p2 vault header" ‖ u16(format_version = 1) ‖ vault_id[16] ‖ u8(kdf = 1, Argon2id)
+              ‖ u32(t) ‖ u32(m in KiB) ‖ u32(p) ‖ salt[16]
+wrapped_dek = nonce[12] ‖ AEAD(KEK, nonce, DEK, aad = header ‖ "dek")
+device_kek  = nonce[12] ‖ AEAD(device_key, nonce, KEK, aad = header ‖ "device")       # only with "Remember on this device"
+k_name      = Expand-Label(SHA-256, DEK, "vault " ‖ name, "", 32)    name ∈ identity, settings, contacts, convkeys, lab
+```
+
+`vault.json` stores these fields (binary as hex) under a fixed schema; unknown fields, versions or KDFs are refused, and so are Argon2id parameters outside sane bounds, so a damaged or hostile file cannot make unlocking allocate without limit. Calibration only raises `t`: a derivation at the floor that takes less than half the target is repeated with `t` scaled up (at most 64).
 
 ### 10.3 Schema
 
@@ -551,15 +583,17 @@ Every encrypted row has a random 128-bit `row_uid` as its explicit primary key. 
 | `conv_keys` | `conv_id` | wrapped CK_c (k_convkeys) |
 | `messages` | `row_uid`, `conv_id`, `ord` (order within the conversation) | direction, message id, timestamp, status, body or file metadata (CK_c) |
 
-- **Associated data** = `u16(len) ‖ "qrp2p2 vault" ‖ u16(schema_version) ‖ u16(len) ‖ table ‖ row_uid[16] ‖ u16(len) ‖ column`.
-- Encrypted values are padded to 64-byte buckets before encryption.
+- **Associated data** = `u16(len) ‖ "qrp2p2 vault" ‖ u16(schema_version) ‖ u16(len) ‖ table ‖ row_uid[16] ‖ u16(len) ‖ column`. For `conv_keys`, whose key is `conv_id`, `row_uid` is the `conv_id`.
+- Each table has one encrypted column (`identity.seeds`, `settings.data`, `contacts.data`, `conv_keys.ck`, `messages.data`) holding all the encrypted fields listed above, so no field's size shows on its own. Its plaintext is a MessagePack struct (`msgspec`); like Inner (§8.2) it is never hashed or signed, so a non-canonical encoding is harmless.
+- Encrypted value = `nonce[12] ‖ AEAD(key, nonce, pad(plaintext), aad)`, with `pad(x) = x ‖ 0x80 ‖ 0^k` for the least `k` that makes the length a multiple of 64.
+- Tables are `WITHOUT ROWID` with `row_uid` (or `conv_id`) as the primary key.
 - SQLite settings: `secure_delete = ON`, `journal_mode = WAL`; the WAL is checkpointed with `TRUNCATE` on lock and exit.
 
 ### 10.4 Life cycle
 
-- **Retention** is set per contact: forever (default), 30 days, or session only.
-- **Delete a conversation:** delete its `conv_keys` row and messages, then `VACUUM`. Remnants in free pages or the WAL are unreadable once `CK_c` is gone. Backups made before deletion stay readable with the password valid at that time; the UI says so.
-- **Change password:** generate a new DEK and re-encrypt everything. The database is small; this takes seconds. Afterwards an old `vault.json` plus the old password opens nothing in the current database.
+- **Retention** is set per contact: forever (default), 30 days, or session only. Session-only history is deleted when the app locks or exits (and at unlock, after a crash); 30-day history is purged at unlock and hourly.
+- **Delete a conversation:** delete its `conv_keys` row and messages, then `VACUUM`. Remnants in free pages or the WAL are unreadable once `CK_c` is gone. Backups made before deletion stay readable with the password valid at that time; the UI says so. The contact continues with a new `conv_id` and key.
+- **Change password:** generate a new DEK and new conversation keys and re-encrypt everything. The database is small; this takes seconds. Afterwards an old `vault.json` plus the old password opens nothing in the current database. Order for crash safety: write `vault.json.new`, re-encrypt in one transaction, replace `vault.json`; an unlock that finds both files uses whichever opens the database with the given password.
 - **Lock** (15 minutes idle by default, or manually): close all sessions, stop listening and mDNS announcements, checkpoint the WAL, drop all key references. Nothing is received while locked.
 - **"Remember on this device"** (opt-in): a random device key stored in the OS keychain via `keyring` wraps a copy of the KEK in `vault.json`. Only OS backends are allowed (macOS Keychain, Windows Credential Locker, Secret Service); insecure fallbacks are refused.
 
@@ -738,7 +772,9 @@ qrp2p/
     wire.py        # fixed-layout handshake codecs, msgspec Inner schemas, limits
     trace.py       # typed trace events
     errors.py      # close/abort reasons (Appendix B)
-  services/        # asyncio: session_manager, transport, discovery, files, vault
+  services/        # asyncio: node (the front ends' API), session_manager, session, transport,
+                   # discovery, files, vault, keychain, admission, trace_bus
+  cli/             # qrp2p-cli: headless front end over services.node
   lab/             # solo lab nodes, Mallory hooks, recorder/replayer, weakened/,
                    # classical (LAB-CLASSICAL), oqs_loader (liboqs for the Algorithm Lab)
   ui/              # PySide6: bridge, viewmodels, qml/
@@ -752,6 +788,8 @@ formal/            # ProVerif models (+ weakened variants), Tamarin cross-check
 - `core` imports nothing from `services`, `lab` or `ui`, and no third-party package other than `cryptography` and `msgspec`.
 - `services` never imports `lab.weakened` or liboqs (`oqs`).
 - `ui` may import types from `core.trace` and `core.wire` for the Inspector, but never drives `core` directly.
+- `cli` drives `services` only: it never imports `core`, `lab` or `ui`.
+- `services` and `cli` never import Qt, so a node runs headless.
 
 ---
 
@@ -762,9 +800,10 @@ Versions are the latest on PyPI as of 2026-09-27 and are pinned in `uv.lock`.
 | Area | Package | Version | Role |
 | --- | --- | --- | --- |
 | Crypto | `cryptography` (pyca) | 50.0.1 | ML-KEM, ML-DSA, X25519, Ed25519, HKDF, HMAC, AEADs, Argon2id; bundles OpenSSL |
-| UI | `PySide6` | 6.11.2 | Qt 6 / QML, Qt Graphs for charts |
+| UI (extra `[gui]`) | `PySide6` | 6.11.2 | Qt 6 / QML, Qt Graphs for charts; optional, so `qrp2p-cli` runs without Qt |
 | App payloads | `msgspec` | 0.21.1 | Typed Inner schemas; never used for hashed bytes |
-| Discovery | `zeroconf` | 0.151.3 | mDNS/DNS-SD, asyncio-native |
+| Discovery | `zeroconf` | 0.151.5 | mDNS/DNS-SD, asyncio-native |
+| Interfaces | `ifaddr` | 0.2.0 | Local addresses to announce (a `zeroconf` dependency, used directly) |
 | Paths | `platformdirs` | 4.12.0 | Per-OS data and config directories |
 | Keychain (opt-in) | `keyring` | 25.7.0 | Device key storage |
 | Single instance | `filelock` | 4.0.4 | Crash-safe lock |
@@ -776,7 +815,7 @@ SHA-3 and SHAKE come from the standard library's `hashlib`.
 
 **Development tooling:** `uv`, `ruff`, `pyright` (strict), `pytest` + `pytest-asyncio`, `hypothesis`, `mutmut`, `import-linter`, `pip-audit`, ProVerif and Tamarin. CI runs on GitHub Actions on Windows, macOS and Linux.
 
-**Packaging:** `pyside6-deploy` (Nuitka) produces a native build per OS, shipped as MSI/MSIX on Windows, a signed and notarised `.dmg` on macOS, and an AppImage or Flatpak on Linux. `pip install qrp2p` remains available for learners who want to read and modify the code.
+**Packaging:** `pyside6-deploy` (Nuitka) produces a native build per OS, shipped as MSI/MSIX on Windows, a signed and notarised `.dmg` on macOS, and an AppImage or Flatpak on Linux. `pip install qrp2p` remains available for learners who want to read and modify the code: it installs the headless node and `qrp2p-cli`; `pip install qrp2p[gui]` adds the desktop app.
 
 **Deliberately not used:** SQLCipher (column-level AEAD suffices and avoids native wheels), `qasync`/`QtAsyncio` (a separate loop thread instead), Electron or Tauri, and the stdlib `ssl` module (PQ support depends on each platform's OpenSSL build).
 
@@ -813,6 +852,10 @@ Colour is never the only signal: every state also has a text label and an icon.
 - **Performance:** virtualised lists, hex views that render only visible rows, trace events batched at 30 Hz or less, and no crypto or disk work on the UI thread.
 - Peer-supplied text is always rendered as plain text, never as rich text or HTML.
 
+### 14.4 Command line
+
+`qrp2p-cli` is a headless front end over the same node API as the desktop app: create or unlock the vault, list nearby peers and contacts, connect (by contact, mDNS entry or `host:port`), chat, send and accept files, answer contact and glass-box requests, resolve key mismatches, compare safety numbers and inspect a session's trace. It needs no Qt. On a terminal, "plain text" also means no control characters: peer text is shown with C0/C1 controls and bidirectional overrides replaced, so a message cannot move the cursor, rewrite earlier output or disguise a file name. Passwords are read without echo; `--password-stdin` reads the first input line instead, for scripts.
+
 ---
 
 ## 15. Verification and testing
@@ -829,10 +872,10 @@ The UI and README call the protocol "secure" only after every item below passes.
 | 6 | **Adversarial suite** | All Attack Lab scenarios, each asserting the real failure point | M1 onward |
 | 7 | **v1 regression suite** | Sender spoofing through payload fields, replay after dedup eviction, interleaved frames, the 25-byte allocation attack, the stale lock, crashing zeroisation | M1–M2 |
 
-**Canary leak test (from M1).**
+**Canary leak test (from M1; through the services from M2).**
 
 1. A test provider records every secret it creates.
-2. After a scripted normal session, every trace event, log line, view-model string, exception message and saved file is searched for those values in raw, hex and base64 form. Any hit fails CI.
+2. After a scripted normal session, every trace event, log line, view-model string, exception message and saved file (including the vault's own files) is searched for those values in raw, hex and base64 form, together with the identity seeds and the vault keys. Any hit fails CI. Chat text must not appear in logs either.
 3. The same test on a glass-box session MUST find them, which proves the search works.
 
 **Static checks:** `pyright` strict, `ruff`, `import-linter`, `pip-audit`.
