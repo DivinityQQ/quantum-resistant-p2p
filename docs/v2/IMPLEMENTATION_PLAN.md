@@ -5,11 +5,12 @@ work up next, human or a Claude Code session on a local machine. Start with the 
 `CLAUDE.md`, then this file.
 
 **Status (2026-09-28):** M0 and M1 are complete and on `main`; their gates are met (see the
-status notes under each). v1 is tagged `v1-final`. CI runs lint, types, layers, audit, the tests on
-three OSes, liboqs on three OSes, the ProVerif models and mutation testing, each job only when its
-inputs changed; the `main` ruleset requires the gate job "CI result". Local hooks run the fast
-suite (`tools/check.py`) before every push. **Next: M2** (services and headless CLI), which is the first phase
-that touches sockets and disks. `qrp2p` 2.0.0.dev0 is on PyPI, published by
+status notes under each). M2 (services and headless CLI) is implemented and tested in CI; its gate,
+two real machines over a LAN, waits for the owner (see the M2 status notes). v1 is tagged
+`v1-final`. CI runs lint, types, layers, audit, the tests on three OSes, liboqs on three OSes, the
+ProVerif models and mutation testing, each job only when its inputs changed; the `main` ruleset
+requires the gate job "CI result". Local hooks run the fast suite (`tools/check.py`) before every
+push. **Next: the M2 gate, then M3** (desktop app). `qrp2p` 2.0.0.dev0 is on PyPI, published by
 `.github/workflows/release.yml` (trusted publishing). Steps that need the owner's accounts (the v1
 Pages site, the liboqs bug report) are in [OWNER_TODO.md](OWNER_TODO.md).
 
@@ -41,12 +42,12 @@ docs/v2/               # design, this plan, research
 `pyproject.toml` essentials:
 
 - `requires-python = ">=3.14"`
-- Runtime dependencies (pinned in the lock file): `cryptography>=50`, `msgspec` today; `zeroconf`,
-  `platformdirs`, `keyring`, `filelock` join in M2 and `PySide6` in M3 (UI extra or main — decide
-  in M3). Dependencies are added when first imported, not before.
+- Runtime dependencies (pinned in the lock file): `cryptography`, `msgspec`, `zeroconf`, `ifaddr`,
+  `platformdirs`, `keyring`, `filelock`; `PySide6` joins in M3 as the `gui` extra. Dependencies are
+  added when first imported, not before.
 - Extras: `lab = ["liboqs-python"]`.
-- Dev group: `pytest`, `hypothesis`, `ruff`, `pyright`, `import-linter`, `pip-audit` today;
-  `mutmut` joins in M1 and `pytest-asyncio` in M2.
+- Dev group: `pytest`, `pytest-asyncio`, `hypothesis`, `ruff`, `pyright`, `import-linter`,
+  `pip-audit`, `mutmut`, and the test-only references `kyber-py` and `dilithium-py`.
 - Tool config: `ruff` (strict rule set incl. `S` bandit rules), `pyright` strict on `src/`,
   import-linter contracts from DESIGN §12.2.
 
@@ -178,6 +179,35 @@ Order matters: **model first, code second.**
 
 **Gate:** two real machines on a LAN chat and transfer files via the CLI.
 
+**M2 status notes (2026-09-28)** — what was built, and what the implementation settled in the
+design (DESIGN 1.3):
+
+- **Services** (`src/qrp2p/services/`): `transport` (frame streams, listener with port fallback),
+  `session` (one reader, one priority writer that seals at dequeue, flush-then-drop closes, write
+  stall and backlog limits), `session_manager` (half-open slots, Hello rate, live-session cap,
+  reflection, simultaneous open, replacement, timers), `admission` (the §7.6 table and glass-box
+  prompt limits), `vault` + `keychain` + `paths` (§10), `files` (§9), `discovery` (§6.1),
+  `trace_bus`, and `node`: the one API front ends use, with the vault on its own thread.
+- **CLI** (`src/qrp2p/cli/`, entry point `qrp2p-cli`): every M2 action, plus `/trace` as a first,
+  text-only Inspector. It imports only `services` (import-linter).
+- **Decisions written into DESIGN 1.3:** what "at once" means for simultaneous open (overlapping
+  handshakes); profile policy applies to glass-box requests too; a rate-limited glass-box request is
+  a normal session; the receiver's final `file_progress` is the delivery acknowledgement; the exact
+  vault header, wrapping, subkey, padding and row layouts; msgspec for vault rows; a crash-safe
+  order for password changes; a CLI section.
+- **Tests** (`tests/services/`, `tests/cli/`, `tests/test_packaging.py`): nodes and managers over
+  loopback TCP; the vault's binding, VACUUM and deletion remnants, interrupted password changes and
+  locks; hostile file names and transfers; admission and trust; the canary leak test through the
+  services (logs, events, traces, vault files, received files); two real `qrp2p-cli` processes.
+  v1 regressions 5 (stale lock), 6 (locking never raises) and 7 (the wheel carries every module) are
+  covered. Every Appendix B code now names an existing test. Real multicast is tested only when
+  `QRP2P_TEST_MDNS=1` (CI runners do not route it reliably); it passes on the workstation LAN.
+- **Not in M2:** glass-box sessions are admitted, labelled and bound into the transcript, but the
+  secrets are shown only by the Inspector (M4); scenario 9's memory graph is M5.
+- **Gate (owner):** on two machines on one LAN, run `uv run qrp2p-cli` on each (or
+  `pipx install qrp2p` once released), `/nearby`, `/connect nearby 1`, `/admit` on the other side,
+  chat, `/send` a large file, `/verify` on both and compare. Record the OSes used here.
+
 ## M3 — Desktop app
 
 - The bridge thread model (DESIGN §12), view models, QML design system (DESIGN §14.3).
@@ -217,7 +247,6 @@ address findings; signed installers; publish.
 
 | Topic | Options | Phase |
 | --- | --- | --- |
-| PySide6 as a core dependency or a `gui` extra | The CLI can run without Qt if it is an extra | M2/M3 |
 | Visual identity (palette, icon, name styling) | Mock-ups first | M3 |
 | Code-signing identities (Apple, Windows) | Buy when first installer ships | M3/M6 |
 
@@ -229,6 +258,8 @@ address findings; signed installers; publish.
 | liboqs tag and OSes | 0.16.0 (commit `5a1a854b`), all 3 OSes, built with `OQS_DIST_BUILD=ON`, `OQS_USE_OPENSSL=OFF`; revisit if the CI job fails on an OS | M0 |
 | Minimum Python | 3.14 only (owner's decision: no reason to carry 3.13) | M0 |
 | ProVerif only, or ProVerif + Tamarin in M1 | ProVerif in M1, run in CI on every push; the Tamarin cross-check (weakened KEM binding for `PQ-CNSA-1`) moves to M6, before outside review | M1 |
+| PySide6 as a core dependency or a `gui` extra | The `gui` extra (owner's decision): `pip install qrp2p` gives the headless node and `qrp2p-cli`; services and CLI never import Qt (import-linter) | M2 |
+| mDNS in CI | Parsing and validation always; real multicast only with `QRP2P_TEST_MDNS=1`, because CI runners do not route multicast reliably | M2 |
 
 ## Starting a local session
 
@@ -237,13 +268,11 @@ Suggested first prompt:
 > Read `CLAUDE.md`, `docs/v2/DESIGN.md` and `docs/v2/IMPLEMENTATION_PLAN.md`. Continue with the
 > first unfinished phase. Run the checks listed in CLAUDE.md before each commit.
 
-Before starting M2 locally:
+Before starting M3 locally:
 
-1. M0 and M1 are on `main`; start M2 on a new branch from `main` and open a PR against it.
+1. Start M3 on a new branch from `main` and open a PR against it.
 2. `uv sync --all-extras --dev`, `git config core.hooksPath .githooks`, then
-   `uv run tools/check.py`. Run mutation testing locally before pushing a change to `core/`;
-   ProVerif is optional locally, and CI runs it whenever `formal/` changes.
-3. M2 adds `zeroconf`, `platformdirs`, `keyring`, `filelock` and `pytest-asyncio`. The services
-   drive the core only through its events: see `tests/core/harness.py` (`Link`) for a working
-   in-memory writer queue, time and a transport, which is what `services/` has to provide for
-   real.
+   `uv run tools/check.py`.
+3. Add PySide6 as the `gui` extra when it is first imported. The desktop app drives
+   `qrp2p.services.node.Node` from its asyncio thread through the bridge (DESIGN §12); the CLI
+   (`src/qrp2p/cli/`) is a working example of a front end on that API, and `tests/cli/` of testing one.

@@ -93,7 +93,7 @@ def test_every_code_has_a_test_in_the_checklist(
         names = {
             node.name
             for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
-            if isinstance(node, ast.FunctionDef)
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
         }
         assert match["name"] in names, f"{code!r}: {entry} names a missing test"
 
