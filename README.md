@@ -10,8 +10,9 @@ can **watch, pause and attack that exact channel**.
 
 > **Status:** early development. M0 (crypto foundations) and M1 (protocol core: formal model,
 > handshake, record layer, rekey) are done; M2 (services and a headless CLI) is next, so nothing
-> talks over a network yet. `qrp2p` 2.0.0.dev0 on PyPI only reserves the name. Nothing here is ready for use, and the protocol must not be called
-> secure until every item in DESIGN §15 passes. v1 is preserved at the tag
+> talks over a network yet. `qrp2p` 2.0.0.dev0 on PyPI only reserves the name. Nothing here is
+> ready for use, and the protocol must not be called secure until every item in DESIGN §15 passes.
+> v1 is preserved at the tag
 > [`v1-final`](https://github.com/DivinityQQ/quantum-resistant-p2p/tree/v1-final).
 
 ## Documentation
