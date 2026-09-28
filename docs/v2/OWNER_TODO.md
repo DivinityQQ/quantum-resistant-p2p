@@ -13,28 +13,37 @@ gone. One item is left, because the API refuses it: `gh-pages` still serves the 
 documentation site. Settings → Pages → *Unpublish site* (then delete the `gh-pages` branch if you
 like; `v1-final` does not need it).
 
-## 2. PyPI: reserve the name `qrp2p`
+## 2. PyPI: reserve the name `qrp2p` (trusted publishing)
 
-The name was still free on 2026-09-27. Only an actual upload claims it.
+The name was still free on 2026-09-27. Only an actual upload claims it. Releases go through
+`.github/workflows/release.yml` with trusted publishing: PyPI accepts an upload only from that
+workflow in this repository, so no API token exists to leak.
 
-1. Create a PyPI account and enable two-factor authentication (required for uploads).
-2. Choose one path:
-   - **Quick, one-off.** Create an *account-wide* API token (a project-scoped one cannot exist
-     before the project), then from a clean checkout of `main`:
+1. **PyPI account**: enable two-factor authentication (Account settings; uploads require it).
+2. **Pending publisher** (pypi.org → Your account → Publishing → *Add a new pending publisher*,
+   GitHub tab):
+   - PyPI Project Name: `qrp2p`
+   - Owner: `DivinityQQ`
+   - Repository name: `quantum-resistant-p2p`
+   - Workflow name: `release.yml`
+   - Environment name: `pypi`
 
-     ```bash
-     uv build
-     uv publish --token pypi-...        # uploads qrp2p 2.0.0.dev0
-     ```
+   A pending publisher does not reserve the name; the first upload does, and turns it into a
+   normal publisher.
+3. **Tag the release** on `main` (after the release workflow is merged):
 
-     Afterwards delete that token and, if you keep one, create a project-scoped token.
-   - **Trusted publishing (no secrets).** Ask a Claude session for a release workflow first; then
-     on PyPI add a *pending publisher* (owner `DivinityQQ`, repository `quantum-resistant-p2p`,
-     the workflow file name and environment name it tells you) and run the workflow once. This is
-     needed for M6 anyway.
-3. Notes: a version number can never be reused once uploaded, even after deletion. `2.0.0.dev0`
-   is a pre-release, so plain `pip install qrp2p` will not pick it up. PyPI's name-squatting policy
-   (PEP 541) is not a concern because the package contains real code.
+   ```bash
+   git switch main && git pull
+   git tag -a v2.0.0.dev0 -m "qrp2p 2.0.0.dev0: name placeholder (M0+M1)"
+   git push origin v2.0.0.dev0
+   ```
+
+4. **Approve** the run: Actions → Release → *Review deployments* → `pypi` → Approve. The page
+   https://pypi.org/project/qrp2p/ appears a minute later.
+
+Notes: a version number can never be reused once uploaded, even after deletion. `2.0.0.dev0` is a
+pre-release, so plain `pip install qrp2p` ignores it (`pip install --pre qrp2p` finds it).
+PyPI's name-squatting policy (PEP 541) is not a concern because the package contains real code.
 
 ## 3. Report the liboqs SLH-DSA bug (optional, about 30 minutes)
 
