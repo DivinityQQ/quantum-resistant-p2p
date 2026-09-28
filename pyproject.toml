@@ -16,17 +16,25 @@ classifiers = [
     "Topic :: Security :: Cryptography",
     "Typing :: Typed",
 ]
-# Only what is imported today. zeroconf, platformdirs, keyring and filelock join in M2,
-# PySide6 in M3 (DESIGN §13); exact versions are pinned in uv.lock.
+# Only what is imported; exact versions are pinned in uv.lock. The headless node and `qrp2p-cli`
+# need nothing else. PySide6 joins in M3 as the `gui` extra, so the CLI runs without Qt (DESIGN §13).
 dependencies = [
     "cryptography>=50.0.1",
+    "filelock>=4.0.4",
+    "ifaddr>=0.2.0",
+    "keyring>=25.7.0",
     "msgspec>=0.21.1",
+    "platformdirs>=4.12.0",
+    "zeroconf>=0.151.3",
 ]
 
 [project.optional-dependencies]
 # Lab-only algorithms (DESIGN §11.9). Never imported directly: qrp2p.lab.oqs_loader checks for a
 # bundled liboqs first, because liboqs-python otherwise builds liboqs at import time.
 lab = ["liboqs-python>=0.16.0.1"]
+
+[project.scripts]
+qrp2p-cli = "qrp2p.cli.app:main"
 
 [project.urls]
 Repository = "https://github.com/DivinityQQ/quantum-resistant-p2p"
@@ -41,6 +49,7 @@ dev = [
     "pip-audit>=2.10.1",
     "pyright>=1.1.414",
     "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
     "ruff>=0.16.9",
 ]
 
@@ -55,6 +64,9 @@ testpaths = ["tests"]
 addopts = ["--strict-markers", "--strict-config", "-ra"]
 xfail_strict = true
 filterwarnings = ["error"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+asyncio_default_test_loop_scope = "function"
 markers = [
     "liboqs: needs a bundled liboqs (OQS_INSTALL_PATH); skipped when it is absent",
 ]
@@ -96,10 +108,18 @@ max-args = 7  # Expand-Label(h, S, label, ctx, L, name) mirrors the spec's signa
     "SLF001",   # tests may look at private state
     "FBT",      # boolean parameters in test helpers are fine
     "PT017",    # fuzz tests assert on the reason of whatever error they get
+    "S105",     # test passwords are not secrets
+    "S106",
+    "S107",
 ]
 "formal/verify.py" = [
     "INP001",   # a standalone script, not a package
     "T201",     # its output is the report
+]
+"src/qrp2p/cli/commands.py" = [
+    "TRY003",   # a UsageError's message is the text the user sees
+    "EM101",
+    "EM102",
 ]
 "tests/mutation_gate.py" = ["T201"]  # its output is the report
 "tools/**" = [
@@ -138,7 +158,7 @@ forbidden_modules = ["qrp2p.services", "qrp2p.lab", "qrp2p.ui"]
 name = "core uses only stdlib, cryptography and msgspec (DESIGN §12.1)"
 type = "forbidden"
 source_modules = ["qrp2p.core"]
-forbidden_modules = ["oqs", "PySide6", "zeroconf", "platformdirs", "keyring", "filelock"]
+forbidden_modules = ["oqs", "PySide6", "zeroconf", "ifaddr", "platformdirs", "keyring", "filelock"]
 
 [[tool.importlinter.contracts]]
 name = "services never import the weakened engines or liboqs"
@@ -155,9 +175,22 @@ ignore_imports = ["qrp2p.ui.** -> qrp2p.core.trace", "qrp2p.ui.** -> qrp2p.core.
 allow_indirect_imports = true
 unmatched_ignore_imports_alerting = "none"
 
+[[tool.importlinter.contracts]]
+name = "the CLI is a front end: it drives the services, never core or lab directly"
+type = "forbidden"
+source_modules = ["qrp2p.cli"]
+forbidden_modules = ["qrp2p.core", "qrp2p.lab", "qrp2p.ui", "PySide6"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "services and the CLI never import Qt, so the node runs headless"
+type = "forbidden"
+source_modules = ["qrp2p.services", "qrp2p.cli"]
+forbidden_modules = ["PySide6", "qrp2p.ui"]
+
 # --- mutmut (DESIGN §15 row 4) -------------------------------------------------------------------
 
 [tool.mutmut]
 paths_to_mutate = ["src/qrp2p/core/"]
 tests_dir = ["tests/"]
-also_copy = ["src/qrp2p/__init__.py", "src/qrp2p/py.typed", "src/qrp2p/lab/", "src/qrp2p/services/", "src/qrp2p/ui/"]
+also_copy = ["src/qrp2p/__init__.py", "src/qrp2p/py.typed", "src/qrp2p/lab/", "src/qrp2p/services/", "src/qrp2p/ui/", "src/qrp2p/cli/"]
