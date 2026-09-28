@@ -11,7 +11,7 @@ import pytest
 
 from qrp2p.cli import render
 from qrp2p.cli.app import parse_args
-from qrp2p.cli.commands import Cli, _host_port
+from qrp2p.cli.commands import Cli, Command, _host_port
 from qrp2p.services.events import SessionOpened
 from qrp2p.services.models import FileStatus, TrustState
 from qrp2p.services.vault import Vault
@@ -159,6 +159,28 @@ async def test_lock_and_unlock(screens: tuple[Screen, Screen]) -> None:
     await alice.run("/unlock")
     assert "Wrong password." in alice.text()
     await alice.shows("Unlocked")
+
+
+async def test_odd_numbers_are_usage_errors_not_crashes(screens: tuple[Screen, Screen]) -> None:
+    alice, _ = screens
+    for line in ("/admit \u00b2", "/deny \u0663", "/set autolock \u00b9", "/set maxfile inf"):
+        await alice.run(line)
+    assert "Internal error" not in alice.text()
+    assert alice.text().count("Usage:") == 4
+
+
+async def test_a_failing_command_does_not_stop_the_cli(
+    screens: tuple[Screen, Screen], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice, _ = screens
+
+    async def broken(_: list[str]) -> None:
+        raise ZeroDivisionError
+
+    whoami = alice.cli.commands["whoami"]
+    monkeypatch.setitem(alice.cli.commands, "whoami", Command(broken, whoami.usage, whoami.help))
+    assert await alice.cli.handle("/whoami")
+    assert "Internal error in /whoami" in alice.text()
 
 
 async def test_quit(screens: tuple[Screen, Screen]) -> None:

@@ -5,6 +5,7 @@ import hashlib
 import os
 import shutil
 import sys
+import threading
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import cast
@@ -514,3 +515,45 @@ async def test_replacing_the_session_fails_its_transfers(
     await until(lambda: file_event(bob, FileStatus.FAILED) is not None)
     await until(lambda: not any(downloads.iterdir()))
     assert alice.node.is_online(bob_id)  # the new session carries on
+
+
+async def test_peer_cancel_while_accepting_leaves_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The offer is cancelled while accept() waits for the disk: no .part file survives."""
+    transfers, _, _, session = receiver()
+    await offered(transfers, session, b"x" * 100)
+    gate = threading.Event()
+    real_usage = shutil.disk_usage
+
+    def slow_usage(path: object) -> object:
+        gate.wait(5)
+        return real_usage(path)  # pyright: ignore[reportArgumentType]
+
+    monkeypatch.setattr(files_module.shutil, "disk_usage", slow_usage)
+    accepting = asyncio.create_task(transfers.accept(FID, tmp_path))
+    await asyncio.sleep(0.01)
+    await transfers.handle(session, FileCancel(file_id=FID, reason=FileCancelReason.USER))
+    gate.set()
+    with pytest.raises(KeyError):
+        await accepting
+    await asyncio.sleep(0.01)
+    assert not any(tmp_path.iterdir())  # noqa: ASYNC240
+
+
+async def test_work_finished_after_cancellation_is_released() -> None:
+    """A file a worker thread opens after its waiter was cancelled still gets closed."""
+    gate = threading.Event()
+    released: list[str] = []
+
+    def open_slowly() -> str:
+        gate.wait(5)
+        return "handle"
+
+    waiter = asyncio.create_task(files_module._owned_in_thread(open_slowly, released.append))
+    await asyncio.sleep(0.01)
+    waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    gate.set()
+    await until(lambda: released == ["handle"])

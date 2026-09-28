@@ -373,10 +373,11 @@ class FileTransfers:
         return transfer
 
     async def _send_file(self, transfer: Transfer) -> None:
-        assert transfer.path is not None  # noqa: S101  # outgoing transfers have a source
+        source = transfer.path
+        assert source is not None  # noqa: S101  # outgoing transfers have a source
         session = transfer.session
         try:
-            stream = await asyncio.to_thread(transfer.path.open, "rb")
+            stream = await _owned_in_thread(lambda: source.open("rb"), _close_quietly)
         except OSError:
             self._cancel(transfer, FileCancelReason.USER, notify=True, status=FileStatus.FAILED)
             return
@@ -428,12 +429,19 @@ class FileTransfers:
             return shutil.disk_usage(directory).free
 
         free = await asyncio.to_thread(free_space)
+        if transfer.finished:  # the peer cancelled while we looked
+            raise KeyError(file_id)
         if free < transfer.size + FREE_SPACE_MARGIN:
             self._cancel(transfer, FileCancelReason.DISK_FULL, notify=True)
             return transfer
-        part, final = await asyncio.to_thread(self._create_part, directory, transfer.name)
-        transfer.io.part, transfer.path = part, final
-        transfer.io.stream = await asyncio.to_thread(part.open, "r+b")
+        name = transfer.name
+        part, final, stream = await _owned_in_thread(
+            lambda: self._create_part(directory, name), _remove_part
+        )
+        if transfer.finished:  # the peer cancelled while we created the file
+            await asyncio.to_thread(_remove_part, (part, final, stream))
+            raise KeyError(file_id)
+        transfer.io.part, transfer.path, transfer.io.stream = part, final, stream
         transfer.status = FileStatus.TRANSFERRING
         try:
             transfer.session.send(FileAccept(file_id=file_id), Priority.CHAT)
@@ -444,19 +452,18 @@ class FileTransfers:
         return transfer
 
     @staticmethod
-    def _create_part(directory: Path, name: str) -> tuple[Path, Path]:
-        """Create ``<final>.part`` with exclusive create, marked as downloaded."""
+    def _create_part(directory: Path, name: str) -> tuple[Path, Path, BinaryIO]:
+        """Create and open ``<final>.part`` with exclusive create, marked as downloaded."""
         directory.mkdir(parents=True, exist_ok=True)
         for _ in range(100):
             final = unique_path(directory, name)
             part = final.with_name(final.name + PART_SUFFIX)
             try:
-                with part.open("xb"):
-                    pass
+                stream = part.open("xb")
             except FileExistsError:
                 continue  # raced with another writer; pick the next name
             mark_downloaded(part)
-            return part, final
+            return part, final, stream
         raise FileExistsError(errno.EEXIST, "no free file name")
 
     def decline(self, file_id: bytes) -> Transfer:
@@ -734,6 +741,37 @@ class FileTransfers:
         if transfer.transferred - transfer.io.reported >= PROGRESS_EVERY:
             transfer.io.reported = transfer.transferred
             self._hooks.changed(transfer)
+
+
+async def _owned_in_thread[T](work: Callable[[], T], release: Callable[[T], None]) -> T:
+    """Run ``work`` in a thread; if we are cancelled meanwhile, ``release`` what it returns.
+
+    Without this, a file opened by the thread after our task was cancelled would never be
+    closed (or a ``.part`` file never deleted).
+    """
+    future = asyncio.ensure_future(asyncio.to_thread(work))
+    try:
+        return await asyncio.shield(future)
+    except asyncio.CancelledError:
+
+        def cleanup(done: asyncio.Future[T]) -> None:
+            if not done.cancelled() and done.exception() is None:
+                release(done.result())
+
+        future.add_done_callback(cleanup)
+        raise
+
+
+def _close_quietly(stream: BinaryIO) -> None:
+    with contextlib.suppress(OSError):
+        stream.close()
+
+
+def _remove_part(created: tuple[Path, Path, BinaryIO]) -> None:
+    part, _, stream = created
+    _close_quietly(stream)
+    with contextlib.suppress(FileNotFoundError):
+        part.unlink()
 
 
 def _discard_now(transfer: Transfer) -> None:

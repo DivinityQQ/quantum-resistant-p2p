@@ -1,5 +1,6 @@
 """Text rendering for the CLI. Every peer-supplied string goes through ``display_text``."""
 
+import math
 import time
 from typing import Final
 
@@ -61,11 +62,11 @@ def parse_size(text: str) -> int:
     text = text.strip().upper().removesuffix("B").removesuffix("I")
     factor = {"K": 2**10, "M": 2**20, "G": 2**30}.get(text[-1:], 1)
     number = text[:-1] if factor > 1 else text
-    value = int(float(number) * factor)
-    if value < 0:
-        msg = "negative size"
+    amount = float(number) * factor
+    if not math.isfinite(amount) or amount < 0:
+        msg = "not a size"
         raise ValueError(msg)
-    return value
+    return int(amount)
 
 
 def contact_line(index: int, contact: Contact, *, online: bool, detail: str = "") -> str:

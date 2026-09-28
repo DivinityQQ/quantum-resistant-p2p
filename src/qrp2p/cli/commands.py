@@ -7,6 +7,7 @@ mismatches by the numbers the CLI shows.
 
 import asyncio
 import contextlib
+import logging
 import shlex
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -48,6 +49,9 @@ from qrp2p.services.vault import VaultError, WrongPasswordError
 
 MIN_PASSWORD: Final = 8
 TRACE_DEFAULT: Final = 20
+MAX_SLEEP: Final = 86_400.0
+
+_log = logging.getLogger(__name__)
 
 type Output = Callable[[str], None]
 type AskSecret = Callable[[str], Awaitable[str | None]]
@@ -157,15 +161,21 @@ class Cli:
         if command is None:
             self.out(f"Unknown command /{display_text(name)}. Try /help.")
             return True
+        await self._run(name, command, args)
+        return True
+
+    async def _run(self, name: str, command: Command, args: list[str]) -> None:
         try:
             await command.handler(args)
         except UsageError as error:
             self.out(f"{error}\nUsage: /{name} {command.usage}".rstrip())
         except (NodeError, VaultError, KeychainUnavailableError) as error:
-            self.out(f"Error: {error}")
+            self.out(f"Error: {display_text(str(error))}")  # may quote a contact's name
         except OSError as error:
-            self.out(f"Error: {error.strerror or error}")
-        return True
+            self.out(f"Error: {display_text(str(error.strerror or error))}")
+        except Exception:  # noqa: BLE001  # a bug in one command must not stop the node
+            _log.exception("command /%s failed", name)
+            self.out(f"Internal error in /{name}; details are in app.log. Please report it.")
 
     async def _chat_line(self, text: str) -> None:
         if self.current is None:
@@ -194,7 +204,7 @@ class Cli:
     def contact(self, ref: str) -> Contact:
         """A contact by list number, short ID (prefix) or name (unique prefix)."""
         contacts = self.node.contacts()
-        if ref.isdigit() and 1 <= int(ref) <= len(contacts):
+        if _is_number(ref) and 1 <= int(ref) <= len(contacts):
             return contacts[int(ref) - 1]
         wanted = ref.replace("-", "").upper()
         by_id = [c for c in contacts if c.short_id.replace("-", "").startswith(wanted)]
@@ -218,7 +228,7 @@ class Cli:
 
     def _file_id(self, ref: str) -> bytes:
         transfers = self.node.transfers()
-        if ref.isdigit() and 1 <= int(ref) <= len(transfers):
+        if _is_number(ref) and 1 <= int(ref) <= len(transfers):
             return transfers[int(ref) - 1].file_id
         raise UsageError("No such file; see /files.")
 
@@ -469,7 +479,11 @@ class Cli:
             raise UsageError("Connect to what?")
         target = args[0]
         if target == "nearby":
-            if len(args) < 2 or not args[1].isdigit() or not 1 <= int(args[1]) <= len(self._nearby):  # noqa: PLR2004
+            if (
+                len(args) < 2  # noqa: PLR2004  # "nearby" and a number
+                or not _is_number(args[1])
+                or not 1 <= int(args[1]) <= len(self._nearby)
+            ):
                 raise UsageError("Which nearby peer? See /nearby.")
             peer = self._nearby[int(args[1]) - 1]
             self.out(f"Connecting to {render.name(peer.label)}…")
@@ -522,7 +536,7 @@ class Cli:
     async def cmd_history(self, args: list[str]) -> None:
         """``/history``."""
         count = 20
-        if args and args[-1].isdigit() and (len(args) > 1 or self.current is not None):
+        if args and _is_number(args[-1]) and (len(args) > 1 or self.current is not None):
             count = int(args.pop())
         await self._print_history(self._contact_or_current(args), count)
 
@@ -587,19 +601,19 @@ class Cli:
 
     async def cmd_admit(self, args: list[str]) -> None:
         """``/admit``."""
-        if not args or not args[0].isdigit():
+        if not args or not _is_number(args[0]):
             raise UsageError("Admit which request? See /prompts.")
         await self.node.answer_prompt(int(args[0]), accept=True, name=" ".join(args[1:]))
 
     async def cmd_deny(self, args: list[str]) -> None:
         """``/deny``."""
-        if not args or not args[0].isdigit():
+        if not args or not _is_number(args[0]):
             raise UsageError("Deny which request? See /prompts.")
         await self.node.answer_prompt(int(args[0]), accept=False)
 
     async def cmd_repin(self, args: list[str]) -> None:
         """``/repin``."""
-        if not args or not args[0].isdigit():
+        if not args or not _is_number(args[0]):
             raise UsageError("Which mismatch?")
         await self.node.resolve_mismatch(int(args[0]), repin=True)
         self.out(
@@ -608,7 +622,7 @@ class Cli:
 
     async def cmd_keep(self, args: list[str]) -> None:
         """``/keep``."""
-        if not args or not args[0].isdigit():
+        if not args or not _is_number(args[0]):
             raise UsageError("Which mismatch?")
         await self.node.resolve_mismatch(int(args[0]), repin=False)
         self.out("Kept the old identity.")
@@ -695,7 +709,7 @@ class Cli:
     async def cmd_trace(self, args: list[str]) -> None:
         """``/trace``: the Inspector's raw material, public values only."""
         count = TRACE_DEFAULT
-        if args and args[-1].isdigit():
+        if args and _is_number(args[-1]):
             count = int(args.pop())
         contact = self._contact_or_current(args)
         session = self.node.session_info(contact.contact_id)
@@ -746,7 +760,7 @@ class Cli:
                     announce_name=value.lower() in {"on", "yes", "true"}
                 )
             case "autolock":
-                if not value.isdigit():
+                if not _is_number(value):
                     raise UsageError("Minutes, 0 to turn off.")
                 await self.node.update_settings(auto_lock_minutes=int(value))
             case "downloads":
@@ -811,7 +825,17 @@ class Cli:
             seconds = float(args[0])
         except IndexError, ValueError:
             raise UsageError("How many seconds?") from None
+        if not 0 <= seconds < MAX_SLEEP:
+            raise UsageError(f"Between 0 and {MAX_SLEEP:.0f} seconds.")
         await asyncio.sleep(seconds)
+
+
+def _is_number(text: str) -> bool:
+    """Whether ``text`` is ASCII digits only.
+
+    ``str.isdigit`` alone also accepts characters such as superscript two, which ``int`` refuses.
+    """
+    return text.isascii() and text.isdigit()
 
 
 def _host_port(text: str) -> tuple[str, int] | None:
@@ -820,7 +844,7 @@ def _host_port(text: str) -> tuple[str, int] | None:
         host, sep, rest = text[1:].partition("]:")
     else:
         host, sep, rest = text.rpartition(":")
-    if not sep or not host or not rest.isdigit() or (":" in host and not text.startswith("[")):
+    if not sep or not host or not _is_number(rest) or (":" in host and not text.startswith("[")):
         return None
     port = int(rest)
     if not 0 < port < 65536:  # noqa: PLR2004

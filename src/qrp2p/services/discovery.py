@@ -58,12 +58,13 @@ class NearbyPeer:
 def instance_name(display_name: str, short_id: str) -> str:
     """``"<display name or QRP2P> (<short_id>)"``, cut to fit one DNS label."""
     suffix = f" ({short_id})"
-    name = display_text(display_name).strip() or DEFAULT_NAME
+    # A dot would split the DNS name; replace it before measuring (U+2024 takes 3 bytes).
+    name = display_text(display_name).strip().replace(".", "\u2024") or DEFAULT_NAME
     budget = MAX_LABEL_BYTES - len(suffix.encode("utf-8"))
     encoded = name.encode("utf-8")
     if len(encoded) > budget:
-        name = encoded[:budget].decode("utf-8", "ignore").rstrip()
-    return name.replace(".", "\u2024") + suffix  # a dot would split the DNS name
+        name = encoded[:budget].decode("utf-8", "ignore").rstrip() or DEFAULT_NAME
+    return name + suffix
 
 
 def txt_properties(peer_id: bytes, profiles: int) -> dict[str, str]:
