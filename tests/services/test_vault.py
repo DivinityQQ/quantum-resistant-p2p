@@ -551,6 +551,17 @@ def test_lock_drops_keys_and_truncates_the_wal(tmp_path: Path) -> None:
     assert len(vault.contacts()) == 1
 
 
+def test_lock_succeeds_on_a_damaged_database(tmp_path: Path) -> None:
+    """Locking never fails (v1 regression 6), even when the purge before it cannot read."""
+    vault = make_vault(tmp_path)
+    vault.save_contact(contact(vault))
+    state = vault._open
+    assert state is not None
+    state.db.execute("UPDATE contacts SET data = x'00'")
+    vault.lock()
+    assert not vault.is_unlocked
+
+
 def test_second_process_is_refused(tmp_path: Path) -> None:
     vault = make_vault(tmp_path)
     with pytest.raises(VaultInUseError):

@@ -683,7 +683,8 @@ class Vault:
     def lock(self) -> None:
         """Checkpoint the WAL, close the database and drop every key reference (DESIGN §10.4).
 
-        Session-only conversations are purged first. Never raises for a locked vault.
+        Session-only conversations are purged first. Locking never fails (v1 regression 6): a
+        purge or checkpoint that fails on a damaged database is logged and the keys still go.
         """
         state = self._open
         if state is None:
@@ -691,6 +692,8 @@ class Vault:
         try:
             self.purge_session_only()
             state.db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        except VaultError, sqlite3.Error:
+            _log.warning("could not purge or checkpoint while locking; locking anyway")
         finally:
             state.db.close()
             state.conv_keys.clear()
