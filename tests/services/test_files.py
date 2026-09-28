@@ -34,6 +34,7 @@ from qrp2p.services.files import (
     FileTransfers,
     PeerMisbehavedError,
     Transfer,
+    TransferDirection,
     mark_downloaded,
     rename_no_replace,
     sanitize_name,
@@ -867,3 +868,122 @@ async def test_failed_work_after_cancellation_is_not_released() -> None:
     gate.set()
     await asyncio.sleep(0.05)
     assert released == []
+
+
+async def test_offer_contents(tmp_path: Path) -> None:
+    transfers, stub, transfer, _ = await sender(tmp_path, 1234)
+    (offer,) = stub.sent
+    assert offer == FileOffer(
+        file_id=transfer.file_id,
+        name="source.bin",
+        size=1234,
+        media_type="application/octet-stream",
+    )
+    assert (transfer.direction, transfer.name, transfer.status) == (
+        TransferDirection.OUT,
+        "source.bin",
+        FileStatus.OFFERED,
+    )
+    with pytest.raises(KeyError):  # our own offer is not ours to accept
+        await transfers.accept(transfer.file_id, tmp_path)
+
+
+async def test_repeated_progress_is_accepted(tmp_path: Path) -> None:
+    transfers, stub, transfer, _ = await sender(tmp_path, 30_000)
+    session = cast("Session", stub)
+    await transfers.handle(session, FileAccept(file_id=transfer.file_id))
+    await until(lambda: transfer.transferred == 30_000)
+    for _ in range(2):
+        await transfers.handle(session, FileProgress(file_id=transfer.file_id, received=16_000))
+    assert transfer.acknowledged == 16_000
+
+
+async def test_our_own_cancel_is_not_the_peers(tmp_path: Path) -> None:
+    transfers, _, transfer, _ = await sender(tmp_path, 10)
+    await transfers.cancel(transfer.file_id)
+    assert transfer.status is FileStatus.CANCELLED
+    assert transfer.reason is FileCancelReason.USER
+    assert not transfer.by_peer
+
+
+async def test_peer_cancel_keeps_the_peers_reason(tmp_path: Path) -> None:
+    data = os.urandom(10_000)
+    transfers, _, session = await accepted(tmp_path, data)
+    transfer = transfers.get(FID)
+    assert transfer is not None
+    await transfers.handle(session, FileCancel(file_id=FID, reason=FileCancelReason.DISK_FULL))
+    assert transfer.reason is FileCancelReason.DISK_FULL
+    assert transfer.by_peer
+    # A cancel for a transfer that is already over is ignored, not a protocol error.
+    await transfers.handle(session, FileCancel(file_id=FID, reason=FileCancelReason.USER))
+
+
+async def test_a_closed_session_does_not_break_answers(tmp_path: Path) -> None:
+    transfers, _, stub, session = receiver()
+    await offered(transfers, session, b"x")
+    stub.is_open = False
+    transfers.decline(FID)  # nothing can be sent; declining still works
+    data = os.urandom(10_000)
+    transfers, stub, session = await accepted(tmp_path, data)
+    await feed(transfers, session, data)
+    stub.is_open = False  # the session ends before our final acknowledgement
+    await transfers.handle(session, FileDone(file_id=FID, sha256=hashlib.sha256(data).digest()))
+    assert (tmp_path / "f.bin").read_bytes() == data
+    (tmp_path / "s").mkdir()
+    transfers2, stub2, transfer, _ = await sender(tmp_path / "s", 10)
+    stub2.is_open = False
+    await transfers2.cancel(transfer.file_id)
+    assert transfer.status is FileStatus.CANCELLED
+
+
+async def test_accept_after_the_session_closed_removes_the_part_file(tmp_path: Path) -> None:
+    transfers, _, stub, session = receiver()
+    await offered(transfers, session, b"x" * 10)
+    stub.is_open = False
+    with pytest.raises(SessionNotOpenError):
+        await transfers.accept(FID, tmp_path)
+    assert not any(tmp_path.iterdir())  # noqa: ASYNC240
+
+
+async def test_peer_cancel_while_creating_the_part_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    transfers, _, _, session = receiver()
+    await offered(transfers, session, b"x" * 10)
+    gate = threading.Event()
+    real = FileTransfers._create_part
+
+    def slow_create(directory: Path, name: str) -> tuple[Path, Path, object]:
+        gate.wait(5)
+        return real(directory, name)
+
+    monkeypatch.setattr(FileTransfers, "_create_part", staticmethod(slow_create))
+    accepting = asyncio.create_task(transfers.accept(FID, tmp_path))
+    await asyncio.sleep(0.01)
+    await transfers.handle(session, FileCancel(file_id=FID, reason=FileCancelReason.USER))
+    gate.set()
+    with pytest.raises(KeyError):
+        await accepting
+    assert not any(tmp_path.iterdir())  # noqa: ASYNC240
+
+
+async def test_closing_fails_every_transfer(tmp_path: Path) -> None:
+    transfers, _, transfer, _ = await sender(tmp_path, 10)
+    await transfers.close()
+    assert transfer.status is FileStatus.FAILED
+    assert transfers.active() == []
+
+
+async def test_progress_reports_are_throttled(tmp_path: Path) -> None:
+    hooks = Hooks()
+    transfers = FileTransfers(hooks, max_size=2**30)
+    stub = StubSession()
+    source = tmp_path / "big.bin"
+    source.write_bytes(os.urandom(3 * 2**20))
+    transfer = transfers.offer(cast("Session", stub), source)
+    await transfers.handle(cast("Session", stub), FileAccept(file_id=transfer.file_id))
+    await until(lambda: any(isinstance(m, FileDone) for m in stub.sent))
+    reports = [t for t in hooks.changes if t is transfer]
+    assert 3 <= len(reports) <= 6  # about one per MiB, not one per chunk
+    assert all(t is not None for t in hooks.changes)
+    await transfers.cancel(transfer.file_id)

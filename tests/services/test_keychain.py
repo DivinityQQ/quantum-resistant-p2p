@@ -103,7 +103,7 @@ def test_the_real_os_keychain() -> None:
 
 def test_invalid_base64_reads_as_absent() -> None:
     backend = MemoryBackend()
-    backend.store[(SERVICE, "01" * 16)] = "AAAA$AAA"  # lenient decoding would skip the "$"
+    backend.store[(SERVICE, "01" * 16)] = "AAAA$AAAA"  # lenient decoding would skip the "$"
     assert OsKeychain(backend).get(b"\x01" * 16) is None
 
 

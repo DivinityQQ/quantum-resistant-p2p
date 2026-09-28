@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from typing import ClassVar, cast
 
 import pytest
-from zeroconf import ServiceStateChange
+from zeroconf import IPVersion, NotRunningException, ServiceStateChange
 from zeroconf.asyncio import AsyncServiceInfo
 
 from qrp2p.services import discovery as discovery_module
@@ -194,7 +194,8 @@ class FakeZeroconf:
 class FakeBrowser:
     last: FakeBrowser | None = None
 
-    def __init__(self, _zc: object, types: list[str], handlers: list[object]) -> None:
+    def __init__(self, zc: object, types: list[str], handlers: list[object]) -> None:
+        self.zc = zc
         self.types = types
         self.handlers = handlers
         self.cancelled = False
@@ -208,6 +209,8 @@ class FakeServiceInfo:
     """Registration records its arguments; resolving answers from RESOLVABLE."""
 
     RESOLVABLE: ClassVar[dict[str, tuple[dict[bytes, bytes | None], int, list[str]]]] = {}
+    requests: ClassVar[list[tuple[object, object]]] = []
+    hold: ClassVar[asyncio.Event | None] = None
 
     def __init__(self, type_: str, name: str, **kwargs: object) -> None:
         self.type_ = type_
@@ -217,14 +220,18 @@ class FakeServiceInfo:
         self.port: int | None = None
         self._addresses: list[str] = []
 
-    async def async_request(self, _zc: object, _timeout_ms: int) -> bool:
+    async def async_request(self, zc: object, timeout_ms: int) -> bool:
+        self.requests.append((zc, timeout_ms))
+        if self.hold is not None:
+            await self.hold.wait()
         found = self.RESOLVABLE.get(self.name)
         if found is None:
             return False
         self.properties, self.port, self._addresses = found
         return True
 
-    def parsed_scoped_addresses(self, _version: object) -> list[str]:
+    def parsed_scoped_addresses(self, version: object) -> list[str]:
+        assert version is IPVersion.All
         return self._addresses
 
 
@@ -232,6 +239,8 @@ class FakeServiceInfo:
 def fake_zeroconf(monkeypatch: pytest.MonkeyPatch) -> None:
     FakeZeroconf.created.clear()
     FakeServiceInfo.RESOLVABLE.clear()
+    FakeServiceInfo.requests.clear()
+    FakeServiceInfo.hold = None
     monkeypatch.setattr(discovery_module, "AsyncZeroconf", FakeZeroconf)
     monkeypatch.setattr(discovery_module, "AsyncServiceBrowser", FakeBrowser)
     monkeypatch.setattr(discovery_module, "AsyncServiceInfo", FakeServiceInfo)
@@ -319,8 +328,81 @@ def test_local_addresses_skip_loopback_link_local_and_duplicates(
 
     adapters = [
         adapter("127.0.0.1", ("::1", 0, 0)),
-        adapter("192.168.1.5", ("fe80::1", 0, 2), ("2001:db8::5", 0, 0), "not an address"),
+        adapter("not an address", "192.168.1.5", ("fe80::1", 0, 2), ("2001:db8::5", 0, 0)),
         adapter("192.168.1.5", "169.254.3.4", "224.0.0.251"),
     ]
     monkeypatch.setattr(discovery_module.ifaddr, "get_adapters", lambda: adapters)
     assert local_addresses() == ["192.168.1.5", "2001:db8::5"]
+
+
+def test_long_announced_labels_are_cut() -> None:
+    name = "x" * 200 + f".{SERVICE_TYPE}"
+    peer = discovery().peer_from_info(name, info())
+    assert peer is not None
+    assert len(peer.label) <= MAX_LABEL_BYTES
+
+
+@pytest.mark.usefixtures("fake_zeroconf")
+async def test_discovery_details(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(discovery_module, "local_addresses", lambda: ["192.0.2.9"])
+    node = Discovery(on_change=lambda: None, own_id_hint=b"\x00" * 8)
+    await node.start(instance="me", port=1, peer_id=PEER_ID, profiles=1)
+    (zc,) = FakeZeroconf.created
+    ((registered, _),) = zc.registered
+    assert isinstance(registered, FakeServiceInfo)
+    assert registered.kwargs["parsed_addresses"] == ["192.0.2.9"]  # from the interfaces
+    assert zc.interfaces is None  # every interface unless told otherwise
+    browser = FakeBrowser.last
+    assert browser is not None
+    assert browser.zc is zc.zeroconf
+    for n, label in enumerate(["bravo", "Alpha", "charlie"]):
+        name = f"{label}.{SERVICE_TYPE}"
+        txt: dict[bytes, bytes | None] = {
+            b"v": b"2",
+            b"id": bytes([n + 1]).hex().encode() * 8,
+            b"pf": b"1",
+        }
+        FakeServiceInfo.RESOLVABLE[name] = (txt, 47470, ["192.0.2.2"])
+        change(name, ServiceStateChange.Added)
+    await until(lambda: len(node.peers()) == 3)
+    assert [p.label for p in node.peers()] == ["Alpha", "bravo", "charlie"]
+    assert FakeServiceInfo.requests
+    assert all(
+        r == (zc.zeroconf, discovery_module.RESOLVE_TIMEOUT_MS) for r in FakeServiceInfo.requests
+    )
+    change(f"never-seen.{SERVICE_TYPE}", ServiceStateChange.Removed)  # unknown: no error
+    await node.stop()
+
+
+@pytest.mark.usefixtures("fake_zeroconf")
+async def test_a_resolve_finishing_after_stop_is_dropped() -> None:
+    node = Discovery(on_change=lambda: None, own_id_hint=b"\x00" * 8)
+    await node.start(instance="me", port=1, peer_id=PEER_ID, profiles=1, addresses=[])
+    name = f"late.{SERVICE_TYPE}"
+    txt: dict[bytes, bytes | None] = {b"v": b"2", b"id": b"22" * 8, b"pf": b"1"}
+    FakeServiceInfo.RESOLVABLE[name] = (txt, 47470, ["192.0.2.2"])
+    FakeServiceInfo.hold = asyncio.Event()
+    change(name, ServiceStateChange.Added)
+    await asyncio.sleep(0.01)
+    tasks = set(node._tasks)
+    node._zc, zc = None, node._zc  # stop() has begun: the node no longer runs
+    FakeServiceInfo.hold.set()
+    await asyncio.gather(*tasks, return_exceptions=True)
+    assert node.peers() == []
+    node._zc = zc
+    await node.stop()
+
+
+@pytest.mark.parametrize("error", [OSError, NotRunningException])
+@pytest.mark.usefixtures("fake_zeroconf")
+async def test_stop_survives_a_failed_unregister(error: type[Exception]) -> None:
+    node = Discovery(on_change=lambda: None, own_id_hint=b"\x00" * 8)
+    await node.start(instance="me", port=1, peer_id=PEER_ID, profiles=1, addresses=["192.0.2.1"])
+    (zc,) = FakeZeroconf.created
+
+    async def failing(_info: object) -> object:
+        raise error
+
+    zc.async_unregister_service = failing  # type: ignore[method-assign]
+    await node.stop()
+    assert zc.closed

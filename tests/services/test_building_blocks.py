@@ -211,6 +211,7 @@ def test_limiter_counts_declines_in_a_row() -> None:
 
 def test_display_text_limit_is_inclusive() -> None:
     assert display_text("abcd", limit=4) == "abcd"
+    assert display_text("abcd", limit=1) == "\u2026"
 
 
 def test_slot_counts_per_source() -> None:
@@ -227,12 +228,12 @@ def test_trace_records_and_the_ended_limit() -> None:
     bus.publish(7, 1.5, event)
     (record,) = bus.events(7)
     assert (record.session_id, record.time, record.event) == (7, 1.5, event)
+    bus.session_ended(500)  # an ended session that never traced anything
     for session in range(ENDED_KEPT):
         bus.publish(session + 100, 0.0, event)
-        bus.session_ended(session + 100)
+        bus.session_ended(session + 100)  # the first of these pushes session 500 out
     assert all(bus.events(session + 100) for session in range(ENDED_KEPT))  # exactly kept
-    bus.session_ended(999)  # an ended session that never traced anything
-    bus.session_ended(998)
+    bus.session_ended(999)
     assert bus.events(100) == ()
 
 

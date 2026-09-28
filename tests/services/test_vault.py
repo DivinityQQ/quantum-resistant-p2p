@@ -282,7 +282,15 @@ def test_padding_round_trips_to_64_byte_buckets(n: int) -> None:
 
 
 @pytest.mark.parametrize(
-    "bad", [b"", bytes(64), b"\x80" + bytes(127), b"x" * 63 + b"\x81", b"x" * 65]
+    "bad",
+    [
+        b"",
+        bytes(64),
+        b"\x80" + bytes(127),
+        b"x" * 63 + b"\x81",
+        b"x" * 65,
+        b"a" * 63 + b"\x80\x00",  # well formed, but not a whole number of blocks
+    ],
 )
 def test_malformed_padding_is_refused(bad: bytes) -> None:
     with pytest.raises(VaultCorruptError):
@@ -878,3 +886,13 @@ def test_retention_boundaries_and_counts(tmp_path: Path) -> None:
     assert vault.purge_expired(now) == 0
     assert vault.purge_session_only() == 4
     assert vault.purge_session_only() == 0
+
+
+def test_device_unlock_with_an_emptied_keychain(tmp_path: Path) -> None:
+    keychain = MemoryKeychain()
+    vault = make_vault(tmp_path)
+    vault.enable_device_unlock(keychain)
+    vault.close()
+    keychain.items.clear()  # the user removed the entry from the OS keychain
+    with pytest.raises(WrongPasswordError):
+        Vault(vault.directory, kdf=CHEAP).unlock_with_device(keychain)
