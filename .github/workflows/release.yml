@@ -1,0 +1,63 @@
+# Publishes to PyPI by trusted publishing (OIDC): no API token exists anywhere. PyPI trusts exactly
+# this repository, this file name (release.yml) and the `pypi` environment; rename either only
+# together with the publisher on PyPI (Manage project → Publishing), or releases stop working.
+#
+# Release: bump `version` in pyproject.toml through a PR, then tag the merged commit on main as
+# v<version> and push the tag. The `pypi` environment waits for the owner's approval.
+name: Release
+
+on:
+  push:
+    tags: ["v2.*"]
+
+permissions:
+  contents: read
+
+env:
+  UV_VERSION: "0.12.19"
+  PYTHON_VERSION: "3.14"
+
+jobs:
+  build:
+    name: Build distributions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0  # the history, to check that the tag is on main
+          persist-credentials: false
+      # No cache: a release is built from the lock file alone.
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: The tag names the project version
+        run: test "v$(uv version --short)" = "$GITHUB_REF_NAME"
+      - name: The tagged commit is on main (so it passed the required CI)
+        run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+      - run: uv build --no-sources
+      - name: The wheel installs and imports on its own
+        run: uv run --isolated --no-project --with dist/*.whl python -c "import qrp2p.core"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/qrp2p/
+    permissions:
+      id-token: write  # the OIDC token PyPI exchanges for a short-lived upload token
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+      # Pinned by commit: this is the only step that can upload. It also publishes PEP 740
+      # attestations (Sigstore) that tie each file to this workflow run.
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
