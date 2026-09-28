@@ -64,7 +64,13 @@ from qrp2p.services.events import (
     SessionOpened,
     StateChanged,
 )
-from qrp2p.services.files import FileTransfers, PeerMisbehavedError, Transfer, TransferDirection
+from qrp2p.services.files import (
+    FileTransfers,
+    PeerMisbehavedError,
+    Transfer,
+    TransferDirection,
+    remove_partial,
+)
 from qrp2p.services.keychain import KeychainUnavailableError, OsKeychain
 from qrp2p.services.models import (
     ID_LEN,
@@ -368,6 +374,8 @@ class Node:
         self._settings = await self._db(self._vault.settings)
         await self._db(self._vault.purge_session_only)
         await self._db(self._vault.purge_expired, self._wall())
+        for final in await self._db(self._vault.fail_interrupted):
+            await asyncio.to_thread(remove_partial, Path(final))
         self._contacts = {c.contact_id: c for c in await self._db(self._vault.contacts)}
         self._manager = SessionManager(
             identity=identity,
@@ -698,7 +706,7 @@ class Node:
     async def connect_contact(self, contact_id: bytes, *, glass_box: bool = False) -> None:
         """Connect to a contact with its pinned bundle and configured profile.
 
-        Addresses come from mDNS (entries whose ID hint matches) and the last address that worked.
+        The last address that worked is tried first, then mDNS entries whose ID hint matches.
         Returns once the session is open.
 
         Raises:
@@ -711,12 +719,12 @@ class Node:
             raise NodeError(msg)
         if self.is_online(contact_id):
             return
-        addresses: list[tuple[str, int]] = []
+        addresses: list[tuple[str, int]] = [] if contact.address is None else [contact.address]
         for peer in self.nearby():
             if contact.peer_id.startswith(peer.id_hint):
-                addresses += [(address, peer.port) for address in peer.addresses]
-        if contact.address is not None and contact.address not in addresses:
-            addresses.append(contact.address)
+                addresses += [
+                    (a, peer.port) for a in peer.addresses if (a, peer.port) != contact.address
+                ]
         if not addresses:
             msg = "no address known for this contact; connect by address first"
             raise NodeError(msg)
@@ -775,6 +783,8 @@ class Node:
             raise NodeError(msg)
         future: asyncio.Future[bytes] = asyncio.get_running_loop().create_future()
         for host, port in addresses:
+            if contact is not None and self.is_online(contact.contact_id):
+                return contact.contact_id  # the peer connected to us meanwhile
             target = f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
             outgoing = _Outgoing(
                 target, contact.contact_id if contact else None, (host, port), name_hint, future
@@ -803,9 +813,11 @@ class Node:
                     outgoing.session.close(CloseReason.TIMEOUT)
                 msg = "the handshake did not finish in time"
                 raise NodeError(msg) from None
+        if contact is not None and self.is_online(contact.contact_id):
+            return contact.contact_id
         targets = ", ".join(f"{h}:{p}" for h, p in addresses)
         self._emit(ConnectFailed(targets, None, detail="unreachable"))
-        msg = "could not reach the peer"
+        msg = "could not reach the peer (is it running, and does its firewall allow the port?)"
         raise NodeError(msg)
 
     async def disconnect(self, contact_id: bytes) -> None:
@@ -1244,8 +1256,11 @@ class Node:
         if contact_id is not None and not still_live:  # a replaced session is no disconnect
             self._emit(SessionEnded(contact_id, end.reason, end.by_peer))
         elif outgoing is not None and not superseded:
+            lost = "connection lost" if end.reason is None and end.admit_reason is None else ""
             self._emit(
-                ConnectFailed(outgoing.target, end.reason, end.admit_reason, outgoing.supported)
+                ConnectFailed(
+                    outgoing.target, end.reason, end.admit_reason, outgoing.supported, detail=lost
+                )
             )
         if outgoing is not None and not outgoing.result.done():
             peer = session.peer or session.expected_peer

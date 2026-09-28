@@ -10,7 +10,10 @@ import pytest
 from qrp2p.core.crypto.profiles import PQ_CNSA_1
 from qrp2p.core.errors import AdmitReason, CloseReason
 from qrp2p.services import node as node_module
+from qrp2p.services import session_manager as session_manager_module
+from qrp2p.services import transport
 from qrp2p.services.admission import PromptKind
+from qrp2p.services.discovery import SERVICE_TYPE, NearbyPeer
 from qrp2p.services.events import (
     AdmissionPrompt,
     ConnectFailed,
@@ -22,8 +25,19 @@ from qrp2p.services.events import (
     SessionOpened,
     StateChanged,
 )
-from qrp2p.services.models import MessageKind, MessageStatus, Retention, TrustState
+from qrp2p.services.models import (
+    Direction,
+    FileInfo,
+    FileStatus,
+    HistoryEntry,
+    MessageKind,
+    MessageStatus,
+    Retention,
+    TrustState,
+)
 from qrp2p.services.node import NodeError, NotConnectedError, profile_by_name
+from qrp2p.services.transport import ConnectFailed as TransportConnectFailed
+from qrp2p.services.transport import FrameStream
 from qrp2p.services.vault import WrongPasswordError
 from tests.services.support import LOOPBACK, NodeHarness, befriend, until
 from tests.services.test_vault import MemoryKeychain
@@ -404,3 +418,147 @@ async def until_async[T](read: Callable[[], Awaitable[T]], expected: T) -> None:
     async with asyncio.timeout(10):
         while await read() != expected:  # noqa: ASYNC110  # polls the vault
             await asyncio.sleep(0.01)
+
+
+# --- found on the LAN test --------------------------------------------------------------------------
+
+
+def announced(harness: NodeHarness, *addresses: str) -> NearbyPeer:
+    """What mDNS would show for ``harness``."""
+    bundle = harness.node.identity
+    label = f"{harness.name.title()} ({bundle.short_id})"
+    return NearbyPeer(
+        instance=f"{label}.{SERVICE_TYPE}",
+        label=label,
+        id_hint=bundle.peer_id[:8],
+        profiles=1,
+        addresses=addresses,
+        port=harness.port,
+    )
+
+
+def record_dials(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    dialled: list[str] = []
+
+    async def open_stream(host: str, port: int) -> FrameStream:
+        dialled.append(host)
+        return await transport.open_stream(host, port)
+
+    monkeypatch.setattr(session_manager_module, "open_stream", open_stream)
+    return dialled
+
+
+async def test_first_contact_through_mdns(nodes: tuple[NodeHarness, NodeHarness]) -> None:
+    alice, bob = nodes
+    connecting = asyncio.create_task(alice.node.connect_nearby(announced(bob, LOOPBACK)))
+    prompt = await bob.next(AdmissionPrompt)
+    await bob.node.answer_prompt(prompt.prompt_id, accept=True, name="Alice")
+    bob_id = await connecting
+    assert alice.node.contact(bob_id).name == "Bob"  # the label without its short ID
+    assert alice.node.contact_for_nearby(announced(bob)) == alice.node.contact(bob_id)
+
+
+async def test_a_contact_is_dialled_at_its_last_address_first(
+    nodes: tuple[NodeHarness, NodeHarness], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice, bob = nodes
+    bob_id, _ = await befriend(alice, bob)
+    await alice.node.disconnect(bob_id)
+    await until(lambda: not alice.node.is_online(bob_id))
+    # mDNS lists an unreachable address first (a Docker bridge, say) and the working one again.
+    monkeypatch.setattr(alice.node, "nearby", lambda: [announced(bob, "192.0.2.1", LOOPBACK)])
+    dialled = record_dials(monkeypatch)
+    await alice.node.connect_nearby(announced(bob, "192.0.2.1", LOOPBACK))  # a known contact
+    assert dialled == [LOOPBACK]
+    assert alice.node.is_online(bob_id)
+
+
+@pytest.mark.parametrize("more", [(), ("192.0.2.1",)])
+async def test_a_pending_connect_succeeds_when_the_peer_connects_first(
+    nodes: tuple[NodeHarness, NodeHarness], monkeypatch: pytest.MonkeyPatch, more: tuple[str, ...]
+) -> None:
+    alice, bob = nodes
+    bob_id, alice_id = await befriend(alice, bob)
+    await alice.node.disconnect(bob_id)
+    await until(lambda: not alice.node.is_online(bob_id) and not bob.node.is_online(alice_id))
+
+    async def blocked(host: str, port: int) -> FrameStream:
+        if port == alice.port:  # Bob dials us
+            return await transport.open_stream(host, port)
+        # Bob's firewall drops every connection of ours; meanwhile Bob connects to us.
+        if not alice.node.is_online(bob_id):
+            await bob.node.connect_address(LOOPBACK, alice.port)
+            await until(lambda: alice.node.is_online(bob_id))
+        raise TransportConnectFailed
+
+    monkeypatch.setattr(alice.node, "nearby", lambda: [announced(bob, *more)])
+    monkeypatch.setattr(session_manager_module, "open_stream", blocked)
+    await alice.node.connect_contact(bob_id)
+    assert alice.node.is_online(bob_id)
+    assert not alice.of(ConnectFailed)
+
+
+async def test_a_connection_dropped_in_the_handshake_is_named(
+    nodes: tuple[NodeHarness, NodeHarness],
+) -> None:
+    alice, _ = nodes
+
+    async def hang_up(_reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        writer.close()
+
+    server = await asyncio.start_server(hang_up, LOOPBACK, 0)
+    port = server.sockets[0].getsockname()[1]
+    try:
+        with pytest.raises(NodeError, match="dropped during the handshake"):
+            await alice.node.connect_address(LOOPBACK, port)
+    finally:
+        server.close()
+        await server.wait_closed()
+    (failed,) = alice.of(ConnectFailed)
+    assert (failed.reason, failed.detail) == (None, "connection lost")
+
+
+async def test_unreachable_hints_at_a_firewall(nodes: tuple[NodeHarness, NodeHarness]) -> None:
+    alice, bob = nodes
+    port = bob.port
+    await bob.node.lock()
+    with pytest.raises(NodeError, match="firewall"):
+        await alice.node.connect_address(LOOPBACK, port)
+    (failed,) = alice.of(ConnectFailed)
+    assert failed.detail == "unreachable"
+
+
+async def test_unlock_clears_what_a_crash_left_in_flight(
+    nodes: tuple[NodeHarness, NodeHarness], tmp_path: Path
+) -> None:
+    alice, bob = nodes
+    bob_id, _ = await befriend(alice, bob)
+    final = tmp_path / "downloads" / "big.bin"
+    final.parent.mkdir()
+    part = final.with_name("big.bin.part")
+    part.write_bytes(b"half a file")
+    unrelated = final.with_name("big.bin")  # a finished file of the same name stays
+    unrelated.write_bytes(b"keep me")
+    vault = alice.node._vault
+    entry = HistoryEntry(
+        entry_id=vault.new_entry_id(),
+        kind=MessageKind.FILE,
+        direction=Direction.IN,
+        time=3000.0,
+        file=FileInfo(
+            file_id=bytes(16),
+            name="big.bin",
+            size=1 << 30,
+            media_type="application/octet-stream",
+            status=FileStatus.TRANSFERRING,
+            path=str(final),
+        ),
+    )
+    await alice.node._db(vault.add_entry, alice.node.contact(bob_id).conv_id, entry)
+    await alice.node.lock()
+    await alice.node.unlock("pw")
+    assert not part.exists()
+    assert unrelated.read_bytes() == b"keep me"
+    (after,) = [e for e in await alice.node.history(bob_id) if e.entry_id == entry.entry_id]
+    assert after.file is not None
+    assert after.file.status is FileStatus.FAILED

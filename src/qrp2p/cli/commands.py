@@ -775,7 +775,8 @@ class Cli:
                     raise UsageError("Give a size such as 4G.") from None
             case _:
                 raise UsageError("Unknown setting.")
-        self.out("Saved. (Name and announce changes apply at the next unlock.)")
+        later = key in {"name", "announce"}
+        self.out("Saved; it applies at the next unlock." if later else "Saved.")
 
     async def cmd_settings(self, _: list[str]) -> None:
         """``/settings``."""

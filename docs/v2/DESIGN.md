@@ -238,13 +238,14 @@ Rules:
 - TXT record: `v=2`, `id=<hex of peer_id[0:8]>`, `pf=<hex bitmask of supported profiles: bit0 HYBRID-1, bit1 PQ-CNSA-1>`.
 - Showing the display name is a setting (on by default). All mDNS data is an unauthenticated hint.
 - Announcements stop while the app is locked.
-- Records are parsed strictly: `v` must be `2`, `id` exactly 16 hex digits, `pf` one or two hex digits; anything else is ignored, as is our own record. At most 8 addresses are kept per peer. Instance names are displayed as plain text with control and bidirectional characters replaced (§14.3); a dot in the display name is replaced by U+2024 so it cannot split the DNS name, which is cut to one 63-byte label.
-- Only non-loopback, non-link-local addresses are announced.
+- Records are parsed strictly: `v` must be `2`, `id` exactly 16 hex digits, `pf` one or two hex digits; anything else is ignored, as is our own record. A peer's addresses are ranked for dialling and at most 8 are kept (§6.2). Instance names are displayed as plain text with control and bidirectional characters replaced (§14.3); a dot in the display name is replaced by U+2024 so it cannot split the DNS name, which is cut to one 63-byte label.
+- Only non-loopback, non-link-local addresses are announced. mDNS itself runs on every interface except loopback.
 
 ### 6.2 Transport
 
 - TCP over IPv4 and IPv6. Default port **47470** (configurable); if busy, the next free port (up to 16 are tried), announced via mDNS.
 - Manual connect by `host:port` is always available.
+- **Dialling.** A peer announces every interface it has, including Docker bridges and VPNs that the dialler cannot reach, and each costs a 5 s connect timeout. So addresses are tried one at a time in this order: a contact's last working address; then announced addresses on a subnet the dialler shares; then the other announced addresses; then announced addresses that are the dialler's own (a second node on this machine). The dialler drops its own addresses at its own port (Docker gives many machines `172.17.0.1`; dialling it reaches ourselves), and loopback, unspecified and multicast addresses. If the contact connects to us while we dial, the dial ends as a success. A dial that reaches no address says a firewall may be the cause.
 - One TCP connection per session.
 
 ### 6.3 Framing
@@ -522,7 +523,7 @@ A failed rekey (bad signature, wrong size) closes the session.
 4. **Finish:** `file_done { sha256 }`. The receiver checks size and hash, then atomically renames `<name>.part` to the final name (never over an existing file) and sends `file_progress { received = size }`. Only this final report ever equals the size, so it tells the sender the file was delivered and verified.
 5. **Cancel:** `file_cancel` at any time; the partial file is deleted.
 
-Offers, answers and cancels travel at chat priority; chunks and `file_done` at file priority, so `file_done` follows the last chunk. A message for a `file_id` that never existed in the session closes it with `unexpected_message`, as does an offer reusing an ID, a chunk before the accept, or progress beyond what was sent. Messages for a transfer that has just ended (either side may cancel while chunks are in flight) are ignored. A transfer ends as failed when its session ends; resuming is out of scope.
+Offers, answers and cancels travel at chat priority; chunks and `file_done` at file priority, so `file_done` follows the last chunk. A message for a `file_id` that never existed in the session closes it with `unexpected_message`, as does an offer reusing an ID, a chunk before the accept, or progress beyond what was sent. Messages for a transfer that has just ended (either side may cancel while chunks are in flight) are ignored. A transfer ends as failed when its session ends; resuming is out of scope. After a crash, unlock marks every transfer that was still offered, accepted or transferring as failed and deletes its `.part` file.
 
 **Safety rules**
 
@@ -596,6 +597,7 @@ Every encrypted row has a random 128-bit `row_uid` as its explicit primary key. 
 - **Delete a conversation:** delete its `conv_keys` row and messages, then `VACUUM`. Remnants in free pages or the WAL are unreadable once `CK_c` is gone. Backups made before deletion stay readable with the password valid at that time; the UI says so. The contact continues with a new `conv_id` and key.
 - **Change password:** generate a new DEK and new conversation keys and re-encrypt everything. The database is small; this takes seconds. Afterwards an old `vault.json` plus the old password opens nothing in the current database. Order for crash safety: write `vault.json.new`, re-encrypt in one transaction, replace `vault.json`; an unlock that finds both files uses whichever opens the database with the given password.
 - **Lock** (15 minutes idle by default, or manually): close all sessions, stop listening and mDNS announcements, checkpoint the WAL, drop all key references. Nothing is received while locked.
+- **Unlock** repairs what a crash left in flight, before any session opens: chats still *sending* become *failed*, and so do unfinished transfers (§9).
 - **"Remember on this device"** (opt-in): a random device key stored in the OS keychain via `keyring` wraps a copy of the KEK in `vault.json`. Only OS backends are allowed (macOS Keychain, Windows Credential Locker, Secret Service); insecure fallbacks are refused.
 
 ### 10.5 What A4 can see

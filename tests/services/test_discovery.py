@@ -15,9 +15,13 @@ from qrp2p.services.discovery import (
     MAX_LABEL_BYTES,
     SERVICE_TYPE,
     Discovery,
+    LocalInterfaces,
     instance_name,
     local_addresses,
+    local_interfaces,
+    mdns_interfaces,
     parse_txt,
+    rank_addresses,
     txt_properties,
 )
 from tests.services.support import until
@@ -235,8 +239,24 @@ class FakeServiceInfo:
         return self._addresses
 
 
+def adapter(index: int | None, *ips: tuple[object, int]) -> SimpleNamespace:
+    """An ``ifaddr`` adapter: ``(address, prefix length)`` pairs; IPv6 as ``(addr, 0, scope)``."""
+    return SimpleNamespace(
+        index=index, ips=[SimpleNamespace(ip=ip, network_prefix=prefix) for ip, prefix in ips]
+    )
+
+
+LAN = [
+    adapter(1, ("127.0.0.1", 8), (("::1", 0, 0), 128)),
+    adapter(2, ("192.168.1.5", 24), (("fe80::5", 0, 2), 64), (("2001:db8::5", 0, 0), 64)),
+    adapter(3, ("172.17.0.1", 16)),
+]
+"""Loopback, a LAN interface and a Docker bridge."""
+
+
 @pytest.fixture
 def fake_zeroconf(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(discovery_module.ifaddr, "get_adapters", lambda: LAN)
     FakeZeroconf.created.clear()
     FakeServiceInfo.RESOLVABLE.clear()
     FakeServiceInfo.requests.clear()
@@ -356,7 +376,7 @@ async def test_discovery_details(monkeypatch: pytest.MonkeyPatch) -> None:
     ((registered, _),) = zc.registered
     assert isinstance(registered, FakeServiceInfo)
     assert registered.kwargs["parsed_addresses"] == ["192.0.2.9"]  # from the interfaces
-    assert zc.interfaces is None  # every interface unless told otherwise
+    assert zc.interfaces == ["192.168.1.5", 2, "172.17.0.1"]  # all but loopback
     browser = FakeBrowser.last
     assert browser is not None
     assert browser.zc is zc.zeroconf
@@ -413,3 +433,97 @@ async def test_stop_survives_a_failed_unregister(error: type[Exception]) -> None
     zc.async_unregister_service = failing  # type: ignore[method-assign]
     await node.stop()
     assert zc.closed
+
+
+# --- found on the LAN test --------------------------------------------------------------------------
+
+
+def test_local_interfaces(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(discovery_module.ifaddr, "get_adapters", lambda: LAN)
+    local = local_interfaces()
+    assert {str(a) for a in local.addresses} == {
+        "127.0.0.1",
+        "::1",
+        "192.168.1.5",
+        "fe80::5",
+        "2001:db8::5",
+        "172.17.0.1",
+    }
+    assert [str(n) for n in local.networks] == [
+        "192.168.1.0/24",
+        "2001:db8::/64",
+        "172.17.0.0/16",
+    ]  # no loopback or link-local subnets
+
+
+def test_mdns_skips_loopback(monkeypatch: pytest.MonkeyPatch) -> None:
+    unindexed = adapter(None, (("2001:db8::9", 0, 0), 64))  # IPv6 needs an interface index
+    duplicate = adapter(2, ("192.168.1.5", 24))
+    monkeypatch.setattr(
+        discovery_module.ifaddr, "get_adapters", lambda: [*LAN, unindexed, duplicate]
+    )
+    assert mdns_interfaces() == ["192.168.1.5", 2, "172.17.0.1"]
+
+
+@pytest.mark.usefixtures("fake_zeroconf")
+async def test_no_interface_for_mdns(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(discovery_module.ifaddr, "get_adapters", lambda: LAN[:1])
+    node = Discovery(on_change=lambda: None, own_id_hint=b"\x00" * 8)
+    with pytest.raises(OSError, match="no network interface"):
+        await node.start(instance="x", port=1, peer_id=PEER_ID, profiles=1)
+    assert FakeZeroconf.created == []
+    assert not node.running
+
+
+def test_addresses_are_ranked_for_dialling(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(discovery_module.ifaddr, "get_adapters", lambda: LAN)
+    local = local_interfaces()
+    announced = [
+        "172.17.0.1",  # Docker: ours too
+        "172.19.0.1",  # another bridge of theirs
+        "100.65.110.41",  # a VPN
+        "192.168.1.2",  # the LAN
+        "2001:db8::2",  # the LAN, IPv6
+        "fe80::2%2",
+        "127.0.0.1",
+        "::1",
+        "0.0.0.0",  # noqa: S104
+        "224.0.0.251",
+        "not an address",
+    ]
+    far = ["172.19.0.1", "100.65.110.41", "fe80::2%2"]
+    assert rank_addresses(announced, 47470, local, own_port=47470) == [
+        "192.168.1.2",
+        "2001:db8::2",
+        *far,
+    ]
+    # At another port, our own address may be a second node on this machine: tried last.
+    assert rank_addresses(announced, 47471, local, own_port=47470) == [
+        "192.168.1.2",
+        "2001:db8::2",
+        *far,
+        "172.17.0.1",
+    ]
+    assert rank_addresses(announced, 47470, local, own_port=None)[-1] == "172.17.0.1"
+    nothing = LocalInterfaces(frozenset(), ())
+    assert rank_addresses(["10.0.0.1", "10.0.0.2"], 1, nothing, own_port=1) == [
+        "10.0.0.1",
+        "10.0.0.2",
+    ]  # the announced order when nothing is known
+
+
+@pytest.mark.usefixtures("fake_zeroconf")
+async def test_the_lan_address_survives_the_cap() -> None:
+    node = Discovery(on_change=lambda: None, own_id_hint=b"\x00" * 8)
+    await node.start(instance="me", port=47470, peer_id=PEER_ID, profiles=1)
+    busy = [f"10.{n}.0.1" for n in range(MAX_ADDRESSES + 2)]  # many bridges, the LAN last
+    name = f"Bob (XXXX-YYYY).{SERVICE_TYPE}"
+    txt: dict[bytes, bytes | None] = {b"v": b"2", b"id": b"11" * 8, b"pf": b"1"}
+    FakeServiceInfo.RESOLVABLE[name] = (txt, 47470, [*busy, "172.17.0.1", "192.168.1.2"])
+    change(name, ServiceStateChange.Added)
+    await until(lambda: len(node.peers()) == 1)
+    (peer,) = node.peers()
+    assert peer.addresses[0] == "192.168.1.2"
+    assert len(peer.addresses) == MAX_ADDRESSES
+    assert "172.17.0.1" not in peer.addresses  # our own, at our own port
+    await node.stop()

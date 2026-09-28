@@ -757,6 +757,15 @@ def _close_quietly(stream: BinaryIO) -> None:
         stream.close()
 
 
+def remove_partial(final: Path) -> None:
+    """Delete ``<final>.part``, left by a download that a crash interrupted."""
+    part = final.with_name(final.name + PART_SUFFIX)
+    try:
+        part.unlink(missing_ok=True)
+    except OSError:
+        _log.warning("could not remove a partial download left by a crash")
+
+
 def _remove_part(created: tuple[Path, Path, BinaryIO]) -> None:
     part, _, stream = created
     _close_quietly(stream)

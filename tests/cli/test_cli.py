@@ -311,3 +311,13 @@ async def test_opened_event_selects_the_conversation(screens: tuple[Screen, Scre
     await connected(alice, bob)
     opened = alice.harness.of(SessionOpened)[0]
     assert alice.cli.current == opened.contact_id
+
+
+async def test_set_says_when_a_change_applies(screens: tuple[Screen, Screen]) -> None:
+    alice, _ = screens
+    await alice.run("/set autolock 5")
+    assert alice.lines[-1] == "Saved."
+    await alice.run("/set name Alice B")
+    assert alice.lines[-1] == "Saved; it applies at the next unlock."
+    await alice.run("/set announce off")
+    assert alice.lines[-1] == "Saved; it applies at the next unlock."

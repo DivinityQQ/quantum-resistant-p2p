@@ -896,3 +896,63 @@ def test_device_unlock_with_an_emptied_keychain(tmp_path: Path) -> None:
     keychain.items.clear()  # the user removed the entry from the OS keychain
     with pytest.raises(WrongPasswordError):
         Vault(vault.directory, kdf=CHEAP).unlock_with_device(keychain)
+
+
+# --- found on the LAN test --------------------------------------------------------------------------
+
+
+def file_entry(
+    vault: Vault, status: FileStatus, direction: Direction = Direction.IN, path: str = ""
+) -> HistoryEntry:
+    return HistoryEntry(
+        entry_id=vault.new_entry_id(),
+        kind=MessageKind.FILE,
+        direction=direction,
+        time=3000.0,
+        file=FileInfo(
+            file_id=vault.new_entry_id(),
+            name="big.bin",
+            size=1 << 30,
+            media_type="application/octet-stream",
+            status=status,
+            path=path,
+        ),
+    )
+
+
+def test_a_crash_leaves_nothing_in_flight(tmp_path: Path) -> None:
+    vault = make_vault(tmp_path)
+    bob, carol = contact(vault), contact(vault, "carol")
+    vault.save_contact(bob)
+    vault.save_contact(carol)
+    sending = chat_entry(vault, "never left")
+    delivered = replace(chat_entry(vault, "arrived"), status=MessageStatus.DELIVERED)
+    downloading = file_entry(vault, FileStatus.TRANSFERRING, path="/dl/big.bin")
+    accepted = file_entry(vault, FileStatus.ACCEPTED, path="/dl/other.bin")
+    offered_in = file_entry(vault, FileStatus.OFFERED)
+    uploading = file_entry(vault, FileStatus.TRANSFERRING, Direction.OUT, path="/src/up.bin")
+    complete = file_entry(vault, FileStatus.COMPLETE, path="/dl/done.bin")
+    for entry in (sending, delivered, downloading, offered_in, complete):
+        vault.add_entry(bob.conv_id, entry)
+    for entry in (accepted, uploading):
+        vault.add_entry(carol.conv_id, entry)
+
+    assert sorted(vault.fail_interrupted()) == ["/dl/big.bin", "/dl/other.bin"]  # downloads only
+
+    again = reopen(vault)
+    at_bob = {e.entry_id: e for e in again.history(bob.conv_id)}
+    at_carol = {e.entry_id: e for e in again.history(carol.conv_id)}
+    assert at_bob[sending.entry_id].status is MessageStatus.FAILED
+    assert at_bob[delivered.entry_id] == delivered
+    assert at_bob[complete.entry_id] == complete
+    for entry in (at_bob[downloading.entry_id], at_bob[offered_in.entry_id]):
+        assert entry.file is not None
+        assert entry.file.status is FileStatus.FAILED
+    for entry in at_carol.values():
+        assert entry.file is not None
+        assert entry.file.status is FileStatus.FAILED
+    assert downloading.file is not None
+    assert at_bob[downloading.entry_id].file == replace(
+        downloading.file, status=FileStatus.FAILED
+    )  # nothing else changed
+    assert again.fail_interrupted() == []  # once is enough

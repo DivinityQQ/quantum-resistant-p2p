@@ -218,9 +218,26 @@ design (DESIGN 1.3):
   `pytest_add_cli_args_test_selection` set to the non-network `tests/services` files.
 - **Not in M2:** glass-box sessions are admitted, labelled and bound into the transcript, but the
   secrets are shown only by the Inspector (M4); scenario 9's memory graph is M5.
+- **LAN test, round 1 (2026-09-28):** a CachyOS desktop (wired, `ufw` on) and a Debian 13
+  server with Docker bridges, Tailscale and a VM macvtap, installed there with `uv tool install
+  git+…@<branch>`. Passed: discovery both ways, first contact, admission, equal safety numbers,
+  chat with receipts (bidi controls neutralised), 1 GiB each way at the same time (about 10 s
+  each, hashes equal) with chat still flowing, simultaneous `/connect` (one session), `kill -9`
+  of the receiver mid-transfer (the sender reports lost and failed), rekey, lock and unlock (the
+  peer sees *locked*; the mDNS entry leaves and returns). Found and fixed: dialling the server's
+  Docker bridge addresses first cost 5 s each (15–20 s per connect); a dialler running Docker
+  would reach itself at `172.17.0.1` and give up; a contact's last working address was tried last;
+  a `/connect` that the peer completed from its side still reported *unreachable*; *unreachable*
+  gave no firewall hint; a handshake dropped by the peer showed an empty reason; after a crash,
+  transfers stayed *transferring* in history and their `.part` files were never removed (DESIGN
+  §6.2, §9, §10.4); zeroconf logged a traceback for IPv6 loopback at every start; `/set` claimed
+  every change waits for the next unlock. The desktop's `ufw` dropped incoming TCP, so the server
+  could not dial in; that is expected, and the hint now names it.
 - **Gate (owner):** on two machines on one LAN, run `uv run qrp2p-cli` on each (or
   `pipx install qrp2p` once released), `/nearby`, `/connect nearby 1`, `/admit` on the other side,
-  chat, `/send` a large file, `/verify` on both and compare. Record the OSes used here.
+  chat, `/send` a large file, `/verify` on both and compare. Record the OSes used here. Round 2:
+  Windows (dual boot of the desktop) against the same server: firewall prompt, Mark of the Web on
+  received files, console input and output.
 
 ## M3 — Desktop app
 

@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import hashlib
+import ipaddress
 import os
 import tempfile
 import unicodedata
@@ -26,7 +27,13 @@ from qrp2p.core.wire import (
     FileOffer,
     FileProgress,
 )
-from qrp2p.services.discovery import MAX_LABEL_BYTES, instance_name, parse_txt
+from qrp2p.services.discovery import (
+    MAX_LABEL_BYTES,
+    LocalInterfaces,
+    instance_name,
+    parse_txt,
+    rank_addresses,
+)
 from qrp2p.services.files import (
     NAME_BUDGET,
     PART_SUFFIX,
@@ -104,6 +111,43 @@ def test_txt_parsing_never_raises(properties: dict[bytes, bytes | None]) -> None
         id_hint, profiles = parsed
         assert len(id_hint) == 8
         assert 0 <= profiles <= 0xFF
+
+
+ADDRESSES = st.lists(
+    st.ip_addresses().map(str)
+    | st.text(max_size=20)
+    | st.builds(lambda a, n: f"{a}%{n}", st.ip_addresses(v=6).map(str), st.integers(0, 9)),
+    max_size=12,
+)
+LOCAL = LocalInterfaces(
+    frozenset({ipaddress.ip_address("192.168.1.5"), ipaddress.ip_address("172.17.0.1")}),
+    (ipaddress.ip_network("192.168.1.0/24"), ipaddress.ip_network("2001:db8::/64")),
+)
+
+
+def rank_group(text: str) -> int:
+    """0: a subnet we share; 1: elsewhere; 2: one of our own addresses."""
+    address = ipaddress.ip_address(text.split("%", 1)[0])
+    if address in LOCAL.addresses:
+        return 2
+    return 0 if any(address in network for network in LOCAL.networks) else 1
+
+
+@given(ADDRESSES, st.integers(1, 65535), st.none() | st.integers(1, 65535))
+def test_ranking_only_reorders_what_was_announced(
+    announced: list[str], port: int, own_port: int | None
+) -> None:
+    ranked = rank_addresses(announced, port, LOCAL, own_port)
+    remaining = list(announced)
+    for text in ranked:  # every ranked address was announced (as often as it was)
+        remaining.remove(text)
+        address = ipaddress.ip_address(text.split("%", 1)[0])
+        assert not address.is_loopback
+        assert not address.is_unspecified
+        assert not address.is_multicast
+        assert not (port == own_port and address in LOCAL.addresses)
+    groups = [rank_group(text) for text in ranked]
+    assert groups == sorted(groups)  # a shared subnet, then the rest, then our own
 
 
 @given(st.text())

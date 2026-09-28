@@ -36,6 +36,7 @@ from qrp2p.services.files import (
     Transfer,
     TransferDirection,
     mark_downloaded,
+    remove_partial,
     rename_no_replace,
     sanitize_name,
     unique_path,
@@ -991,3 +992,20 @@ async def test_progress_reports_are_throttled(tmp_path: Path) -> None:
     assert 3 <= len(reports) <= 6  # about one per MiB, not one per chunk
     assert all(t is not None for t in hooks.changes)
     await transfers.cancel(transfer.file_id)
+
+
+# --- found on the LAN test --------------------------------------------------------------------------
+
+
+def test_remove_partial(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    final = tmp_path / "big.bin"
+    part = tmp_path / ("big.bin" + PART_SUFFIX)
+    part.write_bytes(b"half")
+    final.write_bytes(b"another file of that name")
+    remove_partial(final)
+    assert not part.exists()
+    assert final.exists()
+    remove_partial(final)  # already gone: nothing to do
+    part.mkdir()  # cannot be unlinked: logged, never raised
+    remove_partial(final)
+    assert "could not remove a partial download" in caplog.text

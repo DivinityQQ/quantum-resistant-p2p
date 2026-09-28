@@ -40,6 +40,10 @@ uv run qrp2p-cli --data-dir /tmp/alice --port 47470
 uv run qrp2p-cli --data-dir /tmp/bob --port 47471      # then: /connect 127.0.0.1:47470 Alice
 ```
 
+Between machines, each side's firewall must let in TCP on its port (47470 by default, the next
+ones if busy) and mDNS (UDP 5353), e.g. `sudo ufw allow 47470:47485/tcp` with `ufw`. Windows asks
+on the first run. A peer that cannot be reached can still connect to you.
+
 CI runs the same checks, plus Windows and macOS, liboqs, mutation testing and the ProVerif models,
 each only when its inputs change. Releases go to [PyPI](https://pypi.org/project/qrp2p/) by
 trusted publishing.

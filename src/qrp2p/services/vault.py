@@ -1192,6 +1192,36 @@ class Vault:
 
     # -- retention ------------------------------------------------------------------------------
 
+    def fail_interrupted(self) -> list[str]:
+        """Mark what a crash left in flight as failed; return the partial downloads' final paths.
+
+        Call it at unlock, before any session exists: a chat still ``sending`` then never reached
+        the peer, and a transfer still offered, accepted or transferring can never finish. The
+        caller deletes each ``<path>.part`` (DESIGN §9).
+        """
+        fixed: list[tuple[bytes, HistoryEntry]] = []
+        partial: list[str] = []
+        for contact in self.contacts():
+            for entry in self._entries(contact.conv_id):
+                file = entry.file
+                if entry.status is MessageStatus.SENDING:
+                    fixed.append((contact.conv_id, replace(entry, status=MessageStatus.FAILED)))
+                elif file is not None and file.status in _IN_FLIGHT:
+                    failed = replace(file, status=FileStatus.FAILED)
+                    fixed.append((contact.conv_id, replace(entry, file=failed)))
+                    if entry.direction is Direction.IN and file.path:
+                        partial.append(file.path)
+        if fixed:
+            values = [
+                (self._entry_value(conv_id, entry), entry.entry_id, conv_id)
+                for conv_id, entry in fixed
+            ]
+            with self._transaction():
+                self._state().db.executemany(
+                    "UPDATE messages SET data = ? WHERE row_uid = ? AND conv_id = ?", values
+                )
+        return partial
+
     def purge_expired(self, now: float) -> int:
         """Delete entries older than their contact's retention allows; return how many."""
         removed = 0
@@ -1224,6 +1254,9 @@ class Vault:
                 "DELETE FROM messages WHERE row_uid = ?", [(uid,) for uid in entry_ids]
             )
         return len(entry_ids)
+
+
+_IN_FLIGHT: Final = frozenset({FileStatus.OFFERED, FileStatus.ACCEPTED, FileStatus.TRANSFERRING})
 
 
 def _subkeys(dek: Secret) -> dict[str, Secret]:
