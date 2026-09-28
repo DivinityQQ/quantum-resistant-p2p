@@ -343,7 +343,8 @@ async def test_connecting_both_ways_at_once_keeps_one_session(
         alice.node.connect_address(LOOPBACK, bob.port), bob.node.connect_contact(alice_id)
     )
     assert results[0] == bob_id
-    await asyncio.sleep(0.2)
+    await until(lambda: alice.node.is_online(bob_id) and bob.node.is_online(alice_id))
+    await asyncio.sleep(0.2)  # the loser has closed on both sides by now
     a = alice.node.session_info(bob_id)
     b = bob.node.session_info(alice_id)
     assert a is not None

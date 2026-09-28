@@ -416,9 +416,20 @@ async def test_simultaneous_open_without_pins_keeps_one_session() -> None:
         from_alice, from_bob = await asyncio.gather(
             alice.connect(bob, pin=False), bob.connect(alice, pin=False)
         )
-        await until(lambda: len(alice.record.ended) == 1 and len(bob.record.ended) == 1)
-        a = alice.manager.live(bob.identity.bundle.peer_id)
-        b = bob.manager.live(alice.identity.bundle.peer_id)
+        a_id, b_id = alice.identity.bundle.peer_id, bob.identity.bundle.peer_id
+        # Settled: each side lost one session and has one open (the winner's Admit may still be
+        # in flight when the loser's end is recorded).
+        await until(
+            lambda: (
+                len(alice.record.ended) == 1
+                and len(bob.record.ended) == 1
+                and alice.manager.live(b_id) is not None
+                and bob.manager.live(a_id) is not None
+            )
+        )
+        await asyncio.sleep(0.1)  # and it stays that way
+        a = alice.manager.live(b_id)
+        b = bob.manager.live(a_id)
         assert a is not None
         assert b is not None
         assert a.channel is not None
