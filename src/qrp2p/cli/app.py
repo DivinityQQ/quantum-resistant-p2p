@@ -171,13 +171,27 @@ async def run(args: argparse.Namespace, terminal: Terminal) -> int:
         await node.close()
 
 
+def set_up_stream(stream: TextIO | None) -> None:
+    """Pipes and files carry UTF-8 on every OS; a terminal keeps its own encoding.
+
+    Windows otherwise reads and writes pipes in the ANSI code page (cp1250, cp1252, …), which
+    garbles "é" and turns bytes it lacks into lone surrogates. Input that is not valid text
+    becomes U+FFFD, and a console that cannot show ✓ shows ? instead: neither is an error.
+    """
+    reconfigure = getattr(stream, "reconfigure", None)
+    if stream is None or reconfigure is None:
+        return
+    if stream.isatty():
+        reconfigure(errors="replace")
+    else:
+        reconfigure(encoding="utf-8", errors="replace")
+
+
 def main(argv: list[str] | None = None) -> int:
     """The ``qrp2p-cli`` entry point."""
     args = parse_args(argv)
-    for stream in (sys.stdout, sys.stderr):
-        reconfigure = getattr(stream, "reconfigure", None)
-        if reconfigure is not None:
-            reconfigure(errors="replace")  # a console that cannot show ✓ shows ? instead
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        set_up_stream(stream)
     setup_logging(args.data_dir or default_data_dir(), verbose=args.verbose)
     terminal = Terminal(sys.stdin, sys.stdout, password_from_stdin=args.password_stdin)
     with contextlib.suppress(KeyboardInterrupt):

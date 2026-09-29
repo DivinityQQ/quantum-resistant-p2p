@@ -223,6 +223,13 @@ def test_arguments() -> None:
 
 # --- two real processes ---------------------------------------------------------------------------
 
+# Not ASCII, so a pipe read in a Windows ANSI code page garbles them (and a byte cp1250 lacks, as
+# in the emoji, becomes a lone surrogate).
+PASSWORD = "pässwörd"
+MESSAGE = "café ✓ 😀 across processes"
+# What Windows gives a child process whose standard streams are pipes, imitated on every OS.
+WINDOWS_PIPES = "cp1250:surrogateescape"
+
 
 class Process:
     def __init__(self, directory: Path) -> None:
@@ -245,9 +252,10 @@ class Process:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
+            env=os.environ | {"PYTHONIOENCODING": WINDOWS_PIPES},
         )
         self._pump = asyncio.create_task(self._read())
-        self.send("pw")
+        self.send(PASSWORD)
 
     async def _read(self) -> None:
         assert self.proc.stdout is not None
@@ -273,7 +281,7 @@ class Process:
 
 def cheap_vault(directory: Path) -> None:
     vault = Vault(directory, kdf=CHEAP_KDF)
-    vault.create("pw")
+    vault.create(PASSWORD)
     vault.close()
 
 
@@ -289,8 +297,8 @@ async def test_two_cli_processes(tmp_path: Path) -> None:
         number = (await bob.shows(r"/admit (\d+)")).group(1)
         bob.send(f"/admit {number} Alice")
         await alice.shows("Connected to Bob")
-        alice.send("across processes")
-        await bob.shows("Alice: across processes")
+        alice.send(MESSAGE)
+        await bob.shows(re.escape(f"Alice: {MESSAGE}"))
         for process in (alice, bob):
             process.send("/quit")
         codes = await asyncio.wait_for(

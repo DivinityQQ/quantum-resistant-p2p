@@ -857,7 +857,7 @@ Colour is never the only signal: every state also has a text label and an icon.
 
 ### 14.4 Command line
 
-`qrp2p-cli` is a headless front end over the same node API as the desktop app: create or unlock the vault, list nearby peers and contacts, connect (by contact, mDNS entry or `host:port`), chat, send and accept files, answer contact and glass-box requests, resolve key mismatches, compare safety numbers and inspect a session's trace. It needs no Qt. On a terminal, "plain text" also means no control characters: peer text is shown with C0/C1 controls and bidirectional overrides replaced, so a message cannot move the cursor, rewrite earlier output or disguise a file name. Passwords are read without echo; `--password-stdin` reads the first input line instead, for scripts.
+`qrp2p-cli` is a headless front end over the same node API as the desktop app: create or unlock the vault, list nearby peers and contacts, connect (by contact, mDNS entry or `host:port`), chat, send and accept files, answer contact and glass-box requests, resolve key mismatches, compare safety numbers and inspect a session's trace. It needs no Qt. On a terminal, "plain text" also means no control characters: peer text is shown with C0/C1 controls and bidirectional overrides replaced, so a message cannot move the cursor, rewrite earlier output or disguise a file name. Passwords are read without echo; `--password-stdin` reads the first input line instead, for scripts. Pipes and files are read and written as UTF-8 on every OS (Windows would otherwise use its ANSI code page, which garbles the password and chat text); a terminal keeps its own encoding. Input that is not valid text becomes U+FFFD and output a terminal cannot show becomes `?`, never an error.
 
 ---
 
