@@ -128,12 +128,11 @@ async def test_two_nodes_find_each_other() -> None:
     await a.start(instance="Alice (x)", port=47470, peer_id=alice.peer_id, profiles=3)
     await b.start(instance="Bob (y)", port=47471, peer_id=bob.peer_id, profiles=3)
     try:
-        async with asyncio.timeout(10):
-            while not a.peers():
+        async with asyncio.timeout(10):  # other nodes on the LAN may be announced too
+            while not (found := [p for p in a.peers() if p.id_hint == bob.peer_id[:8]]):
                 changed.clear()
                 await changed.wait()
-        (peer,) = a.peers()
-        assert (peer.id_hint, peer.port) == (bob.peer_id[:8], 47471)
+        assert [p.port for p in found] == [47471]
     finally:
         await a.stop()
         await b.stop()
