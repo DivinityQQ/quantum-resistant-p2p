@@ -4,13 +4,14 @@ This is the working plan for building [DESIGN.md](DESIGN.md). It is written for 
 work up next, human or a Claude Code session on a local machine. Start with the repository's
 `CLAUDE.md`, then this file.
 
-**Status (2026-09-28):** M0 and M1 are complete and on `main`; their gates are met (see the
-status notes under each). M2 (services and headless CLI) is implemented and tested in CI; its gate,
-two real machines over a LAN, waits for the owner (see the M2 status notes). v1 is tagged
+**Status (2026-09-29):** M0 and M1 are complete and on `main`; their gates are met (see the
+status notes under each). M2 (services and headless CLI) is implemented and tested in CI, and its
+gate is met: two LAN rounds, Linux–Linux and Windows–Linux (see the M2 status notes); it merges
+with PR #9. v1 is tagged
 `v1-final`. CI runs lint, types, layers, audit, the tests on three OSes, liboqs on three OSes, the
 ProVerif models and mutation testing, each job only when its inputs changed; the `main` ruleset
 requires the gate job "CI result". Local hooks run the fast suite (`tools/check.py`) before every
-push. **Next: the M2 gate, then M3** (desktop app). `qrp2p` 2.0.0.dev0 is on PyPI, published by
+push. **Next: merge M2 (PR #9), then M3** (desktop app). `qrp2p` 2.0.0.dev0 is on PyPI, published by
 `.github/workflows/release.yml` (trusted publishing). Steps that need the owner's accounts (the v1
 Pages site, the liboqs bug report) are in [OWNER_TODO.md](OWNER_TODO.md).
 
