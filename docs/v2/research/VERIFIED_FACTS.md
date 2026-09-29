@@ -87,6 +87,16 @@ pytest-asyncio 1.4.0 · import-linter 2.15 · Nuitka 4.2.2 · pyright 1.1.414 ·
 The name `qrp2p` was unclaimed on PyPI. Every runtime dependency ships wheels usable on
 CPython 3.14 (cryptography abi3 and cp314t; msgspec and zeroconf cp314; PySide6 abi3).
 
+## Services libraries (checked 2026-09-28, M2)
+
+| Fact | How it was checked | Consequence |
+| --- | --- | --- |
+| `filelock` 4.0.4 `FileLock` defaults to `fallback_to_soft=True`: where OS locks fail it silently uses a lock *file*, the kind a crash leaves behind | Constructor signature | The vault passes `fallback_to_soft=False`; a stale lock file never blocks (`test_stale_lock_file_does_not_block`) |
+| `zeroconf` 0.151.5 `AsyncZeroconf.async_register_service` returns an awaitable whose result is a second awaitable that completes when the announcement is sent | Type signature; the two-node smoke test | Discovery awaits both steps |
+| Two `Discovery` nodes on one host find each other over the LAN interface in well under a second (CachyOS, 2026-09-28) | `QRP2P_TEST_MDNS=1` test | Real multicast is opt-in in tests; CI checks parsing only |
+| `keyring` 25.7.0 picks `SecretService.Keyring` on the KDE/GNOME workstation; its `ChainerBackend.backends` is a read-only property listing members | `keyring.get_keyring()`; setting it raised `AttributeError` | The allowlist checks every chainer member; tests use a stand-in |
+| `sqlite3` in CPython 3.14 takes `autocommit=True`; `VACUUM` works in WAL mode; with `secure_delete = ON` deleted message ciphertexts are gone from the file after `VACUUM` and a `TRUNCATE` checkpoint | `test_deleted_conversation_leaves_no_ciphertext` | DESIGN §10.4 deletion holds on disk, not only logically |
+
 ## v1 bugs reproduced (for the regression suite)
 
 All reproduced against v1 (now the tag `v1-final`) with two real nodes over localhost:

@@ -28,15 +28,17 @@ solo lab, Attack Lab, weakened engines, Algorithm Lab and lessons.
 - **No new cryptography.** Only the constructions in DESIGN §4 and §7–§8. Crypto comes from
   `cryptography` (pyca) and stdlib `hashlib`; lab-only algorithms from liboqs-python.
 - **Exact bytes.** Anything hashed, signed or used as AEAD associated data uses the fixed layouts
-  in DESIGN §5, §7 and §10. `msgspec` is only for Inner payloads (DESIGN §8.2).
+  in DESIGN §5, §7 and §10. `msgspec` is only for Inner payloads (DESIGN §8.2) and vault row
+  plaintexts and `vault.json` (§10), never for bytes that are hashed, signed or associated data.
 - **Sans-I/O core.** `qrp2p.core` has no sockets, threads, clocks, Qt or global randomness; time
   and randomness are injected. Respect the import rules in DESIGN §12.2.
 - **Fail closed with a named reason** (DESIGN Appendix B). No bare `except`, no silent fallback, no
   retry on the same keys.
 - **Secrets:** wrap key material in `Secret`; never log it, format it, or put it in exceptions.
   Only `RevealingProvider` may emit secret values, and only in glass-box or lab sessions.
-- **Peer data is untrusted:** size-check before allocating; render peer text as plain text only;
-  the sender is the session, never a payload field.
+- **Peer data is untrusted:** size-check before allocating; render peer text as plain text only
+  (on a terminal through `services.text.display_text`); the sender is the session, never a payload
+  field.
 - **Tests come with every change.** Security checks need a test that fails if the check is
   removed (mutation testing enforces this in `core/`).
 - **Model first.** A change to the handshake, record layer or rekey changes `formal/` in the same
@@ -69,6 +71,10 @@ Lab-algorithm test against a local liboqs build (CI builds it in the `liboqs` jo
 ```bash
 OQS_INSTALL_PATH=/path/to/liboqs-install QRP2P_REQUIRE_LIBOQS=1 uv run pytest -m liboqs
 ```
+
+Run a node (M2): `uv run qrp2p-cli --data-dir /tmp/a` (a second node needs another data directory
+and, on one machine, another `--port`). Real-multicast discovery test: `QRP2P_TEST_MDNS=1 uv run
+pytest tests/services/test_discovery.py`.
 
 Formal model (ProVerif 2.05; CI runs it when `formal/` or `ci.yml` changes, and weekly):
 
