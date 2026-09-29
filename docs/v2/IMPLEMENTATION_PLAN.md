@@ -233,11 +233,35 @@ design (DESIGN 1.3):
   §6.2, §9, §10.4); zeroconf logged a traceback for IPv6 loopback at every start; `/set` claimed
   every change waits for the next unlock. The desktop's `ufw` dropped incoming TCP, so the server
   could not dial in; that is expected, and the hint now names it.
+- **LAN test, round 2 (2026-09-29):** Windows 10 Pro 22H2 (the same desktop, wired, network
+  profile *Private*, Czech locale, VMware host-only adapters) against the same server, still on
+  the round-1 build; Windows ran the branch from a checkout. Passed: the fast suite; the Windows
+  Defender Firewall prompt on the first listen (its defaults allow the uv-managed `python.exe` on
+  Private networks only, TCP and UDP); discovery both ways, with the LAN address ranked above the
+  VMware ones; connects in 0.8 s out and about 30 ms in; the *unreachable … firewall* hint after
+  5 s for a dropped port; equal safety numbers; chat with é, ✓, emoji and U+202E both ways (the
+  override shown as U+FFFD); 1 GiB each way at the same time (about 15 s each, hashes equal) with
+  chat flowing; Mark of the Web (`ZoneId=3`) on received files; nine names Windows forbids
+  (`CON.txt`, `aux`, `nul.tar.gz`, `a:b.txt`, `what?.txt`, `x<y>z|w*.txt`, `trailing.`,
+  `" spaced "`, `back\slash.txt`) arriving sanitised; `taskkill /F` mid-receive (no `.part` after
+  restart, *failed* in history, the sender reports lost); a second process on the data directory
+  refused; `/remember` unlocking from the Credential Locker and `/remember off` removing the entry;
+  the real keychain and real multicast tests; a simultaneous `/connect` that really raced (one
+  session, both sides agree); rekey (the responder is refused with a reason); lock and unlock. In
+  a classic console (conhost, cmd.exe): the password prompt does not echo; é shows, and ✓ and
+  emoji show as boxes (the console font lacks them; nothing crashes); Ctrl+C exits with 130
+  and no traceback. Found and fixed: piped standard input was read in the ANSI code page, which
+  garbled text, broke non-ASCII passwords on `--password-stdin` and reported an emoji as *too
+  long* (pipes and files are now UTF-8 on every OS); backslashes in commands were eaten as shell
+  escapes, so `/send` of a Windows path failed and `/set downloads` saved a drive-relative path
+  (both DESIGN §12); an unusable `--data-dir` ended in a traceback; the real multicast test
+  assumed no other node on the LAN. Open: a message arriving while the user types at the prompt
+  overwrites the typed text, and the console's line editing then deletes into the prompt (Windows
+  and, by the same code, POSIX).
 - **Gate (owner):** on two machines on one LAN, run `uv run qrp2p-cli` on each (or
   `pipx install qrp2p` once released), `/nearby`, `/connect nearby 1`, `/admit` on the other side,
-  chat, `/send` a large file, `/verify` on both and compare. Record the OSes used here. Round 2:
-  Windows (dual boot of the desktop) against the same server: firewall prompt, Mark of the Web on
-  received files, console input and output.
+  chat, `/send` a large file, `/verify` on both and compare. Record the OSes used here. Rounds 1
+  (Linux–Linux) and 2 (Windows–Linux) above; what remains is the prompt redraw left open in round 2.
 
 ## M3 — Desktop app
 
