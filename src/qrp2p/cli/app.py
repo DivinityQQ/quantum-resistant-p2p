@@ -192,7 +192,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     for stream in (sys.stdin, sys.stdout, sys.stderr):
         set_up_stream(stream)
-    setup_logging(args.data_dir or default_data_dir(), verbose=args.verbose)
+    data_dir: Path = args.data_dir or default_data_dir()
+    try:
+        setup_logging(data_dir, verbose=args.verbose)
+    except OSError as error:
+        sys.stderr.write(f"Cannot use the data directory {data_dir}: {error.strerror or error}\n")
+        return 1
     terminal = Terminal(sys.stdin, sys.stdout, password_from_stdin=args.password_stdin)
     with contextlib.suppress(KeyboardInterrupt):
         return asyncio.run(run(args, terminal))

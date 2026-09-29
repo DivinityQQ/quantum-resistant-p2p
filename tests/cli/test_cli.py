@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from qrp2p.cli import commands, render
-from qrp2p.cli.app import parse_args
+from qrp2p.cli.app import main, parse_args
 from qrp2p.cli.commands import Cli, Command, _host_port, split_words
 from qrp2p.services.events import SessionOpened
 from qrp2p.services.models import FileStatus, TrustState
@@ -249,6 +249,15 @@ def test_sizes() -> None:
     assert render.size(3 * 2**20) == "3.0 MiB"
     with pytest.raises(ValueError, match=r"could not convert|invalid"):
         render.parse_size("lots")
+
+
+def test_unusable_data_dir_is_an_error_not_a_traceback(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    blocker = tmp_path / "a-file"
+    blocker.write_bytes(b"")
+    assert main(["--data-dir", str(blocker / "node")]) == 1
+    assert capsys.readouterr().err.startswith("Cannot use the data directory")
 
 
 def test_arguments() -> None:
