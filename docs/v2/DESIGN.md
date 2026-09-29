@@ -793,6 +793,7 @@ formal/            # ProVerif models (+ weakened variants), Tamarin cross-check
 - `ui` may import types from `core.trace` and `core.wire` for the Inspector, but never drives `core` directly.
 - `cli` drives `services` only: it never imports `core`, `lab` or `ui`.
 - `services` and `cli` never import Qt, so a node runs headless.
+- Only `cli` imports `prompt_toolkit`.
 
 ---
 
@@ -810,6 +811,7 @@ Versions are the latest on PyPI as of 2026-09-27 and are pinned in `uv.lock`.
 | Paths | `platformdirs` | 4.12.0 | Per-OS data and config directories |
 | Keychain (opt-in) | `keyring` | 25.7.0 | Device key storage |
 | Single instance | `filelock` | 4.0.4 | Crash-safe lock |
+| CLI input | `prompt-toolkit` | 3.0.53 | Line editing in `qrp2p-cli`, so a message printed while the user types does not break the typed line (brings `wcwidth`) |
 | Lab algorithms (extra `[lab]`) | `liboqs-python` | 0.16.0.1 | HQC, FrodoKEM, Classic McEliece, SLH-DSA |
 
 SHA-3 and SHAKE come from the standard library's `hashlib`.
@@ -857,7 +859,7 @@ Colour is never the only signal: every state also has a text label and an icon.
 
 ### 14.4 Command line
 
-`qrp2p-cli` is a headless front end over the same node API as the desktop app: create or unlock the vault, list nearby peers and contacts, connect (by contact, mDNS entry or `host:port`), chat, send and accept files, answer contact and glass-box requests, resolve key mismatches, compare safety numbers and inspect a session's trace. It needs no Qt. On a terminal, "plain text" also means no control characters: peer text is shown with C0/C1 controls and bidirectional overrides replaced, so a message cannot move the cursor, rewrite earlier output or disguise a file name. Passwords are read without echo; `--password-stdin` reads the first input line instead, for scripts. Command words are split like a POSIX shell's (quotes group words with spaces), except that on Windows a backslash is kept as typed, since it separates the parts of a path; the downloads folder must be given as a full path. Pipes and files are read and written as UTF-8 on every OS (Windows would otherwise use its ANSI code page, which garbles the password and chat text); a terminal keeps its own encoding. Input that is not valid text becomes U+FFFD and output a terminal cannot show becomes `?`, never an error.
+`qrp2p-cli` is a headless front end over the same node API as the desktop app: create or unlock the vault, list nearby peers and contacts, connect (by contact, mDNS entry or `host:port`), chat, send and accept files, answer contact and glass-box requests, resolve key mismatches, compare safety numbers and inspect a session's trace. It needs no Qt. On a terminal, "plain text" also means no control characters: peer text is shown with C0/C1 controls and bidirectional overrides replaced, so a message cannot move the cursor, rewrite earlier output or disguise a file name. A message that arrives while the user types is printed above the prompt, and the half-typed line stays; the line history is kept in memory only. Passwords are read without echo; `--password-stdin` reads the first input line instead, for scripts. Command words are split like a POSIX shell's (quotes group words with spaces), except that on Windows a backslash is kept as typed, since it separates the parts of a path; the downloads folder must be given as a full path. Pipes and files are read and written as UTF-8 on every OS (Windows would otherwise use its ANSI code page, which garbles the password and chat text); a terminal keeps its own encoding. Input that is not valid text becomes U+FFFD and output a terminal cannot show becomes `?`, never an error.
 
 ---
 

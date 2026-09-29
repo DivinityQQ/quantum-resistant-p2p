@@ -22,6 +22,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Final, TextIO
 
+from prompt_toolkit import PromptSession, print_formatted_text
+
 from qrp2p.cli.commands import Cli
 from qrp2p.services.events import NodeState
 from qrp2p.services.node import Node
@@ -36,44 +38,57 @@ PROMPT: Final = "> "
 class Terminal:
     """Reads lines and passwords without blocking the event loop, and prints.
 
-    Each read runs in a daemon thread, so a pending read never keeps the process alive at exit.
+    On a terminal, lines are read with prompt_toolkit: a message printed while the user types
+    appears above the prompt, and the half-typed line stays as it was. Its history is kept in
+    memory only, never in a file. Otherwise (a pipe, or ``--password-stdin``) each read runs in a
+    daemon thread, so a pending read never keeps the process alive at exit.
+
+    Args:
+        stdin: Standard input.
+        stdout: Standard output, used when not on a terminal.
+        password_from_stdin: Read everything, the password too, as plain lines.
+        session: The prompt to use on a terminal (tests give one with their own input and output);
+            by default one is made when ``stdin`` is a terminal.
     """
 
-    def __init__(self, stdin: TextIO, stdout: TextIO, *, password_from_stdin: bool) -> None:
+    def __init__(
+        self,
+        stdin: TextIO,
+        stdout: TextIO,
+        *,
+        password_from_stdin: bool,
+        session: PromptSession[str] | None = None,
+    ) -> None:
         self._in = stdin
         self._out = stdout
-        self.interactive = stdin.isatty() and not password_from_stdin
-        self._reading = False
+        if session is None and stdin.isatty() and not password_from_stdin:
+            session = PromptSession()
+        self._session = session
 
     def print(self, text: str) -> None:
-        """Print a message; re-show the prompt if the user is typing."""
-        if self._reading and self.interactive:
-            self._out.write("\r")
+        """Print a message; while the user types, above the prompt."""
+        if self._session is not None:
+            print_formatted_text(text, output=self._session.output, flush=True)
+            return
         self._out.write(text + "\n")
-        if self._reading and self.interactive:
-            self._out.write(PROMPT)
         self._out.flush()
 
     async def line(self, prompt: str = PROMPT) -> str | None:
         """The next line, or ``None`` at end of input."""
-        self._reading = True
-        try:
-            return await self._in_thread(lambda: self._read_line(prompt))
-        finally:
-            self._reading = False
+        if self._session is not None:
+            try:
+                return await self._session.prompt_async(prompt)
+            except EOFError:
+                return None
+        return await self._in_thread(self._read_line)
 
     async def secret(self, prompt: str) -> str | None:
         """A password: without echo on a terminal, else the next line."""
-        if self.interactive:
+        if self._session is not None:
             return await self._in_thread(lambda: _getpass(prompt))
-        return await self._in_thread(lambda: self._read_line(""))
+        return await self._in_thread(self._read_line)
 
-    def _read_line(self, prompt: str) -> str | None:
-        if self.interactive:
-            try:
-                return input(prompt)
-            except EOFError:
-                return None
+    def _read_line(self) -> str | None:
         line = self._in.readline()
         return None if not line else line.rstrip("\r\n")
 

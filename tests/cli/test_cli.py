@@ -1,16 +1,21 @@
 """The headless CLI: commands over real nodes, rendering, and two real processes."""
 
 import asyncio
+import io
 import os
 import re
 import sys
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 
 import pytest
+from prompt_toolkit import PromptSession
+from prompt_toolkit.data_structures import Size
+from prompt_toolkit.input import PipeInput, create_pipe_input
+from prompt_toolkit.output.vt100 import Vt100_Output
 
 from qrp2p.cli import commands, render
-from qrp2p.cli.app import main, parse_args
+from qrp2p.cli.app import Terminal, main, parse_args
 from qrp2p.cli.commands import Cli, Command, _host_port, split_words
 from qrp2p.services.events import SessionOpened
 from qrp2p.services.models import FileStatus, TrustState
@@ -264,6 +269,49 @@ def test_arguments() -> None:
     args = parse_args(["--data-dir", "/x", "--port", "5", "--no-mdns", "--password-stdin"])
     assert args.data_dir == Path("/x")
     assert (args.port, args.no_mdns, args.password_stdin) == (5, True, True)
+
+
+# --- the terminal ---------------------------------------------------------------------------------
+
+
+@pytest.fixture
+def keyboard() -> Iterator[tuple[Terminal, PipeInput, io.StringIO]]:
+    """A terminal whose keys come from a pipe and whose screen is a string."""
+    screen = io.StringIO()
+    output = Vt100_Output(screen, lambda: Size(rows=24, columns=80), term="xterm")
+    with create_pipe_input() as keys:
+        session: PromptSession[str] = PromptSession(input=keys, output=output)
+        yield (
+            Terminal(io.StringIO(), io.StringIO(), password_from_stdin=False, session=session),
+            keys,
+            screen,
+        )
+
+
+async def test_a_message_while_typing_keeps_the_half_typed_line(
+    keyboard: tuple[Terminal, PipeInput, io.StringIO],
+) -> None:
+    terminal, keys, screen = keyboard
+    reading = asyncio.create_task(terminal.line())
+    keys.send_text("hel")
+    await until(lambda: "hel" in screen.getvalue())
+    terminal.print("bob: incoming")
+    await until(lambda: "bob: incoming" in screen.getvalue())
+    await until(lambda: screen.getvalue().rfind("hel") > screen.getvalue().rfind("bob: incoming"))
+    keys.send_text("lo\r")
+    assert await reading == "hello"
+
+
+async def test_end_of_input_and_interrupt_at_the_prompt(
+    keyboard: tuple[Terminal, PipeInput, io.StringIO],
+) -> None:
+    terminal, keys, _ = keyboard
+    reading = asyncio.create_task(terminal.line())
+    keys.send_text("\x04")  # Ctrl+D on an empty line
+    assert await reading is None
+    keys.send_text("\x03")  # Ctrl+C: main turns it into exit code 130
+    with pytest.raises(KeyboardInterrupt):  # awaited here: from a task it would stop the loop
+        await terminal.line()
 
 
 # --- two real processes ---------------------------------------------------------------------------
