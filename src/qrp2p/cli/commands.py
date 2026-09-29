@@ -9,6 +9,7 @@ import asyncio
 import contextlib
 import logging
 import shlex
+import sys
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -47,6 +48,7 @@ from qrp2p.services.node import Node, NodeError, profile_by_id, profile_by_name
 from qrp2p.services.text import display_text
 from qrp2p.services.vault import VaultError, WrongPasswordError
 
+WINDOWS: Final = sys.platform == "win32"
 MIN_PASSWORD: Final = 8
 TRACE_DEFAULT: Final = 20
 MAX_SLEEP: Final = 86_400.0
@@ -148,7 +150,7 @@ class Cli:
             await self._chat_line(line)
             return True
         try:
-            words = shlex.split(line[1:])
+            words = split_words(line[1:])
         except ValueError:
             self.out("Unbalanced quotes.")
             return True
@@ -764,8 +766,7 @@ class Cli:
                     raise UsageError("Minutes, 0 to turn off.")
                 await self.node.update_settings(auto_lock_minutes=int(value))
             case "downloads":
-                downloads = Path(value).expanduser()  # noqa: ASYNC240  # no disk access
-                await self.node.update_settings(downloads_dir=str(downloads))
+                await self.node.update_settings(downloads_dir=str(_full_path(value)))
             case "profile":
                 await self.node.update_settings(default_profile=profile_by_name(value).id)
             case "maxfile":
@@ -829,6 +830,31 @@ class Cli:
         if not 0 <= seconds < MAX_SLEEP:
             raise UsageError(f"Between 0 and {MAX_SLEEP:.0f} seconds.")
         await asyncio.sleep(seconds)
+
+
+def split_words(line: str) -> list[str]:
+    """Split a command into words like a shell: quotes group words with spaces.
+
+    A backslash escapes the next character as in a POSIX shell, except on Windows, where it
+    separates the parts of a path and is kept as typed.
+
+    Raises:
+        ValueError: Unbalanced quotes.
+    """
+    lexer = shlex.shlex(line, posix=True)
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    if WINDOWS:
+        lexer.escape = ""
+    return list(lexer)
+
+
+def _full_path(text: str) -> Path:
+    """A folder to keep in the settings: a relative one would move with the working directory."""
+    path = Path(text).expanduser()
+    if not path.is_absolute():
+        raise UsageError("Give the full path of a folder.")
+    return path
 
 
 def _is_number(text: str) -> bool:

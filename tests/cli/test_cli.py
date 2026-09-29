@@ -9,9 +9,9 @@ from pathlib import Path
 
 import pytest
 
-from qrp2p.cli import render
+from qrp2p.cli import commands, render
 from qrp2p.cli.app import parse_args
-from qrp2p.cli.commands import Cli, Command, _host_port
+from qrp2p.cli.commands import Cli, Command, _host_port, split_words
 from qrp2p.services.events import SessionOpened
 from qrp2p.services.models import FileStatus, TrustState
 from qrp2p.services.vault import Vault
@@ -203,6 +203,42 @@ async def test_quit(screens: tuple[Screen, Screen]) -> None:
 )
 def test_host_port(text: str, parsed: tuple[str, int] | None) -> None:
     assert _host_port(text) == parsed
+
+
+@pytest.mark.parametrize(
+    ("windows", "line", "words"),
+    [
+        (True, r"send bob C:\Users\me\a.txt", ["send", "bob", r"C:\Users\me\a.txt"]),
+        (True, r'send bob "C:\My Files\a b.txt"', ["send", "bob", r"C:\My Files\a b.txt"]),
+        (True, r"send bob \\server\share\a.txt", ["send", "bob", r"\\server\share\a.txt"]),
+        (False, r"send bob my\ file.txt", ["send", "bob", "my file.txt"]),
+        (False, "send bob 'a b.txt' #1", ["send", "bob", "a b.txt", "#1"]),
+    ],
+)
+def test_split_words(
+    monkeypatch: pytest.MonkeyPatch, windows: bool, line: str, words: list[str]
+) -> None:
+    monkeypatch.setattr(commands, "WINDOWS", windows)
+    assert split_words(line) == words
+
+
+async def test_windows_paths_reach_the_command(
+    screens: tuple[Screen, Screen], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice, _ = screens
+    monkeypatch.setattr(commands, "WINDOWS", True)
+    await alice.run(r"/set name A\B")
+    await alice.run("/settings")
+    assert r"name: A\B " in alice.text()
+
+
+async def test_downloads_needs_a_full_path(screens: tuple[Screen, Screen], tmp_path: Path) -> None:
+    alice, _ = screens
+    await alice.run("/set downloads relative/dl")
+    assert alice.lines[-1].startswith("Give the full path of a folder.")
+    await alice.run(f'/set downloads "{tmp_path / "dl"}"')
+    assert alice.lines[-1] == "Saved."
+    assert alice.harness.node.downloads_dir() == tmp_path / "dl"
 
 
 def test_sizes() -> None:
