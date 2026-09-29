@@ -255,13 +255,15 @@ design (DESIGN 1.3):
   long* (pipes and files are now UTF-8 on every OS); backslashes in commands were eaten as shell
   escapes, so `/send` of a Windows path failed and `/set downloads` saved a drive-relative path
   (both DESIGN §12); an unusable `--data-dir` ended in a traceback; the real multicast test
-  assumed no other node on the LAN. Open: a message arriving while the user types at the prompt
-  overwrites the typed text, and the console's line editing then deletes into the prompt (Windows
-  and, by the same code, POSIX).
+  assumed no other node on the LAN; a message arriving while the user typed overwrote the typed
+  text, and the console's line editing then deleted into the prompt (Windows and, by the same
+  code, POSIX). The prompt is now read with `prompt_toolkit` (DESIGN §12–13); retested in Windows
+  PowerShell (conhost): messages print above the prompt, the typed line stays and is sent whole,
+  history works, Ctrl+C exits with 130.
 - **Gate (owner):** on two machines on one LAN, run `uv run qrp2p-cli` on each (or
   `pipx install qrp2p` once released), `/nearby`, `/connect nearby 1`, `/admit` on the other side,
   chat, `/send` a large file, `/verify` on both and compare. Record the OSes used here. Rounds 1
-  (Linux–Linux) and 2 (Windows–Linux) above; what remains is the prompt redraw left open in round 2.
+  (Linux–Linux) and 2 (Windows–Linux) above both passed.
 
 ## M3 — Desktop app
 
