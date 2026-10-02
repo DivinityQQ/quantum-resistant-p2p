@@ -339,6 +339,23 @@ design (DESIGN 1.3):
 - **Packaging:** `packaging/build.py` (Nuitka with its PySide6 plugin; `pyside6-deploy` assumes
   QML beside the entry script) and the manual workflow `build.yml` build unsigned native apps on
   Linux, Windows and macOS. Installers and the signing plan are in `packaging/README.md`.
+- **Review fixes (2026-10-02, after an outside read-only review of `1157e3b`):** six findings,
+  all reproduced and fixed with tests that fail without the fix. (1) The device key unlocked
+  again after the first lock of a new vault: it is now used only when the app *starts* onto a
+  locked vault. (2) Concurrent requests could undo each other (a profile edit undid a block;
+  settings changes were lost): the node now serializes contact and settings read-modify-write
+  in request order; the same lock also stops two accepted requests from one new identity
+  making two contacts. (3) Verification could reuse the previous identity's digits after a
+  re-pin: safety numbers now carry their identity, are dropped on a re-pin, and verifying
+  names the compared `peer_id` (DESIGN §5.3 rule 5). (4) A file offer could be accepted twice:
+  it is reserved before any disk work, and its actions stay disabled while one is in flight.
+  (5) Toasts outlived the lock: they now belong to the messenger view. (6) Choosers showed the
+  first preset for a stored value outside the presets: the stored value is always shown.
+- **Platform fixes from CI:** the monospace family is an installed one (macOS warned about the
+  "monospace" alias); Qt's offscreen platform on Windows gets the system font folder; UI tests
+  register Inter like the app; pytest-qt is gone (it imported Qt for every pytest run); macOS
+  builds use a native `.icns` and prune QML plugins whose libraries are only in the Addons;
+  the Intel macOS build runs on `macos-15-intel`.
 - **Still to do for the gate (owner):** run the app on Windows, macOS and Linux for daily use
   (`uv run qrp2p`, or a `build.yml` artifact) and record the findings here. Code-signing
   identities stay an open decision (below).

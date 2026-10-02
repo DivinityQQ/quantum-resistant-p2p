@@ -336,6 +336,11 @@ lab/glass-box values from UI models; close sessions and stop discovery through t
 references without claiming Python has securely wiped memory. No stale sensitive tooltips or
 copied detail pane survives the locked view.
 
+Every surface that can show unlocked data has the lifetime of the unlocked period: dialogs,
+popovers, tooltips, toasts and their queues, menus and accessibility text live inside the
+workspace's view and are destroyed with it. Nothing that names a contact or shows its content is
+owned by the window itself.
+
 Password rotation has a commit boundary. If the service reports a committed password change
 with failed storage cleanup, say **Password changed; vault cleanup failed** and make clear that
 the new password is active. A generic storage error must not be presented as proof that the old
@@ -802,6 +807,14 @@ indications in expanded views and both themes. Keep simulated quantum capabiliti
 estimated guess rates explicitly labeled. Complete the existing M5 adversarial gate.
 
 ### 13.4 Review checklist for any screen
+
+- Can two of its actions be in flight at once, and does the service apply them atomically and in
+  order? Is an action that must happen once (answering an offer or a request) unavailable while
+  its first request runs?
+- Does any value it shows or submits (a safety number, a fingerprint) still belong to the
+  identity it is about, and does the request name that identity?
+- Does everything it retains (a toast queue, a cache, a tooltip) end with the unlocked period?
+- Does every chooser show the stored value, also one outside its presets?
 
 - Does each visible panel answer a current question or enable a meaningful action?
 - Does displayed state come from the service/trace/controller that owns it?

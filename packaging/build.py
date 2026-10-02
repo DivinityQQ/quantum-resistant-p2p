@@ -7,7 +7,7 @@ development one::
 
     uv venv build-env --python 3.14
     uv pip install --python build-env ".[gui]" "nuitka==4.2.2" patchelf  # patchelf: Linux only
-    build-env/bin/python packaging/build.py      # Windows: build-env\Scripts\python.exe
+    build-env/bin/python packaging/build.py --prune-build-env   # Windows: build-env\Scripts\python.exe
 
 The result is ``dist/qrp2p_app.dist/`` (Linux, Windows) or ``dist/qrp2p_app.app`` (macOS):
 unsigned, for testing on the OS that built it. Installers and signing: packaging/README.md.
@@ -15,6 +15,7 @@ unsigned, for testing on the OS that built it. Installers and signing: packaging
 
 import argparse
 import os
+import shutil
 import subprocess
 import sys
 from importlib.metadata import version
@@ -104,12 +105,42 @@ def nuitka_command(out: Path) -> list[str]:
     return command
 
 
+def prune_build_env() -> list[Path]:
+    """Delete the unused QML modules from *this* environment's PySide6; returns what went.
+
+    Nuitka inspects every QML plugin's libraries before it applies exclusions, and on macOS a
+    plugin whose library is in PySide6-Addons (QtQml/StateMachine) stops the build. Only for a
+    throwaway build environment: the project's own ``.venv`` is refused.
+    """
+    if Path(sys.prefix).resolve() == (ROOT / ".venv").resolve():
+        msg = "refusing to prune the development environment; use a separate build-env"
+        raise SystemExit(msg)
+    import PySide6  # noqa: PLC0415  # the build environment's copy
+
+    qml = Path(PySide6.__file__).resolve().parent / "Qt" / "qml"
+    removed: list[Path] = []
+    for module in UNUSED_QML:
+        target = qml / module
+        if target.is_dir():
+            shutil.rmtree(target)
+            removed.append(target)
+    return removed
+
+
 def main() -> int:
     """Run Nuitka; print the command first."""
     parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     parser.add_argument("--out", type=Path, default=ROOT / "dist", help="output folder")
     parser.add_argument("--dry-run", action="store_true", help="print the command only")
+    parser.add_argument(
+        "--prune-build-env",
+        action="store_true",
+        help="first delete unused QML modules from this (throwaway) environment; needed on macOS",
+    )
     args = parser.parse_args()
+    if args.prune_build_env and not args.dry_run:
+        for path in prune_build_env():
+            print(f"pruned {path}")
     command = nuitka_command(args.out.resolve())
     print(f"qrp2p {version('qrp2p')}, PySide6 {version('PySide6-Essentials')}")
     print(" ".join(command))

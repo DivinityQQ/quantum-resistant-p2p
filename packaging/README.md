@@ -7,7 +7,7 @@ Python: [`build.py`](build.py) runs Nuitka with its PySide6 plugin on the curren
 ```bash
 uv venv build-env --python 3.14
 uv pip install --python build-env ".[gui]" "nuitka==4.2.2" patchelf   # patchelf: Linux only
-build-env/bin/python packaging/build.py                                # Windows: build-env\Scripts\python.exe
+build-env/bin/python packaging/build.py --prune-build-env              # Windows: build-env\Scripts\python.exe
 ```
 
 | OS | Result | Notes |

@@ -33,7 +33,7 @@ jobs:
       fail-fast: false
       matrix:
         # ubuntu-22.04: the oldest glibc we build against, so the Linux build runs on newer ones.
-        os: [ubuntu-22.04, windows-latest, macos-latest, macos-13]
+        os: [ubuntu-22.04, windows-latest, macos-latest, macos-15-intel]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     defaults:
@@ -60,7 +60,7 @@ jobs:
       - name: Build
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then py=build-env/Scripts/python.exe; else py=build-env/bin/python; fi
-          "$py" packaging/build.py --out dist
+          "$py" packaging/build.py --out dist --prune-build-env
       - name: Smoke test (start, render the first screen, exit; any Qt warning fails it)
         env:
           QT_QPA_PLATFORM: offscreen
