@@ -2,8 +2,8 @@
 
 | | |
 | --- | --- |
-| Version | 1.3 |
-| Date | 2026-09-28 |
+| Version | 1.5 |
+| Date | 2026-10-02 |
 | Status | Approved for implementation |
 | Scope | Complete rewrite of `quantum-resistant-p2p` (v1) |
 
@@ -290,6 +290,11 @@ Enforcement:
 - A half-open slot is taken when TCP accepts the connection and released when the session is established or ends; a connection that finds no slot is dropped at once. The handshake deadline (from accept) frees slots held by silent peers.
 - The Hello token bucket is consulted when a connection's first frame arrives, before any cryptography; an empty bucket drops the connection.
 - Refusals before authentication are silent (§8.5): the peer sees the connection drop; the node logs `rate_limited`.
+- The live-session cap is checked again synchronously when a deferred admission is accepted,
+  before sending an accepting Admit. There is no await between that check and registration.
+  An outgoing handshake that finishes after the last slot is taken closes with `rate_limited`
+  without being registered or reported as connected. Replacing the same peer uses its existing
+  slot; an ended session releases its slot.
 - The live-session cap is applied at admission: beyond 64, a peer without a session to replace is rejected with `busy`.
 - The writer backlog bounds what a peer can make us queue by sending faster than it reads (pings to answer, chats to acknowledge).
 
@@ -377,6 +382,11 @@ erase: ss, hs, hs_R, hs_I, fk_R, fk_I, the ephemeral KEM private key
 
 - Finished values MUST be compared in constant time.
 - The chaining secret `cs` is where each PQ rekey injects fresh key material (§8.4).
+- `cs_n` is a derivation root, not retained session state. After deriving traffic secrets and
+  the exporter, compute `rekey_salt_n = Derive-Secret(cs_n, "derived", H(""))` and erase `cs_n`.
+  Retain only this one-way-derived salt for the next PQ rekey. Keeping the root would allow a
+  state compromise to reconstruct earlier traffic generations despite KeyUpdate. Initial
+  traffic secrets are handed to their directional state and are not cached in epoch state.
 - `exporter_n` is used only to bind rekeys, and in glass-box sessions as a displayed session fingerprint.
 
 ### 7.5 Processing rules
@@ -479,6 +489,12 @@ ap_dir' = Expand-Label(ap_dir, "traffic upd", "", Hlen);  keys = Keys(ap_dir'); 
 
 The sender sends `key_update` as its last record under the old secret, then switches. The receiver switches on receipt. Triggers: every 2^16 records or 10 minutes per direction. Stealing a current secret gives later secrets of the same epoch, but never earlier ones.
 
+After a direction switches, no normal-session state retains that direction's obsolete traffic
+secret, key or IV, nor a derivation root that can reconstruct them. The other direction may
+still use its own current generation. A pending PQ rekey retains each new directional secret
+only until that direction consumes it; it never retains the new `cs` root. Explicitly exposed
+glass-box/lab recordings are outside this erasure guarantee (§11).
+
 **PQ rekey** (every 60 minutes, or the user's "Rekey now"):
 
 1. Only the session initiator starts a rekey; at most one per minute. Extra `rekey_offer` messages give `unexpected_message`: one while a rekey is in progress, one sent by the session responder, or one within 30 s of the previous offer (half the initiator's limit, so network delay cannot make an honest initiator look too fast).
@@ -490,14 +506,17 @@ The sender sends `key_update` as its last record under the old secret, then swit
    SigI' = HybridSign("rekey-finish", H(RT ‖ T(0x53, SigR') ‖ exporter_n))
    th_rekey = H(RT ‖ T(0x53, SigR') ‖ T(0x54, SigI'))
    ```
-3. Both sides derive, then erase `cs_n`, `ss'` and the ephemeral key:
+3. Both sides derive using the retained salt, then erase `ss'`, the ephemeral key and the new
+   derivation root after computing its children:
 
    ```text
-   cs_{n+1}   = HKDF-Extract(salt = Derive-Secret(cs_n, "derived", H("")), ikm = ss')
+   cs_{n+1}   = HKDF-Extract(salt = rekey_salt_n, ikm = ss')
    ap_I, ap_R = Derive-Secret(cs_{n+1}, "i ap traffic" | "r ap traffic", th_rekey)
    exporter_{n+1} = Derive-Secret(cs_{n+1}, "exporter", th_rekey)
+   rekey_salt_{n+1} = Derive-Secret(cs_{n+1}, "derived", H(""))
+   erase: cs_{n+1}
    ```
-4. Each side sends `rekey_switch` as its last record under its old send key and switches its receive key when it receives the peer's `rekey_switch`. The rekey is complete, and `cs_n` and `exporter_n` are erased, when both directions have switched. A `rekey_switch` before the new keys exist is `unexpected_message`.
+4. Each side sends `rekey_switch` as its last record under its old send key and switches its receive key when it receives the peer's `rekey_switch`. Consume and discard each pending traffic-secret reference as its direction switches. The rekey is complete, and `rekey_salt_n` and `exporter_n` are erased, when both directions have switched. A `rekey_switch` before the new keys exist is `unexpected_message`.
 
 | Mechanism | Guarantees |
 | --- | --- |
@@ -596,6 +615,14 @@ Every encrypted row has a random 128-bit `row_uid` as its explicit primary key. 
 - **Retention** is set per contact: forever (default), 30 days, or session only. Session-only history is deleted when the app locks or exits (and at unlock, after a crash); 30-day history is purged at unlock and hourly.
 - **Delete a conversation:** delete its `conv_keys` row and messages, then `VACUUM`. Remnants in free pages or the WAL are unreadable once `CK_c` is gone. Backups made before deletion stay readable with the password valid at that time; the UI says so. The contact continues with a new `conv_id` and key.
 - **Change password:** generate a new DEK and new conversation keys and re-encrypt everything. The database is small; this takes seconds. Afterwards an old `vault.json` plus the old password opens nothing in the current database. Order for crash safety: write `vault.json.new`, re-encrypt in one transaction, replace `vault.json`; an unlock that finds both files uses whichever opens the database with the given password.
+  Keep the pending header on re-encryption failure, including an ambiguous commit outcome.
+  Promote the new header before VACUUM/checkpoint cleanup; a cleanup error leaves the new
+  password active and the vault recoverable. Before another rotation overwrites an existing
+  pending header, persist the currently active header. An interrupted operation must never
+  discard the only header capable of opening the committed database.
+  An uncertain commit closes the vault and locks the node before further application use;
+  unlock verifies which header matches. A failure before commit still leaves the old password
+  usable, and a committed cleanup failure is reported with `PasswordChangeCleanupError`.
 - **Lock** (15 minutes idle by default, or manually): close all sessions, stop listening and mDNS announcements, checkpoint the WAL, drop all key references. Nothing is received while locked.
 - **Unlock** repairs what a crash left in flight, before any session opens: chats still *sending* become *failed*, and so do unfinished transfers (§9).
 - **"Remember on this device"** (opt-in): a random device key stored in the OS keychain via `keyring` wraps a copy of the KEK in `vault.json`. Only OS backends are allowed (macOS Keychain, Windows Credential Locker, Secret Service); insecure fallbacks are refused.
@@ -655,7 +682,12 @@ file = "QRLAB\0" ‖ version:u8 ‖ nonce[12] ‖ AEAD(k_lab, msgpack{ meta, tra
 
 ### 11.6 Step-through and replay
 
-The core is sans-I/O, so the lab can pause after any event and advance one step at a time.
+The sans-I/O core executes one complete input transition at a time and returns its events.
+Those events describe operations already executed within that transition. The lab controller
+declares its legal execution pause/fork boundaries; browsing events or pausing a live display
+does not suspend protocol execution. Initially a lab step advances one protocol/transport
+transition. Pausing inside it requires an explicit execution mechanism and tests, rather than
+revealing the returned events one at a time.
 
 pyca's ML-KEM encapsulation and ML-DSA signing take no caller-supplied randomness, so their outputs cannot be regenerated. Replay therefore records **at the provider boundary**: generated keys, `(ss, ct)` from each encapsulation, each signature and each nonce. On replay these are fed back and re-checked: decapsulation must give the same `ss` and verification must pass. Everything downstream (hashes, HKDF, AEAD) recomputes exactly. **Fork at step N** replays up to N, then continues live with fresh randomness, so a learner can change one input and see what breaks.
 

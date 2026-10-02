@@ -24,6 +24,8 @@ ProVerif 2.05: `opam install proverif`, or build the source tarball with OCaml (
 | `hybrid_both.pv` | Sanity check: both broken, secrecy MUST fail |
 | `rekey.pv` | Post-compromise recovery: after one signed rekey, an active attacker that read the whole session state is locked out |
 | `record.pv` | Implicit sequence numbers: confidentiality with a known plaintext, and every record accepted once, in order |
+| `key_update.pv` | Earlier generations stay secret when both current traffic secrets, the exporter and the retained next-rekey salt are disclosed |
+| `key_update_retained_root.pv`, `key_update_retained_traffic.pv` | Regression witnesses: retaining either the epoch root or initial traffic secrets defeats KeyUpdate; each MUST yield an attack |
 | `weakened/*.pv` | One model per weakened engine (DESIGN §11.8), each with one defence removed; each MUST yield an attack |
 | `redundant/*.pv` | Defences whose removal alone yields no attack (defence in depth) |
 
@@ -31,7 +33,7 @@ Every query carries an `EXPECT` line: `true` (the property holds), `false` (an e
 in `weakened/` and `hybrid_both.pv`) or `reachable` (a sanity check that the model is not
 vacuous; see below).
 
-## Results (ProVerif 2.05, CI)
+## Results (ProVerif 2.05)
 
 | Model | Result |
 | --- | --- |
@@ -41,6 +43,8 @@ vacuous; see below).
 | `hybrid_both.pv` | Secrecy fails, as it must (checked on the responder's record) |
 | `rekey.pv` | After a signed rekey, the new traffic secrets stay secret from an attacker that read the whole session state; agreement on the rekey holds both ways |
 | `record.pv` | A known plaintext reveals nothing about other records; every record is accepted once, in order |
+| `key_update.pv` | Earlier-generation secrecy holds after current retained state is disclosed; current-generation secrecy fails as required by the sanity check |
+| `key_update_retained_root.pv`, `key_update_retained_traffic.pv` | Earlier-generation secrecy fails, demonstrating both retention regressions |
 | `weakened/no_pin_check.pv` | Attack: MITM on a pinned contact (secrecy and all agreements fail) |
 | `weakened/unbound_signature.pv` | Attack: impersonation of either side with a replayed signature |
 | `weakened/unbound_hello.pv` | Attack: downgrade; agreement on profile and `gb_request` fails (secrecy holds) |
@@ -70,5 +74,13 @@ path completing in reconstructed attack traces.
 ### Not modelled (see the header of `qrp2p.pvl`)
 
 The two halves of the hybrid signature separately; ML-KEM's binding properties for `PQ-CNSA-1`
-(the Tamarin cross-check, now planned for M6); KeyUpdate; sizes, encodings and timing; the
+(the Tamarin cross-check, now planned for M6); sizes, encodings and timing; the
 reflection checks, which are local policy.
+
+KeyUpdate is modelled separately as two updates in both directions followed by disclosure of
+retained state. The current-generation plaintext must be exposed (a non-vacuity check), while
+generation-zero and generation-one plaintexts stay secret. The existing rekey model deliberately
+discloses the stronger `cs_n` ancestor; this also gives the attacker the retained rekey salt and
+therefore still checks recovery after the erasure change. Python reference retention, mixed
+directional switch timing and physical memory zeroization remain outside the symbolic model;
+concrete regressions cover retained state and KeyUpdate during a partial rekey.

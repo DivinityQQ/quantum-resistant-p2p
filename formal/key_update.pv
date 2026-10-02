@@ -1,0 +1,11 @@
+(* Earlier generations remain secret after disclosure of all retained epoch state. *)
+(* EXPECT true: not attacker(updatePastI *)
+query attacker(updatePastI).
+(* EXPECT true: not attacker(updatePastR *)
+query attacker(updatePastR).
+(* EXPECT true: not attacker(updateIntermediate *)
+query attacker(updateIntermediate).
+(* EXPECT false: not attacker(updateCurrent *)
+query attacker(updateCurrent).
+
+process KeyUpdateCompromise(false, false)

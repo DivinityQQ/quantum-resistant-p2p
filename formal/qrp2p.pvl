@@ -98,6 +98,8 @@ const lDerived: bitstring.  (* "derived" *)
 const lIap: bitstring.      (* "i ap traffic" *)
 const lRap: bitstring.      (* "r ap traffic" *)
 const lKey: bitstring.      (* Keys(S) *)
+const lExporter: bitstring. (* "exporter" *)
+const lUpdate: bitstring.   (* "traffic upd" *)
 
 (* Signature roles (DESIGN §4.4) *)
 const rResponder: bitstring.
@@ -119,6 +121,33 @@ free secretI: bitstring [private].      (* first record from the initiator, unde
 free secretR: bitstring [private].      (* first record from the responder, under ap_R *)
 free secretRekey: bitstring [private].  (* first record under a key from a PQ rekey *)
 free secretMsg: bitstring [private].    (* a record in the record-layer models *)
+free updatePastI: bitstring [private].
+free updatePastR: bitstring [private].
+free updateIntermediate: bitstring [private].
+free updateCurrent: bitstring [private].
+
+(* KeyUpdate erasure regression: compromise both current directions, the exporter and the
+   precomputed next-rekey salt after two updates. No root or obsolete traffic secret is leaked
+   in the honest state. The two regression models deliberately retain one of those ancestors.
+   This models logical reference erasure, not Python physical memory zeroization. *)
+let KeyUpdateCompromise(keepRoot: bool, keepTraffic: bool) =
+  new cs: bitstring;
+  new th: bitstring;
+  let salt = hexpand(cs, lDerived, H(cEmpty)) in
+  let exp = hexpand(cs, lExporter, th) in
+  let apI0 = hexpand(cs, lIap, th) in
+  let apR0 = hexpand(cs, lRap, th) in
+  let apI1 = hexpand(apI0, lUpdate, cEmpty) in
+  let apR1 = hexpand(apR0, lUpdate, cEmpty) in
+  let apI2 = hexpand(apI1, lUpdate, cEmpty) in
+  let apR2 = hexpand(apR1, lUpdate, cEmpty) in
+  out(c, (th, salt, exp, apI2, apR2,
+          aenc(hexpand(apI0, lKey, cEmpty), s0, hRecord, updatePastI),
+          aenc(hexpand(apR0, lKey, cEmpty), s0, hRecord, updatePastR),
+          aenc(hexpand(apI1, lKey, cEmpty), s0, hRecord, updateIntermediate),
+          aenc(hexpand(apI2, lKey, cEmpty), s0, hRecord, updateCurrent)));
+  (if keepRoot = true then out(c, cs)) |
+  (if keepTraffic = true then out(c, (apI0, apR0))).
 
 (* Identities that belong to honest users. The attacker has identities of its own, which honest
    users will talk to; properties are stated for sessions whose peer is in this table. *)

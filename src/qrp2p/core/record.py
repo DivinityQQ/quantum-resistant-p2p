@@ -31,7 +31,7 @@ from qrp2p.core.crypto.provider import CryptoProvider
 from qrp2p.core.crypto.secret import Secret
 from qrp2p.core.errors import CloseReason, ProtocolError
 from qrp2p.core.events import Closed, Deliver, Priority, Queue, Send, Trace
-from qrp2p.core.schedule import EpochSecrets, next_epoch, updated_traffic_secret
+from qrp2p.core.schedule import EpochSecrets, EpochState, next_epoch, updated_traffic_secret
 from qrp2p.core.trace import (
     Direction,
     FrameTraced,
@@ -112,7 +112,9 @@ class _Rekey:
     dk: Secret | None = None
     ss: Secret | None = None
     sig_r: bytes = b""
-    next: EpochSecrets | None = None
+    next: EpochState | None = None
+    send: Secret | None = None
+    recv: Secret | None = None
     send_switched: bool = False
     recv_switched: bool = False
 
@@ -142,7 +144,7 @@ class Channel:
         self._peer = peer
         self._glass_box = glass_box
         self._state = ChannelState.OPEN
-        self._epoch = epoch
+        self._epoch = epoch.retained()
         self._epoch_started = now
         send, recv = (epoch.ap_i, epoch.ap_r) if is_initiator else (epoch.ap_r, epoch.ap_i)
         self._send = self._direction(send, epoch.epoch, now)
@@ -461,16 +463,22 @@ class Channel:
         self._queue(RekeySwitch())
 
     def _derive_next(self, rekey: _Rekey, ss: Secret, th: bytes) -> None:
-        rekey.next = next_epoch(self._provider, self._profile, self._epoch, ss, th)
+        new = next_epoch(self._provider, self._profile, self._epoch, ss, th)
+        rekey.next = new.retained()
+        rekey.send, rekey.recv = (
+            (new.ap_i, new.ap_r) if self._is_initiator else (new.ap_r, new.ap_i)
+        )
         rekey.ss = None
-        for secret in rekey.next.all():
+        for secret in new.all():
             self._trace_secret(secret)
 
     def _switch_send(self, now: float) -> None:
         rekey = self._rekey
         assert rekey is not None and rekey.next is not None  # noqa: S101, PT018  # queued after derivation
         new = rekey.next
-        self._send = self._direction(new.ap_i if self._is_initiator else new.ap_r, new.epoch, now)
+        assert rekey.send is not None  # noqa: S101  # consumed once at the switch
+        self._send = self._direction(rekey.send, new.epoch, now)
+        rekey.send = None
         rekey.send_switched = True
         self._emit(Trace(KeysSwitched(Direction.OUT, new.epoch, 0, "rekey")))
         self._finish_rekey_if_done(now)
@@ -480,7 +488,9 @@ class Channel:
         if rekey is None or rekey.next is None or rekey.recv_switched:
             raise ProtocolError(CloseReason.UNEXPECTED_MESSAGE, "rekey_switch not expected")
         new = rekey.next
-        self._recv = self._direction(new.ap_r if self._is_initiator else new.ap_i, new.epoch, now)
+        assert rekey.recv is not None  # noqa: S101  # consumed once at the switch
+        self._recv = self._direction(rekey.recv, new.epoch, now)
+        rekey.recv = None
         rekey.recv_switched = True
         self._emit(Trace(KeysSwitched(Direction.IN, new.epoch, 0, "rekey")))
         self._finish_rekey_if_done(now)
@@ -489,7 +499,7 @@ class Channel:
         rekey = self._rekey
         assert rekey is not None and rekey.next is not None  # noqa: S101, PT018
         if rekey.send_switched and rekey.recv_switched:
-            # Erase cs_n and the old exporter: only the new epoch remains.
+            # Erase the old rekey salt and exporter: only the new epoch remains.
             self._epoch = rekey.next
             self._epoch_started = now
             self._rekey = None
