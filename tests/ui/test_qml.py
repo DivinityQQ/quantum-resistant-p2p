@@ -323,6 +323,23 @@ def test_a_key_mismatch_defaults_to_cancel(ui: Ui) -> None:
     assert not ui.item("startRepin").isVisible()
 
 
+def test_a_busy_button_does_not_submit_twice_but_lets_focus_move(ui: Ui) -> None:
+    ui.unlock(BOB)
+    dialog = ui.window.findChild(QObject, "connectDialog")
+    assert dialog is not None
+    dialog.setProperty("visible", True)
+    ui.until(lambda: ui.window.activeFocusItem() is ui.item("connectHost"))
+    ui.type("10.0.0.9")
+    ui.key(Qt.Key.Key_Return)
+    assert len(ui.backend.pending("connect_address")) == 1
+    button = ui.item("connectButton")
+    button.forceActiveFocus()
+    ui.key(Qt.Key.Key_Space)  # busy: no second connection attempt
+    assert len(ui.backend.pending("connect_address")) == 1
+    ui.key(Qt.Key.Key_Tab)
+    assert ui.window.activeFocusItem() is not button
+
+
 def test_the_theme_changes_in_place(ui: Ui) -> None:
     ui.unlock(BOB)
     messenger = ui.find("messenger")

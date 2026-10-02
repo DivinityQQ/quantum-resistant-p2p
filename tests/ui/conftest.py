@@ -25,16 +25,21 @@ pytest.importorskip("PySide6", reason="the desktop app needs the gui extra")
 from PySide6.QtCore import QMessageLogContext, QtMsgType, qInstallMessageHandler
 from PySide6.QtGui import QGuiApplication
 
+from qrp2p.ui.app import load_fonts
+
 _FAILING = {QtMsgType.QtWarningMsg, QtMsgType.QtCriticalMsg, QtMsgType.QtFatalMsg}
 
 
 @pytest.fixture(scope="session", autouse=True)
 def qapp() -> QGuiApplication:
-    """The one application object every UI test shares (the app runs a QGuiApplication too)."""
+    """The one application object every UI test shares, with the app's fonts registered (macOS
+    warns about a missing family where Linux falls back silently)."""
     existing = QGuiApplication.instance()
     if isinstance(existing, QGuiApplication):
         return existing
-    return QGuiApplication(["qrp2p-tests"])
+    app = QGuiApplication(["qrp2p-tests"])
+    load_fonts(app)
+    return app
 
 
 @pytest.fixture(autouse=True)

@@ -31,6 +31,9 @@ UNUSED_QML: Final = [
     "QtQuick/VirtualKeyboard", "QtQuick/Scene2D", "QtQuick/Scene3D", "QtQuick/Particles",
     "QtQuick/Pdf", "QtQuick/Timeline", "QtQuick/LocalStorage", "QtQuick/VectorImage",
     "QtQuick/tooling", "QtTest", "QtQuickEffectMaker", "Qt/labs",
+    # Shipped as QML plugins by PySide6-Essentials, but their libraries are in the Addons:
+    # macOS builds fail to resolve them.
+    "QtQml/StateMachine", "QtQml/XmlListModel",
 ]  # fmt: skip
 
 

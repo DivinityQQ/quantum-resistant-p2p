@@ -89,9 +89,14 @@ T.Button {
         }
     }
 
-    // While busy: swallow presses and the keys that would click, so nothing submits twice.
-    Keys.onPressed: event => event.accepted = control.busy
-    Keys.onReleased: event => event.accepted = control.busy
+    // While busy: swallow presses and the keys that would click, so nothing submits twice
+    // (Tab and the rest still move on).
+    function clickKey(event) {
+        return event.key === Qt.Key_Space || event.key === Qt.Key_Return
+            || event.key === Qt.Key_Enter || event.key === Qt.Key_Select
+    }
+    Keys.onPressed: event => event.accepted = control.busy && clickKey(event)
+    Keys.onReleased: event => event.accepted = control.busy && clickKey(event)
 
     MouseArea {
         anchors.fill: parent

@@ -34,6 +34,7 @@ AppDialog {
 
         AppTextField {
             id: host
+            objectName: "connectHost"
             Layout.fillWidth: true
             placeholderText: qsTr("Address, e.g. 192.168.1.20")
             label: qsTr("Address")
@@ -94,6 +95,7 @@ AppDialog {
 
     actions: [
         AppButton {
+            objectName: "connectButton"
             kind: "primary"
             text: qsTr("Connect")
             busy: dialog.workspace.addressBusy
