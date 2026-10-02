@@ -4,14 +4,13 @@ This is the working plan for building [DESIGN.md](DESIGN.md). It is written for 
 work up next, human or a Claude Code session on a local machine. Start with the repository's
 `CLAUDE.md`, then this file.
 
-**Status (2026-09-29):** M0 and M1 are complete and on `main`; their gates are met (see the
-status notes under each). M2 (services and headless CLI) is implemented and tested in CI, and its
-gate is met: two LAN rounds, Linux–Linux and Windows–Linux (see the M2 status notes); it merges
-with PR #9. v1 is tagged
+**Status (2026-10-02):** M0, M1 and M2 are complete and on `main`; their gates are met (see the
+status notes under each). M2 (services and headless CLI) merged in PR #9 after two LAN rounds,
+Linux–Linux and Windows–Linux (see the M2 status notes). v1 is tagged
 `v1-final`. CI runs lint, types, layers, audit, the tests on three OSes, liboqs on three OSes, the
 ProVerif models and mutation testing, each job only when its inputs changed; the `main` ruleset
 requires the gate job "CI result". Local hooks run the fast suite (`tools/check.py`) before every
-push. **Next: merge M2 (PR #9), then M3** (desktop app). `qrp2p` 2.0.0.dev0 is on PyPI, published by
+push. **Next: land the post-M2 review corrections, then M3** (desktop app). `qrp2p` 2.0.0.dev0 is on PyPI, published by
 `.github/workflows/release.yml` (trusted publishing). Steps that need the owner's accounts (the v1
 Pages site, the liboqs bug report) are in [OWNER_TODO.md](OWNER_TODO.md).
 
@@ -272,6 +271,9 @@ design (DESIGN 1.3):
   design system, compact contact strip/full chooser, and an expanding Inspector workspace.
   Its images are design references; begin implementation with real clickable QML prototypes.
 - The bridge thread model (DESIGN §12), view models, QML design system (DESIGN §14.3).
+- Implement immutable bridge snapshots and lifecycle-generation filtering before wiring
+  screens; exercise stale events/prompts across lock, replacement and admission-capacity
+  changes. UI_DESIGN §11.2 and §13.1 define these contracts.
 - Messenger, unlock, contacts/discovery/manual connect, settings and prompts from DESIGN §14.1;
   plain-text rendering of peer data; key-mismatch flow; contact requests; verification. Prepare
   the Inspector layout in development previews; populated Inspector and labs remain M4/M5.

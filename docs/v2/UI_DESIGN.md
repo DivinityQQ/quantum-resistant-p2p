@@ -326,6 +326,12 @@ lab/glass-box values from UI models; close sessions and stop discovery through t
 references without claiming Python has securely wiped memory. No stale sensitive tooltips or
 copied detail pane survives the locked view.
 
+Password rotation has a commit boundary. If the service reports a committed password change
+with failed storage cleanup, say **Password changed; vault cleanup failed** and make clear that
+the new password is active. A generic storage error must not be presented as proof that the old
+password still works. Preserve recovery headers and use the service's recovery result; QML
+must not edit vault files or retry a rotation automatically.
+
 ### 6.2 Contacts, discovery and connection
 
 Empty chat offers **Find nearby peers** and **Enter address**. Empty discovery says no peers
@@ -336,6 +342,11 @@ Keep Nearby, Connecting, Waiting for admission, Connected and Offline distinct. 
 Verified contact can be offline. An advertised name can be forged. Contact-request prompts
 show the authenticated identity, short ID and selected profile once those facts are available.
 Accepting a first contact pins it; it does not mark it Verified.
+
+An admission prompt is a pending request, not a reserved connection slot. Acceptance may become
+**Busy** if capacity was consumed while the prompt was open. Show the actual decision result,
+remove an expired/ended request, and bind the action to its session and request identity. A
+stale prompt must never accept a replacement session merely because its contact is the same.
 
 ### 6.3 Messages and files
 
@@ -466,6 +477,14 @@ A lifecycle erasure indicator needs an emitted lifecycle fact, not a guess based
 time. Do not claim physical memory zeroization. The graph's presence is not secret capture.
 Revealed values need the provider/consent path; QML never reaches into live key objects.
 
+Show `cs_n` as a transient derivation root. Its traffic secrets, exporter and next-rekey salt
+are separate children; normal channel state retains the derived salt rather than the root.
+Each direction consumes its pending traffic secret when it switches, including a partial PQ
+rekey. A KeyUpdate may advance one direction while the other is still on its previous epoch or
+generation. Keep those states separate in the graph. Values intentionally captured by an
+exposed recording may remain available after the normal engine releases its references;
+label that recording origin rather than claiming the engine still retains them.
+
 ### 7.5 Security
 
 Show session facts with their evidence and assumptions: selected profile, identity pin result,
@@ -501,6 +520,14 @@ The run controller decides legal actions. At a terminal failure, Run/Step are di
 Reset starts a fresh experiment. Loading `.qrlab` remains bounded, validated and lab-only.
 Errors name the problem without exposing secret payloads in logs/exceptions. Persistent
 recordings are explicit saves, not a side effect of opening a pane.
+
+Define execution steps before wiring the controls. The current core executes a complete input
+transition and then returns its events. Moving through those events selects evidence; it does
+not suspend execution between the operations they describe. Initially, Step advances one
+declared protocol/transport transition. Display an operation's name when inspecting its event,
+but do not label that action execution stepping. Fork is enabled only at boundaries the
+controller can restore and replay. Finer operation stepping needs an explicit engine/controller
+mechanism and its own tests. Pause following in a live Inspector remains a display operation.
 
 ## 9. Attack Lab and other learning tools
 
@@ -636,6 +663,21 @@ mutable live engine state. Copy safe event batches across the boundary through q
 Qt list/table models mutate on the Qt thread. A trace callback must be bounded and fast; it
 cannot synchronously render, hash, format huge hex strings or block the service loop.
 
+The current `Node.session_info()` and `Node.transfers()` return mutable service objects. They
+are service-thread inputs to the adapter, not objects to expose to QML. Define immutable
+snapshots with primitive values: session/contact IDs, authenticated peer ID, role, profile,
+phase, trust, exposure, directional epoch/generation and transfer state/progress as needed.
+Do not include a `Session`, `Channel`, provider, signing key or arbitrary live object in a Qt
+property. Commands carry the expected session/request identity and return their real outcome;
+showing busy or a successful local enqueue is not a completed remote action.
+
+Assign a monotonic application generation to each unlocked lifecycle. Every queued snapshot,
+trace batch and prompt response carries that generation; invalidate it when lock begins and
+reject older batches before mutating models. Clearing visible models once is insufficient if
+already queued signals can refill them. Session-scoped IDs additionally prevent an old session's
+updates from changing its replacement. Test lock/unlock while signals and user decisions are
+queued. This generation is local bridge state, not a protocol field.
+
 Choose one Basic style-loading strategy consistently; consult the pinned Qt documentation.
 Application components can wrap Basic controls. If implementing an actual Qt style module,
 its controls must use the appropriate Templates roots rather than derive recursively from
@@ -658,6 +700,12 @@ No cryptography, disk work or heavy recording import on the Qt thread. Do not cr
 per event or animate every packet. Theme changes use shared bindings. Hidden Inspector tabs
 do not keep expensive rendering active. Disconnect subscriptions when sessions/views end;
 lock clears retained view data and reveals, including accessibility strings and export buffers.
+
+Budget bytes as well as event counts for bridge queues, paused snapshots and retained evidence.
+The source ring's 10,000-event limit is a count bound; full captured file frames can make it
+large. Measure memory with concurrent file transfers and ended sessions before M4 acceptance,
+and add a reviewed source byte budget if needed. Gaps and eviction must remain visible. A slow
+or hidden frontend must not stall networking or retain an unbounded sequence of copies.
 
 ## 12. Accessibility and platform behavior
 
@@ -705,6 +753,12 @@ stays plain; drafts and secret-sensitive views disappear on lock; both themes, k
 scale/reflow work. Add meaningful model/security-flow tests with implementation changes,
 including receipt transitions, mismatch re-pin effects and plain-text rendering.
 
+Before connecting the QML screens, test the bridge's immutable snapshots, lifecycle generation
+filter and stale command/prompt handling. Exercise lock with queued history/trace batches,
+session replacement while an old prompt is visible, capacity exhaustion after a deferred
+prompt, and password-change cleanup failure. These contracts are prerequisites for wiring
+the ordinary messenger, rather than UI cleanup deferred to M4.
+
 ### 13.2 M4 — deepen inspection and add controlled exposure
 
 Implement public timeline and byte selection first, then shared cross-view selection, key
@@ -712,6 +766,11 @@ schedule/evidence panels, complete glass-box gating, solo-lab stepping and recor
 Open Inspector on an already running session; test snapshot/live ordering, eviction and a
 paused bounded display. Follow actual events for key updates/rekey. Add reviewed trace
 metadata only where existing events cannot support a promised feature.
+
+Agree the execution/fork boundary contract before adding lab Step/Run controls. Add lifecycle
+trace facts where the key graph needs to distinguish observed reference release from a
+specification relationship; test partial rekey with a directional KeyUpdate and distinguish
+engine retention from an exposed recording's retained values.
 
 Complete the end-to-end canary gate across view-model strings, caches, copy/export paths,
 recordings, logs and exceptions. Normal sessions never emit secret values. Consented sessions

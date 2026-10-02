@@ -2,7 +2,7 @@
 
 | | |
 | --- | --- |
-| Version | 1.4 |
+| Version | 1.5 |
 | Date | 2026-10-02 |
 | Status | Approved for implementation |
 | Scope | Complete rewrite of `quantum-resistant-p2p` (v1) |
@@ -655,7 +655,12 @@ file = "QRLAB\0" ‖ version:u8 ‖ nonce[12] ‖ AEAD(k_lab, msgpack{ meta, tra
 
 ### 11.6 Step-through and replay
 
-The core is sans-I/O, so the lab can pause after any event and advance one step at a time.
+The sans-I/O core executes one complete input transition at a time and returns its events.
+Those events describe operations already executed within that transition. The lab controller
+declares its legal execution pause/fork boundaries; browsing events or pausing a live display
+does not suspend protocol execution. Initially a lab step advances one protocol/transport
+transition. Pausing inside it requires an explicit execution mechanism and tests, rather than
+revealing the returned events one at a time.
 
 pyca's ML-KEM encapsulation and ML-DSA signing take no caller-supplied randomness, so their outputs cannot be regenerated. Replay therefore records **at the provider boundary**: generated keys, `(ss, ct)` from each encapsulation, each signature and each nonce. On replay these are fed back and re-checked: decapsulation must give the same `ss` and verification must pass. Everything downstream (hashes, HKDF, AEAD) recomputes exactly. **Fork at step N** replays up to N, then continues live with fresh randomness, so a learner can change one input and see what breaks.
 
