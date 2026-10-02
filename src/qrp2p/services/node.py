@@ -130,6 +130,11 @@ def profile_by_name(name: str) -> Profile:
     raise NodeError(msg)
 
 
+def profiles_in(mask: int) -> list[Profile]:
+    """The real profiles in a ``ProfileUnsupported`` or mDNS ``pf`` bitmask (DESIGN §6.1)."""
+    return [p for p in REAL_PROFILES if profile_bitmask([p]) & mask]
+
+
 def profile_by_id(profile_id: int) -> Profile:
     """A real profile by wire ID; unknown IDs fall back to ``HYBRID-1``."""
     return next((p for p in REAL_PROFILES if p.id == profile_id), REAL_PROFILES[0])
@@ -320,6 +325,15 @@ class Node:
     def port(self) -> int | None:
         """The port we listen on, while unlocked."""
         return self._port
+
+    def now(self) -> float:
+        """The node's monotonic clock: prompt deadlines are on it."""
+        return self._clock()
+
+    @property
+    def discovery_active(self) -> bool:
+        """MDNS announces us and browses for peers (unlocked, enabled and working)."""
+        return self._discovery is not None and self._discovery.running
 
     # -- life cycle -----------------------------------------------------------------------------
 
@@ -1321,7 +1335,7 @@ def _describe_failure(end: SessionEnd, outgoing: _Outgoing) -> str:
     if end.admit_reason is not None:
         return f"the peer rejected the session: {end.admit_reason.label}"
     if end.reason is CloseReason.POLICY and outgoing.supported is not None:
-        names = [p.name for p in REAL_PROFILES if profile_bitmask([p]) & outgoing.supported]
+        names = [p.name for p in profiles_in(outgoing.supported)]
         return f"the peer does not serve this profile (it offers: {', '.join(names) or 'none'})"
     if end.reason is None:
         return "the connection dropped during the handshake"

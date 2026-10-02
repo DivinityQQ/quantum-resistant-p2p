@@ -78,6 +78,9 @@ asyncio_default_test_loop_scope = "function"
 markers = [
     "liboqs: needs a bundled liboqs (OQS_INSTALL_PATH); skipped when it is absent",
 ]
+# pytest-qt: Qt warnings (QML errors, binding loops, model-tester findings) fail the test.
+qt_api = "pyside6"
+qt_log_level_fail = "WARNING"
 
 # --- ruff ---------------------------------------------------------------------------------------
 
