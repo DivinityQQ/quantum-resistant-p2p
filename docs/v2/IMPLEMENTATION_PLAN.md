@@ -356,6 +356,10 @@ design (DESIGN 1.3):
   register Inter like the app; pytest-qt is gone (it imported Qt for every pytest run); macOS
   builds use a native `.icns` and prune QML plugins whose libraries are only in the Addons;
   the Intel macOS build runs on `macos-15-intel`.
+- **CI state (2026-10-02, PR #12):** tests pass on Linux, Windows and macOS; mutation testing
+  and ProVerif pass. The native builds for Linux (AppImage), Windows (zip) and macOS arm64
+  (`.dmg`) pass their smoke test in CI: each, without Python, creates a throwaway vault and
+  renders the messenger with no Qt warning.
 - **Still to do for the gate (owner):** run the app on Windows, macOS and Linux for daily use
   (`uv run qrp2p`, or a `build.yml` artifact) and record the findings here. Code-signing
   identities stay an open decision (below).
