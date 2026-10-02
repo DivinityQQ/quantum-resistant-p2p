@@ -226,6 +226,12 @@ class Node:
         self._state = NodeState.CLOSED
         self.trace = TraceBus()
         self.trace.subscribe(self._on_trace)
+        # Read-modify-write of contacts and settings happens under these locks, in request order:
+        # front ends issue requests concurrently, and each awaits the vault between reading the
+        # record and storing it. Without them a later request can store a stale copy and undo an
+        # earlier one (a block undone by a profile edit).
+        self._contacts_lock = asyncio.Lock()
+        self._settings_lock = asyncio.Lock()
         self._reset_unlocked_state()
 
     def _reset_unlocked_state(self) -> None:
@@ -563,17 +569,20 @@ class Node:
     async def update_settings(self, **changes: object) -> Settings:
         """Change settings, e.g. ``update_settings(display_name="Alice")``.
 
+        Concurrent changes apply in order, each on top of the one before.
+
         Raises:
             TypeError: An unknown setting.
         """
-        self._require_unlocked()
         self.touch()
-        settings = replace(self._settings, **changes)
-        await self._db(self._vault.save_settings, settings)
-        self._settings = settings
-        if self._transfers is not None:
-            self._transfers.max_size = settings.max_file_size
-        return settings
+        async with self._settings_lock:
+            self._require_unlocked()
+            settings = replace(self._settings, **changes)
+            await self._db(self._vault.save_settings, settings)
+            self._settings = settings
+            if self._transfers is not None:
+                self._transfers.max_size = settings.max_file_size
+            return settings
 
     def downloads_dir(self) -> Path:
         """Where accepted files go."""
@@ -622,8 +631,17 @@ class Node:
 
     def safety_number(self, contact_id: bytes) -> tuple[str, ...]:
         """The 60-digit safety number with a contact, as 12 groups (DESIGN §5.2)."""
+        return self.safety_number_of(contact_id)[1]
+
+    def safety_number_of(self, contact_id: bytes) -> tuple[bytes, tuple[str, ...]]:
+        """The contact's pinned peer ID and the safety number computed for exactly that one.
+
+        Pass the peer ID to :meth:`set_trust` when the user marks the contact verified, so a
+        re-pin in between cannot make an old comparison verify a new identity.
+        """
         own = self._require_unlocked().bundle.peer_id
-        return safety_number(own, self.contact(contact_id).peer_id)
+        peer_id = self.contact(contact_id).peer_id
+        return peer_id, safety_number(own, peer_id)
 
     async def _save_contact(self, contact: Contact) -> Contact:
         await self._db(self._vault.save_contact, contact)
@@ -655,47 +673,65 @@ class Node:
             msg = "that contact field cannot be changed here"
             raise NodeError(msg)
         self.touch()
-        contact = replace(self.contact(contact_id), **changes)
-        if contact.auto_accept_files and contact.trust is not TrustState.VERIFIED:
-            msg = "file auto-accept needs a verified contact"
-            raise NodeError(msg)
-        return await self._save_contact(contact)
+        async with self._contacts_lock:
+            self._require_unlocked()  # a request that waited across a lock finds it locked
+            contact = replace(self.contact(contact_id), **changes)
+            if contact.auto_accept_files and contact.trust is not TrustState.VERIFIED:
+                msg = "file auto-accept needs a verified contact"
+                raise NodeError(msg)
+            return await self._save_contact(contact)
 
-    async def set_trust(self, contact_id: bytes, trust: TrustState) -> Contact:
+    async def set_trust(
+        self, contact_id: bytes, trust: TrustState, *, compared_peer_id: bytes | None = None
+    ) -> Contact:
         """Mark verified (after comparing safety numbers), back to pinned, or blocked.
 
         Leaving *verified* turns file auto-accept off; blocking closes an open session.
+        ``compared_peer_id`` is the identity whose safety number the user compared (from
+        :meth:`safety_number_of`); verifying fails if the contact is pinned to another one now.
+
+        Raises:
+            NodeError: No such contact, or the pin changed since the comparison.
         """
         self.touch()
-        contact = self.contact(contact_id)
-        changes: dict[str, object] = {"trust": trust}
-        if trust is not TrustState.VERIFIED:
-            changes["auto_accept_files"] = False
-        contact = await self._save_contact(replace(contact, **changes))
-        if trust is TrustState.BLOCKED:
-            session = self._live_session(contact_id)
-            if session is not None:
-                session.close(CloseReason.NORMAL)
-        return contact
+        async with self._contacts_lock:
+            self._require_unlocked()  # a request that waited across a lock finds it locked
+            contact = self.contact(contact_id)
+            if compared_peer_id is not None and compared_peer_id != contact.peer_id:
+                msg = "the identity changed since you compared; compare the new safety number"
+                raise NodeError(msg)
+            changes: dict[str, object] = {"trust": trust}
+            if trust is not TrustState.VERIFIED:
+                changes["auto_accept_files"] = False
+            contact = await self._save_contact(replace(contact, **changes))
+            if trust is TrustState.BLOCKED:
+                session = self._live_session(contact_id)
+                if session is not None:
+                    session.close(CloseReason.NORMAL)
+            return contact
 
     async def delete_contact(self, contact_id: bytes) -> None:
         """Delete a contact and its history (the database is vacuumed)."""
         self.touch()
-        contact = self.contact(contact_id)
-        session = self._live_session(contact_id)
-        if session is not None:
-            session.close(CloseReason.NORMAL)
-        await self._db(self._vault.delete_contact, contact)
-        del self._contacts[contact_id]
-        self._emit(ContactsChanged(contact_id))
+        async with self._contacts_lock:
+            self._require_unlocked()  # a request that waited across a lock finds it locked
+            contact = self.contact(contact_id)
+            session = self._live_session(contact_id)
+            if session is not None:
+                session.close(CloseReason.NORMAL)
+            await self._db(self._vault.delete_contact, contact)
+            del self._contacts[contact_id]
+            self._emit(ContactsChanged(contact_id))
 
     async def delete_conversation(self, contact_id: bytes) -> None:
         """Delete a conversation's history and key (DESIGN §10.4)."""
         self.touch()
-        contact = self.contact(contact_id)
-        updated = await self._db(self._vault.delete_conversation, contact)
-        self._contacts[contact_id] = updated
-        self._emit(ContactsChanged(contact_id))
+        async with self._contacts_lock:
+            self._require_unlocked()  # a request that waited across a lock finds it locked
+            contact = self.contact(contact_id)
+            updated = await self._db(self._vault.delete_conversation, contact)
+            self._contacts[contact_id] = updated
+            self._emit(ContactsChanged(contact_id))
 
     async def history(self, contact_id: bytes, limit: int | None = None) -> list[HistoryEntry]:
         """A conversation, oldest first."""
@@ -908,7 +944,10 @@ class Node:
         if prompt.kind is PromptKind.CONTACT_REQUEST:
             if accept:
                 profile = session.profile or profile_by_id(self._settings.default_profile)
-                await self._new_contact(prompt.peer, name, profile)
+                async with self._contacts_lock:
+                    # Two requests from one new identity (two connections) make one contact.
+                    if self.contact_for_peer(peer_id) is None:
+                        await self._new_contact(prompt.peer, name, profile)
                 if not session.awaiting_admission:  # the initiator left while we saved
                     outcome = PromptOutcome.GONE
                 elif session.accept(glass_box=False):
@@ -942,17 +981,22 @@ class Node:
             raise NodeError(msg)
         if not repin:
             return
-        other = self.contact_for_peer(mismatch.actual.peer_id)
-        if other is not None:
-            msg = f"that identity is already the contact {other.name!r}"
-            raise NodeError(msg)
-        contact = self.contact(mismatch.contact_id)
-        old = contact.short_id
-        await self._save_contact(
-            replace(
-                contact, bundle=mismatch.actual, trust=TrustState.PINNED, auto_accept_files=False
+        async with self._contacts_lock:
+            self._require_unlocked()  # a request that waited across a lock finds it locked
+            other = self.contact_for_peer(mismatch.actual.peer_id)
+            if other is not None:
+                msg = f"that identity is already the contact {other.name!r}"
+                raise NodeError(msg)
+            contact = self.contact(mismatch.contact_id)
+            old = contact.short_id
+            await self._save_contact(
+                replace(
+                    contact,
+                    bundle=mismatch.actual,
+                    trust=TrustState.PINNED,
+                    auto_accept_files=False,
+                )
             )
-        )
         entry = HistoryEntry(
             entry_id=await self._db(self._vault.new_entry_id),
             kind=MessageKind.IDENTITY_CHANGED,
@@ -1212,17 +1256,18 @@ class Node:
         peer = session.peer
         assert peer is not None  # noqa: S101
         outgoing = self._outgoing.pop(session.id, None)
-        contact = self.contact_for_peer(peer.peer_id)
-        if contact is None and outgoing is not None:  # a first contact we chose to connect to
-            profile = session.profile or profile_by_id(self._settings.default_profile)
-            contact = await self._new_contact(peer, outgoing.name_hint, profile)
-        if contact is None or contact.trust is TrustState.BLOCKED:
-            session.close(CloseReason.NORMAL)
-            if outgoing is not None and not outgoing.result.done():
-                outgoing.result.set_exception(NodeError("the peer is blocked"))
-            return None
-        if outgoing is not None and contact.address != outgoing.address:
-            contact = await self._save_contact(replace(contact, address=outgoing.address))
+        async with self._contacts_lock:  # ordered with the user's contact changes
+            contact = self.contact_for_peer(peer.peer_id)
+            if contact is None and outgoing is not None:  # a first contact we chose to connect to
+                profile = session.profile or profile_by_id(self._settings.default_profile)
+                contact = await self._new_contact(peer, outgoing.name_hint, profile)
+            if contact is None or contact.trust is TrustState.BLOCKED:
+                session.close(CloseReason.NORMAL)
+                if outgoing is not None and not outgoing.result.done():
+                    outgoing.result.set_exception(NodeError("the peer is blocked"))
+                return None
+            if outgoing is not None and contact.address != outgoing.address:
+                contact = await self._save_contact(replace(contact, address=outgoing.address))
         self._session_contact[session.id] = contact.contact_id
         profile = session.profile
         self._emit(
