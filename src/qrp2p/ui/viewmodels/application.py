@@ -111,7 +111,8 @@ class AppController(ViewModel):
         self._error = ""
         self._notice = ""
         self._device_available = False
-        self._tried_device = False
+        self._first_state = True
+        """No node state seen yet: only a start onto a locked vault may use the device key."""
         self._workspace: Workspace | None = None
         self._appearance = "system"
         self._reduced_motion = False
@@ -129,13 +130,18 @@ class AppController(ViewModel):
             workspace.settings_model.changed.connect(self._sync_appearance)
             self._set_workspace(workspace)
             self._sync_appearance()
-        else:
-            self._set_workspace(None)
         if lifecycle.state == FAILED:
             self._status(busy=False, error=lifecycle.error or "QRP2P could not start.")
+        # The phase first: it unloads the messenger before its workspace goes.
         self._set_phase(_PHASES.get(lifecycle.state, lifecycle.state))
+        if lifecycle.workspace is None:
+            self._set_workspace(None)
+        at_start, self._first_state = self._first_state, False
         if lifecycle.state == "locked":
-            self._check_device_unlock()
+            # The device key unlocks by itself only when the app starts onto a locked vault.
+            # Any later lock (the user's, auto-lock, a new vault locked for the first time) was
+            # meant to stick.
+            self._check_device_unlock(auto=at_start)
 
     def _workspace_ready(self) -> None:
         if self._workspace is not None and self._phase == "opening":
@@ -180,17 +186,14 @@ class AppController(ViewModel):
             self._text_scale = text_scale
             self.appearanceChanged.emit()
 
-    def _check_device_unlock(self) -> None:
+    def _check_device_unlock(self, *, auto: bool) -> None:
         def done(reply: Reply) -> None:
             available = reply.error is None and bool(reply.value)
             if available != self._device_available:
                 self._device_available = available
                 self.statusChanged.emit()
-            # Only at start: after the user locked, the device key must not undo the lock.
-            if available and not self._tried_device and self._phase == "locked":
-                self._tried_device = True
+            if auto and available and self._phase == "locked" and not self._busy:
                 self.unlockWithDevice()
-            self._tried_device = True
 
         self._bridge.request(ops.device_unlock_available(), done, scoped=False)
 
@@ -249,9 +252,14 @@ class AppController(ViewModel):
         """Lock now: the messenger disappears at once."""
         if self._phase not in {"unlocked", "opening"}:
             return
+        self._set_phase("locking")  # unloads the messenger, then its workspace goes
         self._set_workspace(None)
-        self._set_phase("locking")
         self._bridge.lock()
+
+    def shutdown(self) -> None:
+        """The app is quitting: unload the messenger and drop the workspace, in that order."""
+        self._set_phase("closed")
+        self._set_workspace(None)
 
     @Slot()
     def touch(self) -> None:

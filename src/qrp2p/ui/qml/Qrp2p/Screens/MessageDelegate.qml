@@ -23,6 +23,7 @@ Item {
     required property string fileStateText
     required property real fileProgress
     required property string filePath
+    required property bool fileBusy
     required property string dayLabel
     required property bool groupStart
     required property bool groupEnd
@@ -88,6 +89,7 @@ Item {
                 fileStateText: row.fileStateText
                 fileProgress: row.fileProgress
                 filePath: row.filePath
+                fileBusy: row.fileBusy
                 maxWidth: row.bubbleMax
                 onSaveTo: id => row.saveTo(id)
             }

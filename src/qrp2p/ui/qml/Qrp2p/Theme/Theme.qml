@@ -74,6 +74,19 @@ QtObject {
     readonly property int motion: reducedMotion ? 0 : 200
     readonly property int motionFast: reducedMotion ? 0 : 120
 
+    // Bytes in decimal units, as the file items show them ("2.5 GB").
+    function formatBytes(count) {
+        const units = ["B", "kB", "MB", "GB", "TB"]
+        let value = count
+        let unit = 0
+        while (value >= 1000 && unit < units.length - 1) {
+            value /= 1000
+            unit += 1
+        }
+        const digits = unit === 0 || value >= 10 ? 0 : 1
+        return value.toLocaleString(Qt.locale(), "f", digits) + " " + units[unit]
+    }
+
     // A name embedded in a sentence: an isolate keeps right-to-left text from reordering it.
     function isolate(text) {
         return "\u2068" + text + "\u2069"

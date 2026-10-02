@@ -18,6 +18,7 @@ Rectangle {
     required property string fileStateText
     required property real fileProgress
     required property string filePath
+    required property bool fileBusy
     property real maxWidth: 420
 
     signal saveTo(string fileId)
@@ -95,6 +96,7 @@ Rectangle {
                 visible: card.offeredToUs
                 kind: "primary"
                 compact: true
+                busy: card.fileBusy
                 text: qsTr("Accept")
                 onClicked: card.conversation.acceptFile(card.fileId)
             }
@@ -102,6 +104,7 @@ Rectangle {
                 visible: card.offeredToUs
                 kind: "quiet"
                 compact: true
+                enabled: !card.fileBusy
                 text: qsTr("Save to…")
                 onClicked: card.saveTo(card.fileId)
             }
@@ -109,6 +112,7 @@ Rectangle {
                 visible: card.offeredToUs
                 kind: "quiet"
                 compact: true
+                enabled: !card.fileBusy
                 text: qsTr("Decline")
                 onClicked: card.conversation.declineFile(card.fileId)
             }
@@ -116,6 +120,7 @@ Rectangle {
                 visible: card.cancellable
                 kind: "quiet"
                 compact: true
+                enabled: !card.fileBusy
                 text: qsTr("Cancel")
                 onClicked: card.conversation.cancelFile(card.fileId)
             }

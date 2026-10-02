@@ -13,6 +13,14 @@ ApplicationWindow {
     required property string monoFamily
 
     readonly property bool unlocked: app.phase === "unlocked" && app.workspace !== null
+    // The workspace the messenger shows: replaced at each unlock and never set to null, so a
+    // messenger being torn down at lock never sees its workspace vanish underneath it.
+    property var workspaceView: null
+    Binding on workspaceView {
+        when: window.app.workspace !== null
+        value: window.app.workspace
+        restoreMode: Binding.RestoreNone
+    }
 
     width: 1280
     height: 800
@@ -42,17 +50,12 @@ ApplicationWindow {
     Loader {
         id: messenger
         anchors.fill: parent
-        active: window.unlocked
+        active: window.unlocked && window.workspaceView === window.app.workspace
         sourceComponent: MessengerScreen {
             app: window.app
-            workspace: window.app.workspace
-            onNotify: text => toasts.show(text)
+            workspace: window.workspaceView
             onAttention: if (!window.active) window.alert(0)
         }
-    }
-
-    ToastHost {
-        id: toasts
     }
 
     Shortcut {

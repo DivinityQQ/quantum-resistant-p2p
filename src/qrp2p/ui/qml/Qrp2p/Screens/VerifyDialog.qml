@@ -59,10 +59,11 @@ AppDialog {
     }
     AppText {
         Layout.fillWidth: true
-        text: dialog.conversation
+        // The digits' own identity (they are dropped when the contact is re-pinned).
+        text: dialog.conversation && dialog.conversation.safetyShortId !== ""
             ? qsTr("Your ID %1 · %2's ID %3").arg(dialog.workspace.shortId)
-                .arg(Theme.isolate(dialog.conversation.name)).arg(dialog.conversation.shortId)
-            : ""
+                .arg(Theme.isolate(dialog.conversation.name)).arg(dialog.conversation.safetyShortId)
+            : qsTr("Computing the safety number…")
         role: "small"
         wrapMode: Text.Wrap
     }

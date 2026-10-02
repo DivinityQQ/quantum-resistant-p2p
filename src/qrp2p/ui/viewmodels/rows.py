@@ -165,6 +165,8 @@ class MessageRow:
     file_progress: float
     """0..1 while transferring; -1 when no measured progress applies."""
     file_path: str
+    file_busy: bool
+    """An answer to this transfer is on its way: its actions are not offered again."""
     day_label: str
     """Set on the first message of a day."""
     group_start: bool
@@ -242,6 +244,8 @@ def message_rows(
     progress: Mapping[str, int],
     peer: str,
     formats: Formats,
+    *,
+    busy_files: frozenset[str] = frozenset(),
 ) -> list[MessageRow]:
     """A conversation's rows: day labels, sender groups and per-message state."""
     days = [formats.day(m.time) for m in messages]
@@ -288,6 +292,7 @@ def message_rows(
                 file_state_text=file_fields[4],
                 file_progress=file_fields[5],
                 file_path=file_fields[6],
+                file_busy=bool(file_fields[0]) and file_fields[0] in busy_files,
                 day_label=days[i] if i == 0 or days[i] != days[i - 1] else "",
                 group_start=starts[i],
                 group_end=ends[i],

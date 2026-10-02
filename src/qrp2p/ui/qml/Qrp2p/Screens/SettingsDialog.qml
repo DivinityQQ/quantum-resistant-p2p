@@ -131,7 +131,7 @@ AppDialog {
         AppComboBox {
             Layout.fillWidth: true
             label: qsTr("Profile for new contacts")
-            model: [{ value: "HYBRID-1", label: qsTr("HYBRID-1 (hybrid, default)") },
+            options: [{ value: "HYBRID-1", label: qsTr("HYBRID-1 (hybrid, default)") },
                     { value: "PQ-CNSA-1", label: qsTr("PQ-CNSA-1 (post-quantum only)") }]
             current: dialog.s.defaultProfile
             onChosen: value => dialog.s.set("default_profile", value)
@@ -140,7 +140,7 @@ AppDialog {
         AppComboBox {
             Layout.fillWidth: true
             label: qsTr("Keep history of new contacts")
-            model: [{ value: "forever", label: qsTr("Forever") }, { value: "30d", label: qsTr("30 days") },
+            options: [{ value: "forever", label: qsTr("Forever") }, { value: "30d", label: qsTr("30 days") },
                     { value: "session", label: qsTr("Until QRP2P locks") }]
             current: dialog.s.defaultRetention
             onChosen: value => dialog.s.set("default_retention", value)
@@ -162,10 +162,11 @@ AppDialog {
             objectName: "autoLockCombo"
             Layout.fillWidth: true
             label: qsTr("Lock when idle for")
-            model: [{ value: 5, label: qsTr("5 minutes") }, { value: 15, label: qsTr("15 minutes") },
+            options: [{ value: 5, label: qsTr("5 minutes") }, { value: 15, label: qsTr("15 minutes") },
                     { value: 30, label: qsTr("30 minutes") }, { value: 60, label: qsTr("1 hour") },
                     { value: 0, label: qsTr("Never") }]
             current: dialog.s.autoLockMinutes
+            formatValue: value => value === 0 ? qsTr("Never") : qsTr("%n minutes", "", value)
             onChosen: value => dialog.s.set("auto_lock_minutes", value)
         }
     }
@@ -218,11 +219,13 @@ AppDialog {
 
         AppText { text: qsTr("Largest file accepted"); role: "secondary" }
         AppComboBox {
+            objectName: "maxFileCombo"
             Layout.fillWidth: true
             label: qsTr("Largest file accepted")
-            model: [{ value: 100e6, label: "100 MB" }, { value: 1e9, label: "1 GB" },
+            options: [{ value: 100e6, label: "100 MB" }, { value: 1e9, label: "1 GB" },
                     { value: 4294967296, label: "4 GiB" }, { value: 17179869184, label: "16 GiB" }]
             current: dialog.s.maxFileSize
+            formatValue: value => Theme.formatBytes(value)
             onChosen: value => dialog.s.set("max_file_size", value)
         }
     }

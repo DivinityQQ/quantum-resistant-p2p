@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Final
 
 from PySide6.QtCore import (
+    QCoreApplication,
     QEvent,
     QMessageLogContext,
     QObject,
@@ -294,9 +295,14 @@ def main(argv: list[str] | None = None) -> int:
         smoke.start()
     code = app.exec()
     ticker.stop()
+    # A defined teardown: views first, then the engine, then the node; nothing is left to the
+    # order in which Python happens to free objects (a frozen build frees them differently).
+    controller.shutdown()
+    engine.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     if not bridge.stop(STOP_TIMEOUT):
         _log.warning("the node did not close within %.0f s", STOP_TIMEOUT)
-    del engine
+    del smoke
     return code
 
 

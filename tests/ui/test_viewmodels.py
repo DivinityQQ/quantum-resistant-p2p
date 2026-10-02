@@ -18,12 +18,15 @@ from qrp2p.ui.snapshots import (
     ContactChanged,
     ContactRemoved,
     ErrorInfo,
+    FileSnap,
     MessageChanged,
+    MessageSnap,
     MismatchOpened,
     MismatchSnap,
     PromptClosed,
     PromptOpened,
     PromptSnap,
+    SafetySnap,
     SessionEnded,
 )
 from qrp2p.ui.text import isolate
@@ -578,3 +581,105 @@ def test_cancel_keeps_the_saved_identity(backend: FakeBackend, app: AppControlle
     assert keep.args["repin"] is False
     backend.reply(keep)
     assert prompts.property("kind") == ""
+
+
+# -- review findings (2026-10-02) --------------------------------------------------------------------
+
+
+def test_the_first_lock_after_creating_a_vault_stays_locked(
+    backend: FakeBackend, app: AppController
+) -> None:
+    backend.lifecycle("no_vault")
+    app.createVault("Me", "long enough", "long enough")
+    unlock(backend, app, BOB)
+    backend.reply(backend.one("create_vault"))
+    # The user turns on "Remember on this device", then locks.
+    app.lock()
+    backend.lifecycle("locked")
+    backend.reply(backend.one("device_unlock_available"), True)
+    assert app.property("deviceUnlockAvailable")  # offered as a button...
+    assert backend.pending("unlock_with_device") == []  # ...but never used by itself
+
+
+def safety(contact_snap: object, groups: tuple[str, ...]) -> SafetySnap:
+    return SafetySnap(
+        peer_id=contact_snap.fingerprint.replace(" ", "")[:96],  # type: ignore[attr-defined]
+        fingerprint=contact_snap.fingerprint,  # type: ignore[attr-defined]
+        short_id=contact_snap.short_id,  # type: ignore[attr-defined]
+        groups=groups,
+    )
+
+
+def test_verification_is_bound_to_the_identity_that_was_compared(
+    backend: FakeBackend, app: AppController
+) -> None:
+    ws = unlock(backend, app, BOB)
+    conversation = selected(ws)
+    load(backend)
+    conversation.loadSafetyNumber()
+    old_request = backend.one("safety_number")
+    backend.reply(old_request, safety(BOB, ("11111",) * 12))
+    assert conversation.property("safetyNumber") == ["11111"] * 12
+    # A re-pin replaces the identity while the comparison is on screen.
+    repinned = replace(BOB, fingerprint="ffff " * 24, short_id="NEWW-0000")
+    backend.updates(ContactChanged(repinned))
+    assert conversation.property("safetyNumber") == []  # the old digits are gone at once
+    failures: list[str] = []
+    conversation.actionFailed.connect(failures.append)
+    conversation.markVerified()
+    assert backend.pending("set_trust") == []
+    assert failures == ["Compare the current safety number first."]
+    new_request = backend.one("safety_number")  # reloaded for the new identity
+    backend.reply(new_request, safety(repinned, ("22222",) * 12))
+    assert conversation.property("safetyNumber") == ["22222"] * 12
+    assert conversation.property("safetyShortId") == "NEWW-0000"
+    conversation.markVerified()
+    verify = backend.one("set_trust")
+    assert verify.args["trust"] == "verified"
+    assert verify.args["compared_peer_id"] == safety(repinned, ()).peer_id
+
+
+def test_a_late_safety_number_of_the_old_identity_is_ignored(
+    backend: FakeBackend, app: AppController
+) -> None:
+    ws = unlock(backend, app, BOB)
+    conversation = selected(ws)
+    load(backend)
+    conversation.loadSafetyNumber()
+    request = backend.one("safety_number")
+    repinned = replace(BOB, fingerprint="ffff " * 24, short_id="NEWW-0000")
+    backend.updates(ContactChanged(repinned))
+    backend.reply(request, safety(BOB, ("11111",) * 12))  # computed before the re-pin
+    assert conversation.property("safetyNumber") == []
+
+
+def test_a_file_offer_is_answered_once(backend: FakeBackend, app: AppController) -> None:
+    ws = unlock(backend, app, online(BOB))
+    conversation = selected(ws)
+    offer = MessageSnap(
+        entry_id="f" * 32,
+        kind="file",
+        direction="in",
+        time=2_000_000_000.0,
+        status="received",
+        text="",
+        glass_box=False,
+        file=FileSnap(
+            file_id="a" * 32,
+            name="notes.pdf",
+            size=10,
+            status="offered",
+            path="",
+            reason="",
+            transferred=None,
+        ),
+    )
+    load(backend, offer)
+    conversation.acceptFile("a" * 32)
+    conversation.acceptFile("a" * 32)
+    conversation.declineFile("a" * 32)
+    assert len(backend.pending("accept_file")) == 1
+    assert backend.pending("decline_file") == []
+    assert conversation.messages.rows()[0].file_busy
+    backend.reply(backend.one("accept_file"))
+    assert not conversation.messages.rows()[0].file_busy

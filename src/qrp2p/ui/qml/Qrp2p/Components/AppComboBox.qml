@@ -2,15 +2,24 @@ import QtQuick
 import QtQuick.Templates as T
 import Qrp2p.Theme
 
-// A choice from a short list of {value, label} entries. Changes are reported through
-// `activated(value)`; the shown value always follows `currentValue` from the view model.
+// A choice from a short list of {value, label} options. The shown value is always `current`
+// from the view model, also when it is not one of the presets (a value saved elsewhere, say):
+// then it appears as an extra entry, labelled by `formatValue`, rather than as the first preset.
+// Changes are reported through `chosen(value)`.
 T.ComboBox {
     id: control
 
     property string label: ""
     property var current
+    property var options: []
+    property var formatValue: value => String(value)
+
+    readonly property bool _preset: options.some(o => o.value === current)
 
     signal chosen(var value)
+
+    model: _preset || current === undefined || current === null
+        ? options : options.concat([{ value: current, label: formatValue(current) }])
 
     implicitWidth: 220
     implicitHeight: Theme.controlHeight

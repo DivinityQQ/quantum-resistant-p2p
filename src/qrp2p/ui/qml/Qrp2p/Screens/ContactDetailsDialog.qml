@@ -148,7 +148,7 @@ AppDialog {
         AppComboBox {
             Layout.fillWidth: true
             label: qsTr("Profile")
-            model: [{ value: "HYBRID-1", label: qsTr("HYBRID-1 (X-Wing, Ed25519 + ML-DSA-65)") },
+            options: [{ value: "HYBRID-1", label: qsTr("HYBRID-1 (X-Wing, Ed25519 + ML-DSA-65)") },
                     { value: "PQ-CNSA-1", label: qsTr("PQ-CNSA-1 (ML-KEM-1024, ML-DSA-87)") }]
             current: dialog.c ? dialog.c.profile : "HYBRID-1"
             onChosen: value => dialog.c.setProfile(value)
@@ -164,7 +164,7 @@ AppDialog {
         AppComboBox {
             Layout.fillWidth: true
             label: qsTr("Keep history")
-            model: [{ value: "forever", label: qsTr("Forever") },
+            options: [{ value: "forever", label: qsTr("Forever") },
                     { value: "30d", label: qsTr("30 days") },
                     { value: "session", label: qsTr("Until QRP2P locks") }]
             current: dialog.c ? dialog.c.retention : "forever"
@@ -189,9 +189,10 @@ AppDialog {
                 visible: dialog.c && dialog.c.autoAcceptFiles
                 Layout.fillWidth: true
                 label: qsTr("Largest file accepted automatically")
-                model: [{ value: 10e6, label: "10 MB" }, { value: 100e6, label: "100 MB" },
+                options: [{ value: 10e6, label: "10 MB" }, { value: 100e6, label: "100 MB" },
                         { value: 1e9, label: "1 GB" }]
                 current: dialog.c && dialog.c.autoAcceptLimit > 0 ? dialog.c.autoAcceptLimit : 100e6
+                formatValue: value => Theme.formatBytes(value)
                 onChosen: value => dialog.c.setAutoAccept(true, value)
             }
         }

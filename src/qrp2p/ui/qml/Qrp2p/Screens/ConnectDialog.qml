@@ -73,7 +73,7 @@ AppDialog {
             id: profile
             label: qsTr("Profile")
             enabled: !dialog.workspace.addressBusy
-            model: [
+            options: [
                 { value: "", label: qsTr("Default (%1)").arg(dialog.workspace.settings.defaultProfile) },
                 { value: "HYBRID-1", label: "HYBRID-1" },
                 { value: "PQ-CNSA-1", label: "PQ-CNSA-1" }

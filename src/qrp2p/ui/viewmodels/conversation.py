@@ -10,12 +10,12 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Final
 
-from PySide6.QtCore import QObject, QUrl, Signal, Slot
+from PySide6.QtCore import Property, QObject, QUrl, Signal, Slot
 from PySide6.QtGui import QDesktopServices
 
 from qrp2p.ui import ops
 from qrp2p.ui.bridge import Scope
-from qrp2p.ui.snapshots import ContactSnap, MessageChanged, MessageSnap, Reply
+from qrp2p.ui.snapshots import ContactSnap, MessageChanged, MessageSnap, Reply, SafetySnap
 from qrp2p.ui.viewmodels.listmodel import RowModel
 from qrp2p.ui.viewmodels.qt import ViewModel, constant, items, mapped, readonly
 from qrp2p.ui.viewmodels.rows import (
@@ -80,7 +80,9 @@ class Conversation(ViewModel):
         self._banner_tone = "neutral"
         self._loading = True
         self._has_earlier = False
-        self._safety: list[str] = []
+        self._safety: SafetySnap | None = None
+        self._busy_files: set[str] = set()
+        """Files with an answer (accept, decline, cancel) on its way: not actionable again."""
         self._view = self._compute_view()
         self._load(PAGE)
 
@@ -113,7 +115,17 @@ class Conversation(ViewModel):
     loading = readonly(bool, "_loading", historyChanged)
     hasEarlier = readonly(bool, "_has_earlier", historyChanged)  # noqa: N815
     draft = readonly(str, "_draft", draftChanged)
-    safetyNumber = readonly(list, "_safety", safetyNumberChanged)  # noqa: N815
+
+    def _safety_groups(self) -> list[str]:
+        return list(self._safety.groups) if self._safety is not None else []
+
+    def _safety_short_id(self) -> str:
+        return self._safety.short_id if self._safety is not None else ""
+
+    safetyNumber = Property(list, _safety_groups, notify=safetyNumberChanged)  # noqa: N815
+    """The digits, only while they belong to the identity pinned now (else empty)."""
+    safetyShortId = Property(str, _safety_short_id, notify=safetyNumberChanged)  # noqa: N815
+    """The ID of the identity the shown digits were computed for."""
 
     @property
     def contact(self) -> ContactSnap:
@@ -128,9 +140,15 @@ class Conversation(ViewModel):
     # -- updates from the workspace --------------------------------------------------------------
 
     def set_contact(self, contact: ContactSnap) -> None:
-        """The contact changed (name, trust, session…)."""
+        """The contact changed (name, trust, session, or its pinned identity after a re-pin)."""
         opened = contact.session is not None and self._contact.session is None
+        repinned = contact.fingerprint != self._contact.fingerprint
         self._contact = contact
+        if repinned and self._safety is not None:
+            # The digits belonged to the old identity: never show or verify them for the new one.
+            self._safety = None
+            self.safetyNumberChanged.emit()
+            self.loadSafetyNumber()
         if opened:
             self._connecting = ""
             self._closing = False
@@ -220,24 +238,40 @@ class Conversation(ViewModel):
     @Slot(str)
     def acceptFile(self, file_id: str) -> None:  # noqa: N802
         """Accept an offered file into the downloads folder."""
-        self._request(ops.accept_file(file_id), "Could not accept the file")
+        self._file_request(file_id, ops.accept_file(file_id), "Could not accept the file")
 
     @Slot(str, str)
     def acceptFileTo(self, file_id: str, folder_url: str) -> None:  # noqa: N802
         """Accept an offered file into a chosen folder."""
         folder = _local_path(folder_url)
         if folder:
-            self._request(ops.accept_file(file_id, folder), "Could not accept the file")
+            op = ops.accept_file(file_id, folder)
+            self._file_request(file_id, op, "Could not accept the file")
 
     @Slot(str)
     def declineFile(self, file_id: str) -> None:  # noqa: N802
         """Decline an offered file."""
-        self._request(ops.decline_file(file_id), "Could not decline the file")
+        self._file_request(file_id, ops.decline_file(file_id), "Could not decline the file")
 
     @Slot(str)
     def cancelFile(self, file_id: str) -> None:  # noqa: N802
         """Cancel a transfer."""
-        self._request(ops.cancel_file(file_id), "Could not cancel the transfer")
+        self._file_request(file_id, ops.cancel_file(file_id), "Could not cancel the transfer")
+
+    def _file_request(self, file_id: str, op: ops.Op, failure: str) -> None:
+        """One answer per file at a time: its actions stay disabled until the node replies."""
+        if file_id in self._busy_files:
+            return
+
+        def done(reply: Reply) -> None:
+            self._busy_files.discard(file_id)
+            self._rebuild()
+            if reply.error is not None:
+                self.actionFailed.emit(f"{failure}: {reply.error.message}")
+
+        if self._scope.request(op, done):
+            self._busy_files.add(file_id)
+            self._rebuild()
 
     @Slot(str)
     def showFile(self, entry_id: str) -> None:  # noqa: N802
@@ -300,16 +334,27 @@ class Conversation(ViewModel):
         """Fetch the 60-digit safety number (12 groups of five)."""
 
         def done(reply: Reply) -> None:
-            if reply.error is None:
-                self._safety = items(reply.value, str)
+            snap = reply.value
+            # Only digits for the identity pinned now (a re-pin may have overtaken the request).
+            if isinstance(snap, SafetySnap) and snap.fingerprint == self._contact.fingerprint:
+                self._safety = snap
                 self.safetyNumberChanged.emit()
 
         self._scope.request(ops.safety_number(self._contact.contact_id), done)
 
     @Slot()
     def markVerified(self) -> None:  # noqa: N802
-        """The user compared the safety numbers out of band and they match."""
-        self._request(ops.set_trust(self._contact.contact_id, "verified"), "Could not verify")
+        """The user compared the shown safety number out of band and it matched.
+
+        The request names the identity those digits belong to; the node refuses if the contact
+        was re-pinned in between (DESIGN §5.3).
+        """
+        safety = self._safety
+        if safety is None or safety.fingerprint != self._contact.fingerprint:
+            self.actionFailed.emit("Compare the current safety number first.")
+            return
+        op = ops.set_trust(self._contact.contact_id, "verified", compared_peer_id=safety.peer_id)
+        self._request(op, "Could not verify")
 
     @Slot()
     def unverify(self) -> None:
@@ -463,7 +508,13 @@ class Conversation(ViewModel):
             self._messages[at] = message
 
     def _rebuild(self) -> None:
-        rows = message_rows(self._messages, self._progress, self._contact.name, self._formats)
+        rows = message_rows(
+            self._messages,
+            self._progress,
+            self._contact.name,
+            self._formats,
+            busy_files=frozenset(self._busy_files),
+        )
         self.messages.sync(rows)
 
 

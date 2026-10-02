@@ -170,6 +170,17 @@ class MismatchSnap:
     actual_fingerprint: str
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SafetySnap:
+    """A safety number and the exact identity it was computed for (DESIGN §5.2)."""
+
+    peer_id: str
+    """The contact's pinned peer ID (hex) when the number was computed."""
+    fingerprint: str
+    short_id: str
+    groups: tuple[str, ...]
+
+
 @dataclass(frozen=True, slots=True)
 class ActivitySnap:
     """When each conversation last had an entry (wall-clock seconds), by contact ID."""

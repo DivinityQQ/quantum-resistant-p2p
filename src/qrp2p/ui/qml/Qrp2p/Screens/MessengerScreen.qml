@@ -11,7 +11,6 @@ Item {
     required property var app
     required property var workspace
 
-    signal notify(string text)
     signal attention()
 
     property bool inspectorOpen: false
@@ -26,7 +25,7 @@ Item {
 
     Connections {
         target: screen.workspace
-        function onNoticePosted(text) { screen.notify(text) }
+        function onNoticePosted(text) { toasts.show(text) }
         function onIncomingMessage(name) { screen.attention() }
         function onVerifyRequested(contactId) { verifyDialog.open() }
     }
@@ -175,6 +174,13 @@ Item {
         id: shortcutsDialog
         objectName: "shortcutsDialog"
         devPreview: screen.app.devPreview
+    }
+
+    // Notices name contacts, so they live and die with the unlocked workspace: a lock takes
+    // them away with everything else (UI_DESIGN §6.1).
+    ToastHost {
+        id: toasts
+        objectName: "toasts"
     }
 
     Shortcut {

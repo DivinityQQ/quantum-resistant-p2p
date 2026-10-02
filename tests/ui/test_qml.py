@@ -25,6 +25,7 @@ from qrp2p.ui.snapshots import (
     MessageChanged,
     MismatchOpened,
     MismatchSnap,
+    NoticePosted,
     PromptOpened,
     PromptSnap,
 )
@@ -270,6 +271,31 @@ def test_settings_show_what_the_vault_holds(ui: Ui) -> None:
     settle()
     combo = ui.item("autoLockCombo")
     assert combo.property("displayText") == "15 minutes"
+
+
+def test_settings_outside_the_presets_show_their_stored_value(ui: Ui) -> None:
+    ui.unlock(BOB, settings=replace(SETTINGS, auto_lock_minutes=120, max_file_size=2_500_000_000))
+    dialog = ui.window.findChild(QObject, "settingsDialog")
+    assert dialog is not None
+    dialog.setProperty("visible", True)
+    settle()
+    assert ui.item("autoLockCombo").property("displayText") == "120 minutes"
+    assert ui.item("maxFileCombo").property("displayText") in {"2.5 GB", "2,5 GB"}
+
+
+def test_notices_do_not_outlive_the_lock(ui: Ui) -> None:
+    ui.unlock(BOB)
+    ui.backend.updates(NoticePosted("Added Bob. Compare safety numbers to verify them."))
+    ui.until(lambda: "Added Bob" in str(ui.item("toasts").property("current")))
+    ui.key(Qt.Key.Key_L, Qt.KeyboardModifier.ControlModifier)
+    flush_deletes()
+    assert ui.find("toasts") is None
+    texts = [
+        str(item.property("text"))
+        for item in items(ui.window)
+        if item.metaObject().indexOfProperty("text") >= 0
+    ]
+    assert not [t for t in texts if "Bob" in t]
 
 
 def test_a_contact_request_is_answered_from_its_dialog(ui: Ui) -> None:

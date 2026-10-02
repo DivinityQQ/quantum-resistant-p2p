@@ -14,7 +14,8 @@ from typing import Final
 from qrp2p.services.models import TEXT_SCALES, Appearance, Retention, TrustState
 from qrp2p.services.node import Node, NodeError, profile_by_name
 from qrp2p.ui.host import Op, network_snap
-from qrp2p.ui.snapshots import ID_HEX_LEN, ActivitySnap, message_snap, settings_snap
+from qrp2p.ui.snapshots import ID_HEX_LEN, ActivitySnap, SafetySnap, message_snap, settings_snap
+from qrp2p.ui.text import fingerprint
 
 HISTORY_PAGE: Final = 300
 """History entries a conversation loads at first; more on request."""
@@ -263,19 +264,31 @@ def resolve_mismatch(mismatch_id: int, *, repin: bool) -> Op:
 
 
 def safety_number(contact_id: str) -> Op:
-    """The 60-digit safety number with a contact, as 12 groups of five."""
+    """The 60-digit safety number with a contact, bound to the identity it belongs to."""
 
-    async def op(node: Node) -> tuple[str, ...]:
-        return node.safety_number(_id(contact_id))
+    async def op(node: Node) -> SafetySnap:  # an Op is a coroutine function
+        peer_id, groups = node.safety_number_of(_id(contact_id))
+        contact = node.contact(_id(contact_id))
+        return SafetySnap(
+            peer_id=peer_id.hex(),
+            fingerprint=fingerprint(peer_id),
+            short_id=contact.short_id,
+            groups=groups,
+        )
 
     return op
 
 
-def set_trust(contact_id: str, trust: str) -> Op:
-    """Mark verified, back to pinned, or blocked."""
+def set_trust(contact_id: str, trust: str, compared_peer_id: str = "") -> Op:
+    """Mark verified, back to pinned, or blocked.
+
+    Verifying names the peer ID whose safety number the user compared; the node refuses if the
+    contact is pinned to another identity by then.
+    """
 
     async def op(node: Node) -> None:
-        await node.set_trust(_id(contact_id), TrustState(trust))
+        compared = bytes.fromhex(compared_peer_id) if compared_peer_id else None
+        await node.set_trust(_id(contact_id), TrustState(trust), compared_peer_id=compared)
 
     return op
 
