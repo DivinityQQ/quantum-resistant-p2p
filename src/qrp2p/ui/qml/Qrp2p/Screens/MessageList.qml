@@ -12,6 +12,9 @@ ListView {
     property int columnWidth: 600
     property bool following: true
     property int unseen: 0
+    // The newest entry seen so far: only rows added after it are new (loading earlier history
+    // adds rows at the top, which are not).
+    property string lastEntry: ""
 
     signal saveTo(string fileId)
     signal verify()
@@ -68,9 +71,12 @@ ListView {
     }
 
     onCountChanged: {
+        const last = count > 0 ? model.get(count - 1).entryId : ""
+        const appended = last !== lastEntry && lastEntry !== ""
+        lastEntry = last
         if (following)
             Qt.callLater(positionViewAtEnd)
-        else
+        else if (appended)
             unseen += 1
     }
     onContentHeightChanged: if (following) Qt.callLater(positionViewAtEnd)

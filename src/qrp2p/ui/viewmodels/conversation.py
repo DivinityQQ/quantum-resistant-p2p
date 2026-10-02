@@ -48,7 +48,6 @@ class Conversation(ViewModel):
     historyChanged = Signal()  # noqa: N815
     safetyNumberChanged = Signal()  # noqa: N815
     draftChanged = Signal()  # noqa: N815
-    busyChanged = Signal()  # noqa: N815
     actionFailed = Signal(str)  # noqa: N815
     """A request failed; the text is for the user."""
     draftRestored = Signal(str)  # noqa: N815
@@ -74,7 +73,6 @@ class Conversation(ViewModel):
         self._messages: list[MessageSnap] = []
         self._progress: dict[str, int] = {}
         self._held: list[MessageChanged] | None = []
-        self._loaded_limit = PAGE
         self.messages: RowModel[MessageRow] = RowModel(MessageRow, lambda r: r.entry_id, self)
         self._draft = ""
         self._banner = ""
@@ -83,7 +81,6 @@ class Conversation(ViewModel):
         self._loading = True
         self._has_earlier = False
         self._safety: list[str] = []
-        self._busy = ""
         self._view = self._compute_view()
         self._load(PAGE)
 
@@ -117,7 +114,6 @@ class Conversation(ViewModel):
     hasEarlier = readonly(bool, "_has_earlier", historyChanged)  # noqa: N815
     draft = readonly(str, "_draft", draftChanged)
     safetyNumber = readonly(list, "_safety", safetyNumberChanged)  # noqa: N815
-    busy = readonly(str, "_busy", busyChanged)
 
     @property
     def contact(self) -> ContactSnap:
@@ -423,7 +419,6 @@ class Conversation(ViewModel):
 
     def _load(self, limit: int) -> None:
         self._held = []
-        self._loaded_limit = limit
         self._set_loading(loading=True)
 
         def done(reply: Reply) -> None:

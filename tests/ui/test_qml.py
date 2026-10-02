@@ -5,7 +5,8 @@ Any Qt warning (a QML error, a binding loop, a broken anchor) fails these tests 
 """
 
 import re
-from collections.abc import Iterator
+import time
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, replace
 
 import pytest
@@ -50,6 +51,13 @@ class Ui:
         settle()
         self.window.grabWindow()
         settle()
+
+    def until(self, condition: Callable[[], bool], timeout: float = 5.0) -> None:
+        """Process events until ``condition`` holds (deferred calls run a few passes later)."""
+        deadline = time.monotonic() + timeout
+        while not condition():
+            assert time.monotonic() < deadline, "condition not reached"
+            QTest.qWait(10)
 
     def item(self, name: str) -> QQuickItem:
         found = self.find(name)
@@ -279,8 +287,14 @@ def test_a_contact_request_is_answered_from_its_dialog(ui: Ui) -> None:
     ui.backend.updates(PromptOpened(prompt))
     dialog = ui.window.findChild(QObject, "promptDialog")
     assert dialog is not None
-    assert dialog.property("opened") or dialog.property("visible")
-    ui.type("Carol")  # the name field has focus
+    assert dialog.property("visible")
+
+    def name_field_has_focus() -> bool:
+        focused = ui.window.activeFocusItem()
+        return focused is not None and focused.metaObject().indexOfProperty("echoMode") >= 0
+
+    ui.until(name_field_has_focus)
+    ui.type("Carol")
     ui.click("acceptContact")
     request = ui.backend.one("answer_prompt")
     assert request.args == {"prompt_id": 4, "accept": True, "name": "Carol"}
@@ -298,10 +312,12 @@ def test_a_key_mismatch_defaults_to_cancel(ui: Ui) -> None:
         actual_fingerprint="cccc dddd",
     )
     ui.backend.updates(MismatchOpened(mismatch))
-    settle()
-    focused = ui.window.activeFocusItem()
-    assert focused is not None
-    assert focused.objectName() == "keepIdentity"
+
+    def cancel_has_focus() -> bool:
+        focused = ui.window.activeFocusItem()
+        return focused is not None and focused.objectName() == "keepIdentity"
+
+    ui.until(cancel_has_focus)
     ui.click("startRepin")
     assert ui.backend.pending("resolve_mismatch") == []  # a re-pin needs its second step
     assert not ui.item("startRepin").isVisible()

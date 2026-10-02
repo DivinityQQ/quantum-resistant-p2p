@@ -96,6 +96,7 @@ Item {
                     focus: true
                     KeyNavigation.tab: password
                     onAccepted: password.forceActiveFocus()
+                    Component.onCompleted: forceActiveFocus()
                 }
                 AppText {
                     Layout.fillWidth: true
