@@ -94,7 +94,7 @@ def nuitka_command(out: Path) -> list[str]:
     elif sys.platform == "darwin":
         command += [
             "--macos-app-name=QRP2P",
-            f"--macos-app-icon={resources / 'app-icon.png'}",
+            f"--macos-app-icon={resources / 'app-icon.icns'}",
             f"--macos-app-version={release}",
         ]
     # Linux: the window icon is set at run time; desktop integration comes with the AppImage.

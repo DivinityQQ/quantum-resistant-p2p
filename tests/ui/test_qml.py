@@ -16,7 +16,7 @@ from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent, QQmlEngine, QQml
 from PySide6.QtQuick import QQuickItem, QQuickWindow
 from PySide6.QtTest import QTest
 
-from qrp2p.ui.app import QML, create_engine
+from qrp2p.ui.app import QML, create_engine, monospace_family
 from qrp2p.ui.icons import IconProvider, render
 from qrp2p.ui.snapshots import (
     ActivitySnap,
@@ -103,7 +103,7 @@ def flush_deletes() -> None:
 def ui(qapp: QCoreApplication) -> Iterator[Ui]:  # noqa: ARG001
     backend = FakeBackend()
     controller = AppController(backend.bridge, data_dir="/data", dev_preview=True)
-    engine = create_engine(controller, "monospace")
+    engine = create_engine(controller, monospace_family())
     (root,) = engine.rootObjects()
     assert isinstance(root, QQuickWindow)
     root.resize(1100, 760)

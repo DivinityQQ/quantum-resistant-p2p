@@ -6,13 +6,19 @@ installation (a missing system library) is an error, never a silent skip.
 """
 
 import os
+import sys
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
 os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
+if sys.platform == "win32":  # the offscreen platform looks for fonts in Qt's folder, not Windows'
+    os.environ.setdefault(
+        "QT_QPA_FONTDIR", str(Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts")
+    )
 
 pytest.importorskip("PySide6", reason="the desktop app needs the gui extra")
 

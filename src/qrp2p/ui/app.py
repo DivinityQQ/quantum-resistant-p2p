@@ -197,6 +197,26 @@ def configure_qt() -> None:
     )
 
 
+MONOSPACE_FALLBACKS: Final = (
+    "Menlo", "SF Mono", "Consolas", "Cascadia Mono", "DejaVu Sans Mono", "Noto Sans Mono",
+    "Liberation Mono", "Ubuntu Mono", "Courier New",
+)  # fmt: skip
+
+
+def monospace_family() -> str:
+    """An installed monospace family for bytes, IDs and digits, or "" for the default font.
+
+    Never an alias such as "monospace": Qt resolves a missing family by scanning every font
+    (and warns about the cost). Only names in the font database are returned.
+    """
+    installed = set(QFontDatabase.families())
+    system = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont).family()
+    for family in (system, *MONOSPACE_FALLBACKS):
+        if family in installed:
+            return family
+    return ""
+
+
 def load_fonts(app: QGuiApplication) -> str:
     """Register the bundled Inter; returns the monospace family for bytes and digits."""
     for path in sorted(FONTS.glob("*.ttf")):
@@ -206,7 +226,7 @@ def load_fonts(app: QGuiApplication) -> str:
     font.setPixelSize(15)
     font.setHintingPreference(QFont.HintingPreference.PreferVerticalHinting)
     app.setFont(font)
-    return QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont).family()
+    return monospace_family()
 
 
 def create_engine(

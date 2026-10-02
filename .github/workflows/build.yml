@@ -22,6 +22,9 @@ env:
   UV_VERSION: "0.12.19"
   PYTHON_VERSION: "3.14"
   NUITKA_VERSION: "4.2.2"
+  # appimagetool for the Linux AppImage; tag and SHA-256 pinned together.
+  APPIMAGETOOL_VERSION: "1.9.1"
+  APPIMAGETOOL_SHA256: "ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0"
 
 jobs:
   build:
@@ -62,28 +65,42 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
+          # Qt's offscreen platform looks for fonts in its own folder; on Windows, use the system's.
+          if [ "$RUNNER_OS" = "Windows" ]; then export QT_QPA_FONTDIR='C:/Windows/Fonts'; fi
           case "$RUNNER_OS" in
             Windows) app=dist/qrp2p_app.dist/qrp2p-desktop.exe ;;
             macOS) app=dist/qrp2p_app.app/Contents/MacOS/qrp2p-desktop ;;
             *) app=dist/qrp2p_app.dist/qrp2p-desktop ;;
           esac
           "$app" --data-dir smoke-data --no-mdns --smoke-test "dist/first-screen-${RUNNER_OS}.png"
-      - name: Pack
+      - name: Pack (AppImage, disk image or zip; all unsigned)
         run: |
-          cd dist
           name="qrp2p-${RUNNER_OS}-${RUNNER_ARCH}"
-          if [ "$RUNNER_OS" = "macOS" ]; then
-            ditto -c -k --keepParent qrp2p_app.app "$name.zip"
-          elif [ "$RUNNER_OS" = "Windows" ]; then
-            7z a "$name.zip" qrp2p_app.dist
-          else
-            tar czf "$name.tar.gz" qrp2p_app.dist
-          fi
+          case "$RUNNER_OS" in
+            macOS)
+              hdiutil create -volname QRP2P -srcfolder dist/qrp2p_app.app -ov -format UDZO "dist/$name.dmg"
+              ;;
+            Windows)
+              7z a "dist/$name.zip" ./dist/qrp2p_app.dist
+              ;;
+            *)
+              curl -fsSL -o appimagetool "https://github.com/AppImage/appimagetool/releases/download/${APPIMAGETOOL_VERSION}/appimagetool-x86_64.AppImage"
+              echo "${APPIMAGETOOL_SHA256}  appimagetool" | sha256sum -c -
+              chmod +x appimagetool
+              mkdir -p tools-bin
+              printf '#!/bin/sh\nexec "%s/appimagetool" --appimage-extract-and-run "$@"\n' "$PWD" > tools-bin/appimagetool
+              chmod +x tools-bin/appimagetool
+              PATH="$PWD/tools-bin:$PATH" packaging/linux/make_appimage.sh dist/qrp2p_app.dist "dist/$name.AppImage"
+              QT_QPA_PLATFORM=offscreen "dist/$name.AppImage" --appimage-extract-and-run \
+                --data-dir appimage-smoke --no-mdns --smoke-test dist/first-screen-AppImage.png
+              ;;
+          esac
       - uses: actions/upload-artifact@v7
         with:
           name: qrp2p-${{ runner.os }}-${{ runner.arch }}
           path: |
+            dist/*.AppImage
+            dist/*.dmg
             dist/*.zip
-            dist/*.tar.gz
             dist/first-screen-*.png
           retention-days: 14

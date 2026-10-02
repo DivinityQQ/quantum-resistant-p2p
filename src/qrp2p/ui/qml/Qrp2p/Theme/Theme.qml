@@ -10,7 +10,7 @@ QtObject {
     property string preference: "system"   // system | light | dark
     property bool reducedMotion: false
     property int textScale: 100            // percent
-    property string monoFamily: "monospace"
+    property string monoFamily: ""          // an installed family, set by Main.qml from Python
 
     readonly property bool dark: preference === "dark"
         || (preference === "system" && Qt.styleHints.colorScheme === Qt.ColorScheme.Dark)

@@ -31,13 +31,13 @@ apps and their screenshots as artifacts for 14 days. They are
 them in *System Settings → Privacy & Security*. That is fine for testing (the M3 gate), not for
 release.
 
-## Installers (planned)
+## Installers
 
-| OS | Format | Tool |
-| --- | --- | --- |
-| Windows | MSIX (or MSI) | `makeappx` / WiX from the `.dist` folder |
-| macOS | `.dmg` with the `.app` | `hdiutil`, after signing and notarisation |
-| Linux | AppImage (Flatpak later) | `appimagetool` from the `.dist` folder, plus a `.desktop` file |
+| OS | Format | Tool | State |
+| --- | --- | --- | --- |
+| Linux | AppImage (Flatpak later) | [`linux/make_appimage.sh`](linux/make_appimage.sh) with `appimagetool` | Built by `build.yml`, smoke-tested |
+| macOS | `.dmg` with the `.app` | `hdiutil` | Built by `build.yml`; notarisation needs signing |
+| Windows | zip now; MSIX or MSI later | `makeappx` / WiX from the `.dist` folder | MSIX cannot install unsigned, so it waits for signing |
 
 ## Code signing plan
 

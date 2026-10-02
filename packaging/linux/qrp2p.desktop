@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=QRP2P
+GenericName=LAN messenger
+Comment=LAN messenger with a hybrid post-quantum channel
+Exec=qrp2p-desktop %U
+Icon=qrp2p
+Terminal=false
+Categories=Network;InstantMessaging;Education;
+StartupWMClass=qrp2p
