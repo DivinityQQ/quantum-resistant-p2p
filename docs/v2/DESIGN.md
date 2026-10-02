@@ -2,8 +2,8 @@
 
 | | |
 | --- | --- |
-| Version | 1.3 |
-| Date | 2026-09-28 |
+| Version | 1.4 |
+| Date | 2026-10-02 |
 | Status | Approved for implementation |
 | Scope | Complete rewrite of `quantum-resistant-p2p` (v1) |
 
@@ -828,33 +828,46 @@ SHA-3 and SHAKE come from the standard library's `hashlib`.
 
 ## 14. User interface
 
+The agreed visual direction and engineering guidance are in [UI_DESIGN.md](UI_DESIGN.md), with
+light/dark mockups, semantic tokens, responsive layouts, interaction contracts and M3–M5
+acceptance criteria. Revision 1.4 adopts the minimal messenger and expanding Inspector workspace;
+it changes presentation, not the protocol or visibility rules. Mockups are illustrative, not
+protocol fixtures or evidence that the GUI is implemented.
+
 ### 14.1 Screens
 
 | Screen | Content |
 | --- | --- |
 | Onboarding / unlock | Create the vault (with a note on why key derivation takes about a second), generate the identity with its sizes shown |
-| Main window | Left: contacts (name, short ID, trust shield, online dot, unread count) and *Nearby* from mDNS. Centre: chat with sent/delivered states and file cards with real progress. Right: the Inspector drawer (Ctrl+I) with Timeline, Messages, Keys and Security tabs |
+| Main window | Compact recent-contact strip and full contact chooser (name, short ID, trust shield, availability, unread count), with separate *Nearby* from mDNS and manual connect. Spacious chat with sent/delivered states and file items with real progress. Inspector (Ctrl+I / Cmd+I) reflows the window into a resizable workspace, retaining chat where space permits; Timeline, Messages, Keys and Security tabs share selection. Narrow windows show one principal pane at a time |
 | Contact request / glass-box prompt | Authenticated identity, short ID, trust state, the decision |
 | Verify contact | Safety-number grid, *Mark as verified* |
 | Key mismatch | Old vs new fingerprint, what a MITM is, *Cancel* / *Re-pin* |
 | Labs hub | Solo lab, Attack Lab, weakened engines, Algorithm Lab, lessons with progress |
-| Settings | Default profile (overridable per contact), display-name visibility, retention, auto-lock, auto-accept (off by default), keychain opt-in, port |
+| Settings | System/Light/Dark appearance, reduced motion, default profile (overridable per contact), display-name visibility, retention, auto-lock, auto-accept (off by default), keychain opt-in, port |
 
 ### 14.2 Visual language
 
 | Tier | Look |
 | --- | --- |
-| Normal session | Neutral surfaces, one accent colour, grey or green trust shield |
+| Normal session | Minimal neutral surfaces and monochrome primary actions, restrained selection accent, grey or green trust shield with explicit trust label; Inspector identifies Public trace |
 | Glass-box | Amber frame, GLASS-BOX tag on every message, amber banner; EXPOSED stamp on recordings |
 | Lab | Violet-tinted canvas, LAB chip, generated avatars for lab identities |
 | Danger | Red: key mismatch, weakened engines, failed verification, successful lab attacks |
 
 Colour is never the only signal: every state also has a text label and an icon.
 
+All modes share typography and controls in light and dark. Rich evidence is exposed through
+selection and inspection, not decorative security scores. Opening Inspector does not change
+the session's visibility tier. Pause following freezes the display, not networking; protocol
+stepping and intervention belong to the lab. Unavailable values and evicted trace events are
+identified explicitly rather than replaced with invented data.
+
 ### 14.3 Design system and performance
 
-- **Design system:** custom QML components on Qt Quick Controls' *Basic* style, so the app looks identical on every OS, with light and dark themes following the OS. Inter as the bundled typeface (SIL OFL) and Lucide icons (ISC licence). Animations of 150–250 ms, only for state changes with meaning.
+- **Design system:** custom QML components on Qt Quick Controls' *Basic* style, with the shared visual language in UI_DESIGN.md and platform window behavior, shortcuts and native dialogs where available. Light and dark themes follow the OS by default, with explicit overrides; semantic color/type/spacing tokens are shared by every screen. Inter as the bundled typeface (SIL OFL) and Lucide icons (ISC licence). Animations of 150–250 ms, only for state changes with meaning; immediate transitions under reduced motion.
 - **Performance:** virtualised lists, hex views that render only visible rows, trace events batched at 30 Hz or less, and no crypto or disk work on the UI thread.
+- **Accessibility:** keyboard access and semantic roles/actions for custom controls; textual alternatives to protocol graphs; text scaling, readable focus and contrast in both themes. UI_DESIGN.md defines contrast targets and reflow guidance.
 - Peer-supplied text is always rendered as plain text, never as rich text or HTML.
 
 ### 14.4 Command line

@@ -9,6 +9,8 @@ history at the tag `v1-final`; none of its code is in the tree. **Do not build o
 1. `docs/v2/DESIGN.md` — the normative spec (MUST/SHOULD). It is the source of truth.
 2. `docs/v2/IMPLEMENTATION_PLAN.md` — phases M0–M6, task tables and gates, and where work stands.
 3. `docs/v2/research/VERIFIED_FACTS.md` — library behaviour the design relies on, with evidence.
+4. For desktop or learning-layer work, `docs/v2/UI_DESIGN.md` — the agreed visual language,
+   light/dark mockups, interaction contracts and implementation acceptance criteria.
 
 ## What this project is
 

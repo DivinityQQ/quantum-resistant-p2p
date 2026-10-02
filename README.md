@@ -19,6 +19,8 @@ can **watch, pause and attack that exact channel**.
 
 - [`docs/v2/DESIGN.md`](docs/v2/DESIGN.md) — the normative specification.
 - [`docs/v2/IMPLEMENTATION_PLAN.md`](docs/v2/IMPLEMENTATION_PLAN.md) — phases, tasks and status.
+- [`docs/v2/UI_DESIGN.md`](docs/v2/UI_DESIGN.md) — desktop visual language, light/dark mockups,
+  interaction contracts and implementation guidance for M3–M5.
 - [`docs/v2/research/VERIFIED_FACTS.md`](docs/v2/research/VERIFIED_FACTS.md) — library behaviour
   the design relies on, with evidence.
 

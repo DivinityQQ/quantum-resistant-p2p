@@ -268,9 +268,14 @@ design (DESIGN 1.3):
 
 ## M3 — Desktop app
 
+- Follow [UI_DESIGN.md](UI_DESIGN.md), agreed 2026-10-02: minimal messenger, shared light/dark
+  design system, compact contact strip/full chooser, and an expanding Inspector workspace.
+  Its images are design references; begin implementation with real clickable QML prototypes.
 - The bridge thread model (DESIGN §12), view models, QML design system (DESIGN §14.3).
-- Screens from DESIGN §14.1 except the labs; plain-text rendering of peer data; key-mismatch
-  flow; contact requests; verification.
+- Messenger, unlock, contacts/discovery/manual connect, settings and prompts from DESIGN §14.1;
+  plain-text rendering of peer data; key-mismatch flow; contact requests; verification. Prepare
+  the Inspector layout in development previews; populated Inspector and labs remain M4/M5.
+  Do not ship fabricated traces or working-looking placeholder learning controls.
 - `pyside6-deploy` builds and installers per OS; code-signing plan.
 - Start with clickable QML mock-ups of the main window and prompts; agree the look before
   wiring logic.
@@ -278,6 +283,10 @@ design (DESIGN 1.3):
 **Gate:** daily use on 3 OSes.
 
 ## M4 — Learning layer I
+
+Reuse the shell, theme and evidence components from [UI_DESIGN.md](UI_DESIGN.md). Connect
+timeline/field/byte/key selection; handle ring eviction, local clock origin and bounded pause
+following explicitly. Live display pause must not pause networking.
 
 Inspector (timeline, dissector, key-schedule explorer, security panel); solo lab nodes;
 step-through; `RecordingProvider`, `ReplayProvider` and fork; `RevealingProvider` with the
@@ -287,6 +296,9 @@ fuzzing.
 **Gate:** canary leak test green end to end, including view-model strings and saved files.
 
 ## M5 — Learning layer II
+
+Follow [UI_DESIGN.md](UI_DESIGN.md) for scenario-specific evidence, persistent LAB/WEAKENED
+ENGINE indications, honest measured/estimated results and controller-driven terminal actions.
 
 Attack Lab scenarios 1–11 (Mallory transport hooks; the simulated quantum oracle clearly
 labelled); weakened engines in `lab/weakened/`, with import rules and a runtime check; the
@@ -305,13 +317,14 @@ address findings; signed installers; publish.
 
 | Topic | Options | Phase |
 | --- | --- | --- |
-| Visual identity (palette, icon, name styling) | Mock-ups first | M3 |
+| Application icon and final wordmark | Follow the minimal direction; finalize licensed assets during QML review | M3 |
 | Code-signing identities (Apple, Windows) | Buy when first installer ships | M3/M6 |
 
 ### Decisions taken
 
 | Topic | Decision | When |
 | --- | --- | --- |
+| Desktop visual language | Minimal messenger; horizontal recent contacts plus full chooser; Inspector expands the same window. Shared Inter/Lucide/Basic components, semantic light/dark tokens and explicit visibility tiers. See [UI_DESIGN.md](UI_DESIGN.md); token geometry is refined through actual QML review | 2026-10-02, before M3 |
 | Vendoring the X-Wing vectors | Vendored with attribution and a SHA-256 pin (`tests/vectors/SOURCES.md`); IETF code components are Simplified-BSD licensed | M0 |
 | liboqs tag and OSes | 0.16.0 (commit `5a1a854b`), all 3 OSes, built with `OQS_DIST_BUILD=ON`, `OQS_USE_OPENSSL=OFF`; revisit if the CI job fails on an OS | M0 |
 | Minimum Python | 3.14 only (owner's decision: no reason to carry 3.13) | M0 |
@@ -325,6 +338,8 @@ Suggested first prompt:
 
 > Read `CLAUDE.md`, `docs/v2/DESIGN.md` and `docs/v2/IMPLEMENTATION_PLAN.md`. Continue with the
 > first unfinished phase. Run the checks listed in CLAUDE.md before each commit.
+
+For desktop or learning-layer work, also read `docs/v2/UI_DESIGN.md` and its asset notes.
 
 Before starting M3 locally:
 
