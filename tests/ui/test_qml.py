@@ -1,7 +1,7 @@
 """The real QML window, offscreen, driven by keyboard and mouse against a fake services side.
 
-Any Qt warning (a QML error, a binding loop, a broken anchor) fails these tests (pytest-qt's
-``qt_log_level_fail``), so they also guard every screen they open against regressions.
+Any Qt warning (a QML error, a binding loop, a broken anchor) fails these tests (see
+conftest.py), so they also guard every screen they open against regressions.
 """
 
 import re
