@@ -500,6 +500,7 @@ class Node:
 
         Raises:
             WrongPasswordError: ``old`` is wrong.
+            PasswordChangeCleanupError: The new password is active but cleanup failed.
         """
         self._require_unlocked()
         self.touch()
@@ -507,7 +508,13 @@ class Node:
         if await self._db(lambda: self._vault.device_unlock_enabled):
             with contextlib.suppress(KeychainUnavailableError):  # then device unlock is dropped
                 keychain = self._keychain_factory()
-        await self._db(self._vault.change_password, old, new, keychain)
+        try:
+            await self._db(self._vault.change_password, old, new, keychain)
+        finally:
+            if not await self._db(lambda: self._vault.is_unlocked):
+                # An uncertain rotation commit closes the vault. Keep networking and the
+                # frontend lifecycle consistent with that fail-closed storage state.
+                await self.lock()
 
     async def device_unlock_enabled(self) -> bool:
         """Whether "Remember on this device" is on."""

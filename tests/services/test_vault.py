@@ -35,6 +35,7 @@ from qrp2p.services.vault import (
     KdfParams,
     KdfPolicy,
     NoVaultError,
+    PasswordChangeCleanupError,
     Vault,
     VaultCorruptError,
     VaultExistsError,
@@ -760,8 +761,115 @@ def test_a_failed_rekey_leaves_the_vault_as_it_was(
         vault.change_password("correct horse", "new")
     monkeypatch.undo()
     assert [e.text for e in vault.history(bob.conv_id)] == ["kept"]  # old keys still work
-    assert not (vault.directory / VAULT_FILE_NEW).exists()
-    attempt(reopen_path(vault), "correct horse")
+    assert (vault.directory / VAULT_FILE_NEW).exists()
+    path = reopen_path(vault)
+    attempt(path, "correct horse")
+    assert not (path / VAULT_FILE_NEW).exists()
+
+
+@pytest.mark.parametrize("statement", ["VACUUM", "PRAGMA wal_checkpoint(TRUNCATE)"])
+def test_password_change_cleanup_failure_preserves_committed_vault(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, statement: str
+) -> None:
+    real_connect = sqlite3.connect
+    fail = False
+
+    class CleanupFailure(sqlite3.Connection):
+        def execute(self, sql: str, parameters: Any = ()) -> sqlite3.Cursor:  # noqa: ANN401
+            if fail and sql == statement:
+                msg = "injected cleanup failure"
+                raise sqlite3.OperationalError(msg)
+            return super().execute(sql, parameters)
+
+    def connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:  # noqa: ANN401
+        return real_connect(*args, **kwargs, factory=CleanupFailure)
+
+    monkeypatch.setattr(vault_module.sqlite3, "connect", connect)
+    vault = make_vault(tmp_path)
+    identity = vault.identity().bundle
+    bob = contact(vault)
+    vault.save_contact(bob)
+    vault.add_entry(bob.conv_id, chat_entry(vault, "kept"))
+    fail = True
+    with pytest.raises(PasswordChangeCleanupError, match="password changed"):
+        vault.change_password("correct horse", "new")
+    fail = False
+    assert vault.identity().bundle == identity
+    assert [e.text for e in vault.history(bob.conv_id)] == ["kept"]
+    fresh = reopen(vault, "new")
+    assert fresh.identity().bundle == identity
+    assert [e.text for e in fresh.history(bob.conv_id)] == ["kept"]
+    fresh.close()
+    with pytest.raises(WrongPasswordError):
+        attempt(vault.directory, "correct horse")
+
+
+def test_retry_after_failed_header_promotion_preserves_current_header(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    vault = make_vault(tmp_path)
+    real_write = vault_module.write_private_file
+
+    def fail_promotion(path: Path, data: bytes) -> None:
+        if path.name == VAULT_FILE:
+            msg = "injected header failure"
+            raise OSError(msg)
+        real_write(path, data)
+
+    monkeypatch.setattr(vault_module, "write_private_file", fail_promotion)
+    with pytest.raises(OSError, match="injected header failure"):
+        vault.change_password("correct horse", "second")
+    monkeypatch.setattr(vault_module, "write_private_file", real_write)
+
+    def fail_rekey(*_: object) -> None:
+        msg = "injected rekey failure"
+        raise sqlite3.OperationalError(msg)
+
+    monkeypatch.setattr(vault, "_put_identity", fail_rekey)
+    with pytest.raises(sqlite3.OperationalError, match="injected rekey failure"):
+        vault.change_password("second", "third")
+    monkeypatch.undo()
+    attempt(reopen_path(vault), "second")
+
+
+@pytest.mark.parametrize("committed", [False, True])
+def test_rotation_commit_error_closes_vault_and_recovers_matching_header(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, committed: bool
+) -> None:
+    real_connect = sqlite3.connect
+    fail = False
+
+    class CommitFailure(sqlite3.Connection):
+        def execute(self, sql: str, parameters: Any = ()) -> sqlite3.Cursor:  # noqa: ANN401
+            if fail and sql == "COMMIT":
+                if committed:
+                    super().execute(sql, parameters)
+                msg = "injected commit failure"
+                raise sqlite3.OperationalError(msg)
+            return super().execute(sql, parameters)
+
+    def connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:  # noqa: ANN401
+        return real_connect(*args, **kwargs, factory=CommitFailure)
+
+    monkeypatch.setattr(vault_module.sqlite3, "connect", connect)
+    vault = make_vault(tmp_path)
+    identity = vault.identity().bundle
+    bob = contact(vault)
+    vault.save_contact(bob)
+    vault.add_entry(bob.conv_id, chat_entry(vault, "kept"))
+    fail = True
+    with pytest.raises(sqlite3.OperationalError, match="injected commit failure"):
+        vault.change_password("correct horse", "new")
+    fail = False
+    assert not vault.is_unlocked
+    assert (vault.directory / VAULT_FILE_NEW).exists()
+    with pytest.raises(VaultLockedError):
+        vault.change_password("correct horse", "third")
+    vault.close()
+    fresh = Vault(vault.directory, kdf=CHEAP)
+    fresh.unlock("new" if committed else "correct horse")
+    assert fresh.identity().bundle == identity
+    assert [e.text for e in fresh.history(bob.conv_id)] == ["kept"]
 
 
 def test_unlocking_again_closes_the_previous_database(tmp_path: Path) -> None:
