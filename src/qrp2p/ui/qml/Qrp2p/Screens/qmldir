@@ -1,0 +1,25 @@
+module Qrp2p.Screens
+ChatBubble 1.0 ChatBubble.qml
+Composer 1.0 Composer.qml
+ConfirmDialog 1.0 ConfirmDialog.qml
+ConnectDialog 1.0 ConnectDialog.qml
+ContactChip 1.0 ContactChip.qml
+ContactChooser 1.0 ContactChooser.qml
+ContactDetailsDialog 1.0 ContactDetailsDialog.qml
+ContactStrip 1.0 ContactStrip.qml
+ConversationHeader 1.0 ConversationHeader.qml
+ConversationView 1.0 ConversationView.qml
+DevicePopup 1.0 DevicePopup.qml
+EmptyState 1.0 EmptyState.qml
+FileCard 1.0 FileCard.qml
+HeaderBar 1.0 HeaderBar.qml
+InspectorPreview 1.0 InspectorPreview.qml
+MessageDelegate 1.0 MessageDelegate.qml
+MessageList 1.0 MessageList.qml
+MessengerScreen 1.0 MessengerScreen.qml
+PromptDialog 1.0 PromptDialog.qml
+SettingsDialog 1.0 SettingsDialog.qml
+ShortcutsDialog 1.0 ShortcutsDialog.qml
+UnlockScreen 1.0 UnlockScreen.qml
+VerifyDialog 1.0 VerifyDialog.qml
+WelcomeDialog 1.0 WelcomeDialog.qml

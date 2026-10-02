@@ -88,6 +88,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      # Qt (the gui extra) links these even offscreen; the UI tests render without a display.
+      - name: Libraries Qt needs
+        run: >-
+          sudo apt-get update &&
+          sudo apt-get install -y --no-install-recommends
+          libegl1 libgl1 libxkbcommon0 libfontconfig1
       - uses: astral-sh/setup-uv@v7
         with:
           version: ${{ env.UV_VERSION }}

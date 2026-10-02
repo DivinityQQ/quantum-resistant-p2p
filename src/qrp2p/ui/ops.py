@@ -345,8 +345,28 @@ def delete_contact(contact_id: str) -> Op:
 # -- settings ------------------------------------------------------------------------------------------
 
 
+def _whole(value: object) -> int:
+    """A whole number from QML, where every number is a double (``5.0``, ``4294967296.0``)."""
+    if isinstance(value, bool):
+        msg = "a number is needed"
+        raise ValueError(msg)  # noqa: TRY004  # reaches the user as a ValueError like the rest
+    if isinstance(value, float):
+        if not value.is_integer():
+            msg = "a whole number is needed"
+            raise ValueError(msg)
+        return int(value)
+    return int(str(value))
+
+
+def _flag(value: object) -> bool:
+    if not isinstance(value, bool):
+        msg = "on or off is needed"
+        raise ValueError(msg)  # noqa: TRY004
+    return value
+
+
 def _non_negative(value: object) -> int:
-    number = int(str(value))
+    number = _whole(value)
     if number < 0:
         msg = "the value cannot be negative"
         raise ValueError(msg)
@@ -354,7 +374,7 @@ def _non_negative(value: object) -> int:
 
 
 def _port(value: object) -> int:
-    number = int(str(value))
+    number = _whole(value)
     if not 0 < number < 65536:  # noqa: PLR2004
         msg = "the port must be between 1 and 65535"
         raise ValueError(msg)
@@ -362,7 +382,7 @@ def _port(value: object) -> int:
 
 
 def _text_scale(value: object) -> int:
-    number = int(str(value))
+    number = _whole(value)
     if number not in TEXT_SCALES:
         msg = "unsupported text size"
         raise ValueError(msg)
@@ -378,7 +398,7 @@ def _folder(value: object) -> str:
 
 
 def _positive(value: object) -> int:
-    number = int(str(value))
+    number = _whole(value)
     if number <= 0:
         msg = "the size must be positive"
         raise ValueError(msg)
@@ -387,7 +407,7 @@ def _positive(value: object) -> int:
 
 _SETTINGS: Final[dict[str, Callable[[object], object]]] = {
     "display_name": lambda v: str(v).strip(),
-    "announce_name": bool,
+    "announce_name": _flag,
     "default_profile": lambda v: profile_by_name(str(v)).id,
     "default_retention": lambda v: Retention(str(v)),
     "auto_lock_minutes": _non_negative,
@@ -395,7 +415,7 @@ _SETTINGS: Final[dict[str, Callable[[object], object]]] = {
     "downloads_dir": _folder,
     "max_file_size": _positive,
     "appearance": lambda v: Appearance(str(v)),
-    "reduced_motion": bool,
+    "reduced_motion": _flag,
     "text_scale": _text_scale,
 }
 """Settings the app may change, each with its parser (QML hands over plain values)."""

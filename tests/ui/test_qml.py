@@ -1,0 +1,372 @@
+"""The real QML window, offscreen, driven by keyboard and mouse against a fake services side.
+
+Any Qt warning (a QML error, a binding loop, a broken anchor) fails these tests (pytest-qt's
+``qt_log_level_fail``), so they also guard every screen they open against regressions.
+"""
+
+import re
+from collections.abc import Iterator
+from dataclasses import dataclass, replace
+
+import pytest
+from PySide6.QtCore import QCoreApplication, QEvent, QObject, QPointF, QSize, Qt, QUrl
+from PySide6.QtGui import QColor, QGuiApplication, QKeyEvent
+from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent, QQmlEngine, QQmlExpression
+from PySide6.QtQuick import QQuickItem, QQuickWindow
+from PySide6.QtTest import QTest
+
+from qrp2p.ui.app import QML, create_engine
+from qrp2p.ui.icons import IconProvider, render
+from qrp2p.ui.snapshots import (
+    ActivitySnap,
+    ContactChanged,
+    ErrorInfo,
+    MessageChanged,
+    MismatchOpened,
+    MismatchSnap,
+    PromptOpened,
+    PromptSnap,
+)
+from qrp2p.ui.viewmodels.application import AppController
+from tests.ui.fakes import SETTINGS, FakeBackend, chat, contact, online, settle, workspace
+
+BOB = contact("Bob")
+
+
+@dataclass
+class Ui:
+    engine: QQmlApplicationEngine
+    window: QQuickWindow
+    app: AppController
+    backend: FakeBackend
+
+    def find(self, name: str) -> QQuickItem | None:
+        self.frame()
+        found = named(self.window, name)
+        return found[0] if found else None
+
+    def frame(self) -> None:
+        """Polish and render once: views create their delegates during a frame."""
+        settle()
+        self.window.grabWindow()
+        settle()
+
+    def item(self, name: str) -> QQuickItem:
+        found = self.find(name)
+        assert found is not None, name
+        return found
+
+    def click(self, name: str) -> None:
+        target = self.item(name)
+        assert target.isVisible(), name
+        center = target.mapToScene(QPointF(target.width() / 2, target.height() / 2)).toPoint()
+        QTest.mouseClick(
+            self.window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, center
+        )
+        settle()
+
+    def type(self, text: str) -> None:
+        # QTest.keyClicks takes widgets only; a window gets the key events directly.
+        for char in text:
+            for kind in (QEvent.Type.KeyPress, QEvent.Type.KeyRelease):
+                event = QKeyEvent(kind, 0, Qt.KeyboardModifier.NoModifier, char)
+                QGuiApplication.sendEvent(self.window, event)
+        settle()
+
+    def key(
+        self, key: Qt.Key, modifiers: Qt.KeyboardModifier = Qt.KeyboardModifier.NoModifier
+    ) -> None:
+        QTest.keyClick(self.window, key, modifiers)
+        settle()
+
+    def unlock(self, *contacts: object, settings: object = SETTINGS) -> None:
+        self.backend.lifecycle("unlocked", workspace(*contacts, settings=settings))  # type: ignore[arg-type]
+        activity = ActivitySnap(tuple((c.contact_id, c.created) for c in contacts))  # type: ignore[attr-defined]
+        self.backend.reply(self.backend.one("recent_activity"), activity)
+        settle()
+
+
+def flush_deletes() -> None:
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    settle()
+
+
+@pytest.fixture
+def ui(qapp: QCoreApplication) -> Iterator[Ui]:  # noqa: ARG001
+    backend = FakeBackend()
+    controller = AppController(backend.bridge, data_dir="/data", dev_preview=True)
+    engine = create_engine(controller, "monospace")
+    (root,) = engine.rootObjects()
+    assert isinstance(root, QQuickWindow)
+    root.resize(1100, 760)
+    root.requestActivate()
+    settle()
+    yield Ui(engine, root, controller, backend)
+    root.close()
+    engine.deleteLater()
+    controller.deleteLater()
+    flush_deletes()
+
+
+def items(window: QQuickWindow) -> list[QQuickItem]:
+    """Every item in the window, popups included (delegates have no QObject parent to search)."""
+    content = window.contentItem()
+    root = content.parentItem() or content
+    found: list[QQuickItem] = []
+    pending = [root]
+    while pending:
+        item = pending.pop()
+        found.append(item)
+        pending.extend(item.childItems())
+    return found
+
+
+def named(window: QQuickWindow, name: str) -> list[QQuickItem]:
+    return [item for item in items(window) if item.objectName() == name]
+
+
+def text_formats(engine: QQmlApplicationEngine, window: QQuickWindow) -> list[tuple[str, int]]:
+    """Every item in the window with a textFormat, and its value (read through QML: the enum's
+    type is private to Qt, so Python cannot convert it)."""
+    found: list[tuple[str, int]] = []
+    for item in items(window):
+        if item.metaObject().indexOfProperty("textFormat") < 0:
+            continue
+        context = QQmlEngine.contextForObject(item) or engine.rootContext()
+        value, failed = QQmlExpression(context, item, "textFormat").evaluate()
+        assert not failed
+        found.append((item.metaObject().className(), int(value)))
+    return found
+
+
+# -- files and rules ---------------------------------------------------------------------------------
+
+
+def test_every_qml_file_compiles(qapp: QCoreApplication) -> None:  # noqa: ARG001
+    engine = QQmlApplicationEngine()
+    engine.addImportPath(str(QML))
+    engine.addImageProvider("icon", IconProvider())
+    files = sorted(QML.rglob("*.qml"))
+    assert len(files) > 40
+    for path in files:
+        component = QQmlComponent(engine, QUrl.fromLocalFile(str(path)))
+        assert component.status() == QQmlComponent.Status.Ready, (
+            path.name,
+            component.errorString(),
+        )
+
+
+def test_icons_render_only_bundled_names_and_hex_colours() -> None:
+    size = QSize(24, 24)
+    drawn = render("send-horizontal", "242628", size)
+    assert any(drawn.pixelColor(x, y).alpha() > 0 for x in range(24) for y in range(24))
+    tinted = render("check", "ccff0000", size)  # alpha first, as Qt names colours
+    painted = [tinted.pixelColor(x, y) for x in range(24) for y in range(24)]
+    strongest = max(painted, key=lambda c: c.alpha())
+    assert strongest.red() > 200
+    assert strongest.green() < 40
+    assert 150 < strongest.alpha() < 230
+    for name, color in [("../app-icon", "242628"), ("no-such-icon", "242628"), ("check", "red")]:
+        blank = render(name, color, size)
+        assert all(blank.pixelColor(x, y).alpha() == 0 for x in range(24) for y in range(24))
+
+
+# -- screens -----------------------------------------------------------------------------------------
+
+
+def test_create_the_vault_from_the_keyboard(ui: Ui) -> None:
+    ui.backend.lifecycle("no_vault")
+    ui.item("createName").forceActiveFocus()
+    ui.type("Alice")
+    ui.key(Qt.Key.Key_Tab)
+    ui.type("correct horse")
+    ui.key(Qt.Key.Key_Tab)
+    ui.type("correct horse")
+    ui.key(Qt.Key.Key_Return)
+    request = ui.backend.one("create_vault")
+    assert request.args == {"password": "correct horse", "display_name": "Alice"}
+
+
+def test_unlock_and_wrong_password(ui: Ui) -> None:
+    ui.backend.lifecycle("locked")
+    ui.backend.reply(ui.backend.one("device_unlock_available"), False)
+    ui.item("unlockPassword").forceActiveFocus()
+    ui.type("guess")
+    ui.key(Qt.Key.Key_Return)
+    ui.backend.reply(ui.backend.one("unlock"), error=ErrorInfo("wrong_password", "Wrong password."))
+    assert ui.app.property("error") == "Wrong password."
+    ui.unlock(BOB)
+    assert ui.find("messenger") is not None
+
+
+def test_every_text_is_plain_and_peer_markup_stays_literal(ui: Ui) -> None:
+    ui.unlock(online(BOB))
+    hostile = '<b>bold</b> <img src="file:///etc/passwd"> <a href="x">link</a>'
+    ui.backend.reply(ui.backend.one("history"), (chat(hostile), chat("plain")))
+    ui.frame()
+    bubbles = named(ui.window, "bubbleText")
+    assert hostile in [b.property("text") for b in bubbles]
+    formats = text_formats(ui.engine, ui.window)
+    assert len(formats) > 30
+    assert all(value == 0 for _, value in formats), [f for f in formats if f[1] != 0]  # PlainText
+
+
+def test_enter_sends_and_shift_enter_starts_a_line(ui: Ui) -> None:
+    ui.unlock(online(BOB))
+    ui.backend.reply(ui.backend.one("history"), ())
+    composer = ui.item("composerInput")
+    composer.forceActiveFocus()
+    ui.type("hello")
+    ui.key(Qt.Key.Key_Return, Qt.KeyboardModifier.ShiftModifier)
+    ui.type("world")
+    assert composer.property("text") == "hello\nworld"
+    ui.key(Qt.Key.Key_Return)
+    assert ui.backend.one("send_chat").args["text"] == "hello\nworld"
+    assert composer.property("text") == ""
+
+
+def test_an_offline_contact_keeps_the_draft(ui: Ui) -> None:
+    ui.unlock(BOB)
+    ui.backend.reply(ui.backend.one("history"), ())
+    ui.item("composerInput").forceActiveFocus()
+    ui.type("later")
+    ui.key(Qt.Key.Key_Return)
+    assert ui.backend.pending("send_chat") == []
+    assert ui.item("composerInput").property("text") == "later"
+    assert not ui.item("sendButton").isEnabled()
+
+
+def test_lock_removes_every_view_of_the_conversation(ui: Ui) -> None:
+    ui.unlock(online(BOB))
+    ui.backend.reply(ui.backend.one("history"), (chat("secret plans"),))
+    ui.item("composerInput").forceActiveFocus()
+    ui.type("unsent draft")
+    ui.key(Qt.Key.Key_L, Qt.KeyboardModifier.ControlModifier)
+    flush_deletes()
+    assert ui.find("messenger") is None
+    assert ui.find("composerInput") is None
+    texts = [
+        str(o.property("text"))
+        for o in ui.window.findChildren(QObject)
+        if o.metaObject().indexOfProperty("text") >= 0
+    ]
+    assert not [t for t in texts if "secret plans" in t or "unsent draft" in t]
+    assert ui.app.property("phase") == "locking"
+
+
+def test_settings_show_what_the_vault_holds(ui: Ui) -> None:
+    ui.unlock(BOB, settings=replace(SETTINGS, auto_lock_minutes=15))
+    dialog = ui.window.findChild(QObject, "settingsDialog")
+    assert dialog is not None
+    dialog.setProperty("visible", True)
+    settle()
+    combo = ui.item("autoLockCombo")
+    assert combo.property("displayText") == "15 minutes"
+
+
+def test_a_contact_request_is_answered_from_its_dialog(ui: Ui) -> None:
+    ui.unlock(BOB)
+    prompt = PromptSnap(
+        prompt_id=4,
+        kind="contact_request",
+        short_id="CARL-0000",
+        contact_id="",
+        name="",
+        profile="HYBRID-1",
+        glass_box_refused=True,
+        expires_in=60.0,
+    )
+    ui.backend.updates(PromptOpened(prompt))
+    dialog = ui.window.findChild(QObject, "promptDialog")
+    assert dialog is not None
+    assert dialog.property("opened") or dialog.property("visible")
+    ui.type("Carol")  # the name field has focus
+    ui.click("acceptContact")
+    request = ui.backend.one("answer_prompt")
+    assert request.args == {"prompt_id": 4, "accept": True, "name": "Carol"}
+
+
+def test_a_key_mismatch_defaults_to_cancel(ui: Ui) -> None:
+    ui.unlock(BOB)
+    mismatch = MismatchSnap(
+        mismatch_id=2,
+        contact_id=BOB.contact_id,
+        name="Bob",
+        expected_short_id="BOBX-0000",
+        actual_short_id="EVIL-0000",
+        expected_fingerprint="aaaa bbbb",
+        actual_fingerprint="cccc dddd",
+    )
+    ui.backend.updates(MismatchOpened(mismatch))
+    settle()
+    focused = ui.window.activeFocusItem()
+    assert focused is not None
+    assert focused.objectName() == "keepIdentity"
+    ui.click("startRepin")
+    assert ui.backend.pending("resolve_mismatch") == []  # a re-pin needs its second step
+    assert not ui.item("startRepin").isVisible()
+
+
+def test_the_theme_changes_in_place(ui: Ui) -> None:
+    ui.unlock(BOB)
+    messenger = ui.find("messenger")
+    assert ui.window.color() == QColor("#FAF9F6")
+    ui.backend.updates(ContactChanged(BOB))  # any update; then the settings reply
+    ws = ui.app.property("workspace")
+    ws.settings_model.apply(replace(SETTINGS, appearance="dark"))
+    ui.app._sync_appearance()
+    settle()
+    assert ui.window.color() == QColor("#151718")
+    assert ui.find("messenger") is messenger  # nothing was rebuilt
+
+
+@pytest.mark.parametrize(("width", "height", "scale"), [(720, 540, 150), (1600, 1000, 100)])
+def test_layouts_hold_at_small_windows_and_large_text(
+    ui: Ui, width: int, height: int, scale: int
+) -> None:
+    ui.unlock(online(BOB), contact("Carol"), settings=replace(SETTINGS, text_scale=scale))
+    ui.backend.reply(
+        ui.backend.one("history"), tuple(chat(f"message {i} " * 20) for i in range(30))
+    )
+    ui.window.resize(width, height)
+    messenger = ui.item("messenger")
+    messenger.setProperty("inspectorOpen", True)
+    settle()
+    messenger.setProperty("inspectorOpen", False)
+    settle()
+    for name in ("chooser", "settingsDialog", "connectDialog", "detailsDialog", "verifyDialog"):
+        popup = ui.window.findChild(QObject, name)
+        assert popup is not None
+        popup.setProperty("visible", True)
+        settle()
+        popup.setProperty("visible", False)
+        settle()
+    ui.backend.updates(MessageChanged(BOB.contact_id, chat("one more"), added=True))
+    assert ui.find("composerInput") is not None
+
+
+def test_qml_sources_follow_the_rules() -> None:
+    """Static rules: plain text only, no literal colours, nothing opens peer data."""
+    sources = {p: p.read_text(encoding="utf-8") for p in QML.rglob("*.qml")}
+    for path, text in sources.items():
+        name = path.name
+        for banned in (
+            "RichText",
+            "StyledText",
+            "MarkdownText",
+            "AutoText",
+            "Label {",
+            "openUrlExternally",
+            "Qt.labs.platform",
+            "LocalStorage",
+        ):
+            assert banned not in text, (name, banned)
+        if name != "Theme.qml":
+            assert not re.search(r'"#[0-9A-Fa-f]{6,8}"', text), (name, "literal colour")
+        for block in ("Text {", "TextEdit {", "T.TextArea {"):
+            for at in [i for i in range(len(text)) if text.startswith(block, i)]:
+                if text[max(0, at - 3) : at] == "App":
+                    continue  # AppText {
+                body = text[at : text.find("}", at)]
+                assert "textFormat:" in body, (name, block)
+                assert "PlainText" in body, (name, block)

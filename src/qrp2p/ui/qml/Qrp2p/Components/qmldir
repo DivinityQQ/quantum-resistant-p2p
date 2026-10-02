@@ -1,0 +1,27 @@
+module Qrp2p.Components
+AppButton 1.0 AppButton.qml
+AppComboBox 1.0 AppComboBox.qml
+AppDialog 1.0 AppDialog.qml
+AppMenu 1.0 AppMenu.qml
+AppMenuItem 1.0 AppMenuItem.qml
+AppMenuSeparator 1.0 AppMenuSeparator.qml
+AppScrollBar 1.0 AppScrollBar.qml
+AppSwitch 1.0 AppSwitch.qml
+AppText 1.0 AppText.qml
+AppTextField 1.0 AppTextField.qml
+AppToolTip 1.0 AppToolTip.qml
+Avatar 1.0 Avatar.qml
+Banner 1.0 Banner.qml
+Divider 1.0 Divider.qml
+FocusRing 1.0 FocusRing.qml
+Icon 1.0 Icon.qml
+IconButton 1.0 IconButton.qml
+PasswordField 1.0 PasswordField.qml
+PresenceDot 1.0 PresenceDot.qml
+ProgressLine 1.0 ProgressLine.qml
+SectionHeading 1.0 SectionHeading.qml
+SegmentedControl 1.0 SegmentedControl.qml
+Spinner 1.0 Spinner.qml
+Tag 1.0 Tag.qml
+ToastHost 1.0 ToastHost.qml
+TrustBadge 1.0 TrustBadge.qml

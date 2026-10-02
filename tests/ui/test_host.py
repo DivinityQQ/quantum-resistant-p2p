@@ -24,6 +24,7 @@ from qrp2p.ui.snapshots import (
     PromptOpened,
     Reply,
     SessionEnded,
+    SettingsSnap,
 )
 from tests.services.support import LOOPBACK, NodeHarness, until
 from tests.ui.support import HostHarness
@@ -350,3 +351,60 @@ async def test_updates_wait_for_the_batch_interval(tmp_path: Path) -> None:
     assert posted == []
     await until(lambda: bool(posted))
     assert posted == [Batch(0, tuple(chats))]
+
+
+@pytest.mark.parametrize(
+    ("name", "value", "stored"),
+    [
+        ("max_file_size", 4294967296.0, 4294967296),  # QML numbers are doubles
+        ("auto_lock_minutes", 15.0, 15),
+        ("auto_lock_minutes", 0, 0),
+        ("text_scale", 130.0, 130),
+        ("appearance", "dark", "dark"),
+        ("announce_name", False, False),
+        ("default_profile", "PQ-CNSA-1", "PQ-CNSA-1"),
+        ("default_retention", "30d", "30d"),
+    ],
+)
+async def test_settings_accept_values_as_qml_sends_them(
+    alice: HostHarness, name: str, value: object, stored: object
+) -> None:
+    await unlocked(alice)
+    settings = await alice.ok(ops.update_setting(name, value))
+    assert getattr(settings, name) == stored
+
+
+async def test_the_downloads_folder_is_custom_or_the_os_one(
+    alice: HostHarness, tmp_path: Path
+) -> None:
+    await unlocked(alice)
+    custom = await alice.ok(ops.update_setting("downloads_dir", str(tmp_path)))
+    assert isinstance(custom, SettingsSnap)
+    assert (custom.downloads_dir, custom.downloads_custom) == (str(tmp_path), True)
+    default = await alice.ok(ops.update_setting("downloads_dir", ""))
+    assert isinstance(default, SettingsSnap)
+    assert not default.downloads_custom
+    assert default.downloads_dir  # the OS downloads folder, shown as the one in use
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("auto_lock_minutes", 1.5),
+        ("auto_lock_minutes", -1),
+        ("announce_name", "false"),  # bool("false") would be True
+        ("reduced_motion", 1),
+        ("text_scale", 120),
+        ("port", 70000),
+        ("max_file_size", 0),
+        ("downloads_dir", "relative/folder"),
+        ("default_profile", "LAB-CLASSICAL"),  # never reachable from real-session controls
+        ("appearance", "neon"),
+        ("no_such_setting", 1),
+    ],
+)
+async def test_settings_refuse_invalid_values(alice: HostHarness, name: str, value: object) -> None:
+    await unlocked(alice)
+    reply = await alice.call(ops.update_setting(name, value))
+    assert reply.error is not None
+    assert reply.error.kind in {"value", "node"}

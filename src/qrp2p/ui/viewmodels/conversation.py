@@ -79,6 +79,7 @@ class Conversation(ViewModel):
         self._draft = ""
         self._banner = ""
         self._banner_text = ""
+        self._banner_tone = "neutral"
         self._loading = True
         self._has_earlier = False
         self._safety: list[str] = []
@@ -108,7 +109,10 @@ class Conversation(ViewModel):
     presence = mapped(str, "_view", "presence", contactChanged)
     presenceText = mapped(str, "_view", "presence_text", contactChanged)  # noqa: N815
     banner = readonly(str, "_banner", bannerChanged)
+    """``""``, ``connecting``, ``waiting``, ``error`` or ``ended``."""
     bannerText = readonly(str, "_banner_text", bannerChanged)  # noqa: N815
+    bannerTone = readonly(str, "_banner_tone", bannerChanged)  # noqa: N815
+    """``neutral`` or ``danger`` (a failure the user should notice)."""
     loading = readonly(bool, "_loading", historyChanged)
     hasEarlier = readonly(bool, "_has_earlier", historyChanged)  # noqa: N815
     draft = readonly(str, "_draft", draftChanged)
@@ -161,7 +165,9 @@ class Conversation(ViewModel):
             self._closing = False
             return
         self._closing = False
-        self._set_banner("ended", ended_text(reason, by_peer=by_peer, peer=self._contact.name))
+        tone = "neutral" if reason in {"", "normal", "locked"} else "danger"
+        text = ended_text(reason, by_peer=by_peer, peer=self._contact.name)
+        self._set_banner("ended", text, tone)
 
     def apply(self, update: MessageChanged) -> None:
         """A history entry was added or changed."""
@@ -262,7 +268,7 @@ class Conversation(ViewModel):
         def done(reply: Reply) -> None:
             self._connecting = ""
             if reply.error is not None and not self._mismatch_pending(self._contact.contact_id):
-                self._set_banner("error", f"Could not connect: {reply.error.message}")
+                self._set_banner("error", f"Could not connect: {reply.error.message}", "danger")
             elif self._banner in {"connecting", "waiting"}:
                 self._set_banner("", "")
             self._refresh()
@@ -378,9 +384,9 @@ class Conversation(ViewModel):
 
         self._scope.request(op, done)
 
-    def _set_banner(self, kind: str, text: str) -> None:
-        if (kind, text) != (self._banner, self._banner_text):
-            self._banner, self._banner_text = kind, text
+    def _set_banner(self, kind: str, text: str, tone: str = "neutral") -> None:
+        if (kind, text, tone) != (self._banner, self._banner_text, self._banner_tone):
+            self._banner, self._banner_text, self._banner_tone = kind, text, tone
             self.bannerChanged.emit()
 
     def _compute_view(self) -> dict[str, object]:

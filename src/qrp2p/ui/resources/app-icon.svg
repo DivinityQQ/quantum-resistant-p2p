@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- QRP2P: a Q drawn as two arcs (two key exchanges, one channel). Original artwork, MIT. -->
+  <rect width="256" height="256" rx="58" fill="#242628"/>
+  <g fill="none" stroke="#FAF9F6" stroke-width="18" stroke-linecap="round">
+    <path d="M 140.9 63.4 A 62 62 0 0 1 181.1 155.9"/>
+    <path d="M 159.9 177.1 A 62 62 0 1 1 115.1 63.4"/>
+    <path d="M 150 146 L 190 186"/>
+  </g>
+</svg>

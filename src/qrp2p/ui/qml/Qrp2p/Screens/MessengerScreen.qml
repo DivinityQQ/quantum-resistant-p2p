@@ -1,0 +1,197 @@
+import QtQuick
+import QtQuick.Layouts
+import Qrp2p.Theme
+import Qrp2p.Components
+
+// The unlocked app: header, contact strip and the selected conversation (UI_DESIGN §3). With
+// the development preview, the Inspector layout can open beside or instead of the chat (§3.3).
+Item {
+    id: screen
+
+    required property var app
+    required property var workspace
+
+    signal notify(string text)
+    signal attention()
+
+    property bool inspectorOpen: false
+    objectName: "messenger"
+    readonly property bool split: width >= 1000
+
+    opacity: 0
+    Component.onCompleted: opacity = 1
+    Behavior on opacity {
+        NumberAnimation { duration: Theme.motion }
+    }
+
+    Connections {
+        target: screen.workspace
+        function onNoticePosted(text) { screen.notify(text) }
+        function onIncomingMessage(name) { screen.attention() }
+        function onVerifyRequested(contactId) { verifyDialog.open() }
+    }
+
+    ColumnLayout {
+        anchors.fill: parent
+        spacing: 0
+
+        HeaderBar {
+            Layout.fillWidth: true
+            app: screen.app
+            workspace: screen.workspace
+            inspectorAvailable: screen.app.devPreview
+            inspectorOpen: screen.inspectorOpen
+            onOpenChooser: chooser.openContacts()
+            onOpenConnect: connectDialog.open()
+            onOpenSettings: settingsDialog.open()
+            onOpenShortcuts: shortcutsDialog.open()
+            onToggleInspector: screen.inspectorOpen = !screen.inspectorOpen
+        }
+        ContactStrip {
+            id: strip
+            Layout.fillWidth: true
+            workspace: screen.workspace
+            visible: screen.workspace.contactCount > 0
+            onOpenChooser: chooser.openContacts()
+            onOpenConnect: chooser.openNearby()
+        }
+        Divider {
+            Layout.fillWidth: true
+        }
+        Item {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+
+            Item {
+                id: chatPane
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                anchors.left: parent.left
+                width: !screen.inspectorOpen ? parent.width
+                    : screen.split ? Math.max(320, Math.round(parent.width * 0.34)) : 0
+                visible: width > 0
+                clip: true
+
+                Behavior on width {
+                    enabled: !Theme.reducedMotion
+                    NumberAnimation { duration: Theme.motion; easing.type: Easing.OutCubic }
+                }
+
+                Loader {
+                    id: conversationLoader
+                    anchors.fill: parent
+                    property var current: screen.workspace.conversation
+                    // A new view per conversation: the composer starts from that conversation's
+                    // draft and the list from its end.
+                    onCurrentChanged: {
+                        active = false
+                        active = true
+                    }
+                    sourceComponent: current ? conversationView : emptyView
+                }
+            }
+            Loader {
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                anchors.right: parent.right
+                anchors.left: chatPane.right
+                active: screen.inspectorOpen
+                visible: active
+                sourceComponent: InspectorPreview {
+                    split: screen.split
+                    onBackToChat: screen.inspectorOpen = false
+                }
+            }
+        }
+    }
+
+    Component {
+        id: conversationView
+
+        ConversationView {
+            conversation: conversationLoader.current
+            onVerify: verifyDialog.open()
+            onDetails: detailsDialog.open()
+            onConfirm: action => confirmDialog.ask(action, conversationLoader.current)
+            Component.onCompleted: focusComposer()
+        }
+    }
+
+    Component {
+        id: emptyView
+
+        EmptyState {
+            workspace: screen.workspace
+            onFindNearby: chooser.openNearby()
+            onEnterAddress: connectDialog.open()
+        }
+    }
+
+    ContactChooser {
+        id: chooser
+        objectName: "chooser"
+        workspace: screen.workspace
+        x: Theme.s4
+        y: 56 + Theme.s2
+        onEnterAddress: connectDialog.open()
+    }
+    ConnectDialog {
+        id: connectDialog
+        objectName: "connectDialog"
+        workspace: screen.workspace
+    }
+    PromptDialog {
+        objectName: "promptDialog"
+        prompts: screen.workspace.prompts
+    }
+    VerifyDialog {
+        id: verifyDialog
+        objectName: "verifyDialog"
+        workspace: screen.workspace
+        conversation: screen.workspace.conversation
+    }
+    ContactDetailsDialog {
+        id: detailsDialog
+        objectName: "detailsDialog"
+        conversation: screen.workspace.conversation
+        onVerify: verifyDialog.open()
+        onConfirm: action => confirmDialog.ask(action, screen.workspace.conversation)
+    }
+    ConfirmDialog {
+        id: confirmDialog
+        objectName: "confirmDialog"
+    }
+    SettingsDialog {
+        id: settingsDialog
+        objectName: "settingsDialog"
+        app: screen.app
+        workspace: screen.workspace
+    }
+    WelcomeDialog {
+        app: screen.app
+        workspace: screen.workspace
+    }
+    ShortcutsDialog {
+        id: shortcutsDialog
+        objectName: "shortcutsDialog"
+        devPreview: screen.app.devPreview
+    }
+
+    Shortcut {
+        sequence: "Ctrl+K"
+        onActivated: chooser.openContacts()
+    }
+    Shortcut {
+        sequence: "Ctrl+N"
+        onActivated: connectDialog.open()
+    }
+    Shortcut {
+        sequences: [StandardKey.Preferences, "Ctrl+,"]
+        onActivated: settingsDialog.open()
+    }
+    Shortcut {
+        sequence: "Ctrl+I"
+        enabled: screen.app.devPreview
+        onActivated: screen.inspectorOpen = !screen.inspectorOpen
+    }
+}

@@ -24,6 +24,7 @@ from importlib.metadata import PackageNotFoundError, version
 from typing import Final
 
 from PySide6.QtCore import QObject, Signal, Slot
+from PySide6.QtGui import QGuiApplication
 
 from qrp2p.ui import ops
 from qrp2p.ui.bridge import Bridge
@@ -264,6 +265,11 @@ class AppController(ViewModel):
     def dismissWelcome(self) -> None:  # noqa: N802
         """Close the first-run identity summary."""
         self._set("_welcome", value=False, signal=self.welcomeChanged)
+
+    @Slot(str)
+    def copyText(self, text: str) -> None:  # noqa: N802
+        """Put public text (an ID, an address) on the clipboard; only on the user's request."""
+        QGuiApplication.clipboard().setText(text)
 
     @Slot()
     def dismissNotice(self) -> None:  # noqa: N802
