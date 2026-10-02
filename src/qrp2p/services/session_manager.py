@@ -325,11 +325,19 @@ class SessionManager:
             self._superseded.add(session.id)
             session.reject(AdmitReason.BUSY)
             return
-        if len(self._live) >= MAX_LIVE_SESSIONS and peer_id not in self._live:
+        if not self._capacity_available(peer_id):
             _log.warning("live-session limit reached; rejecting %s", request.peer.short_id)
             session.reject(AdmitReason.BUSY)
             return
         self._hooks.admission(session, request)
+
+    def _capacity_available(self, peer_id: bytes) -> bool:
+        return peer_id in self._live or len(self._live) < MAX_LIVE_SESSIONS
+
+    def admission_allowed(self, session: Session) -> bool:
+        """Recheck deferred admission at acceptance; replacements consume no new peer slot."""
+        assert session.peer is not None  # noqa: S101  # authenticated at AdmissionRequired
+        return self._capacity_available(session.peer.peer_id)
 
     def key_mismatch(self, session: Session, event: KeyMismatch) -> None:
         """See :class:`~qrp2p.services.session.SessionHooks`."""
@@ -356,6 +364,11 @@ class SessionManager:
         self._release_slot(session)
         peer = session.peer
         assert peer is not None  # noqa: S101  # an open session has an authenticated peer
+        if not self._capacity_available(peer.peer_id):
+            # An outgoing handshake can finish after another session consumed the last slot.
+            # Do not register or report it as connected; send an authenticated close instead.
+            session.close(CloseReason.RATE_LIMITED)
+            return
         previous = self._live.get(peer.peer_id)
         if previous is not None and previous is not session:
             overlapped = (

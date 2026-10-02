@@ -336,6 +336,60 @@ async def test_rekey_over_tcp(pair: tuple[Peer, Peer]) -> None:
     await until(lambda: bool(bob.record.messages))
 
 
+async def test_deferred_admissions_recheck_live_capacity(
+    pair: tuple[Peer, Peer], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice, bob = pair
+    monkeypatch.setattr(session_manager, "MAX_LIVE_SESSIONS", 1)
+    bob.hooks.defer = True
+    carol = await Peer("carol").start()
+    try:
+        first = await alice.connect(bob)
+        second = await carol.connect(bob)
+        await until(lambda: len(bob.record.admissions) == 2)
+        for session in [s for s in bob.manager.sessions() if s.awaiting_admission]:
+            session.accept(glass_box=False)
+        await until(lambda: first.is_open and carol.record.ended_for(second) is not None)
+        end = carol.record.ended_for(second)
+        assert end is not None
+        assert end.admit_reason is AdmitReason.BUSY
+        assert len(bob.manager._live) == 1
+        assert len(bob.record.established) == 1
+        # Replacing the same peer is permitted even at capacity.
+        replacement = await alice.connect(bob)
+        await until(lambda: len(bob.record.admissions) == 3)
+        next(s for s in bob.manager.sessions() if s.awaiting_admission).accept(glass_box=False)
+        await until(lambda: replacement.is_open and not first.is_open)
+        assert len(bob.manager._live) == 1
+    finally:
+        await carol.stop()
+
+
+async def test_outgoing_handshakes_cannot_exceed_live_capacity(
+    pair: tuple[Peer, Peer], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice, bob = pair
+    monkeypatch.setattr(session_manager, "MAX_LIVE_SESSIONS", 1)
+    bob.hooks.defer = True
+    carol = await Peer("carol").start()
+    carol.hooks.defer = True
+    try:
+        first = await alice.connect(bob)
+        second = await alice.connect(carol)
+        await until(lambda: bool(bob.record.admissions) and bool(carol.record.admissions))
+        next(s for s in bob.manager.sessions() if s.awaiting_admission).accept(glass_box=False)
+        await until(lambda: first.is_open)
+        next(s for s in carol.manager.sessions() if s.awaiting_admission).accept(glass_box=False)
+        await until(lambda: alice.record.ended_for(second) is not None)
+        end = alice.record.ended_for(second)
+        assert end is not None
+        assert end.reason is CloseReason.RATE_LIMITED
+        assert len(alice.manager._live) == 1
+        assert len(alice.record.established) == 1
+    finally:
+        await carol.stop()
+
+
 def test_clock_is_monotonic_plus_offset() -> None:
     clock = Clock()
     before = clock()

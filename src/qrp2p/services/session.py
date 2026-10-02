@@ -108,6 +108,10 @@ class SessionHooks(Protocol):
         """Responder: decide with :meth:`Session.accept` or :meth:`Session.reject`, now or later."""
         ...
 
+    def admission_allowed(self, session: Session) -> bool:
+        """Recheck capacity immediately before a deferred admission is accepted."""
+        ...
+
     def key_mismatch(self, session: Session, event: KeyMismatch) -> None:
         """Initiator: the responder proved a bundle other than the pinned one."""
         ...
@@ -298,7 +302,13 @@ class Session:
         Raises:
             RuntimeError: No admission decision is pending.
         """
-        self._dispatch(self._responder().accept(glass_box=glass_box, now=self._clock()))
+        responder = self._responder()
+        if not self._hooks.admission_allowed(self):
+            self.reject(AdmitReason.BUSY)
+            return
+        # No await between the final capacity check and Established: the event loop serializes
+        # this check and the manager's registration, including decisions deferred by the UI.
+        self._dispatch(responder.accept(glass_box=glass_box, now=self._clock()))
 
     def reject(self, reason: AdmitReason) -> None:
         """Responder: reject the initiator with a named reason.
