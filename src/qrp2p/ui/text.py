@@ -11,7 +11,7 @@ from typing import Final
 
 from qrp2p.services.text import display_text
 
-__all__ = ["NAME_LIMIT", "display_name", "display_text", "fingerprint"]
+__all__ = ["NAME_LIMIT", "display_name", "display_text", "fingerprint", "isolate"]
 
 NAME_LIMIT: Final = 80
 """Characters of a name shown before it is cut with an ellipsis."""
@@ -26,3 +26,12 @@ def fingerprint(peer_id: bytes) -> str:
     """A peer ID as lowercase hex in groups of four, e.g. ``a1b2 c3d4 …``."""
     digits = peer_id.hex()
     return " ".join(digits[i : i + 4] for i in range(0, len(digits), 4))
+
+
+def isolate(text: str) -> str:
+    """``text`` wrapped in a first-strong isolate, for embedding a name in a sentence.
+
+    A right-to-left name then cannot reorder the sentence around it. Names passed here are
+    already display-safe, so they hold no isolate of their own that could unbalance this one.
+    """
+    return f"\u2068{text}\u2069"

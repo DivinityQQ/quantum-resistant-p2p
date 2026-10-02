@@ -170,6 +170,13 @@ class MismatchSnap:
     actual_fingerprint: str
 
 
+@dataclass(frozen=True, slots=True)
+class ActivitySnap:
+    """When each conversation last had an entry (wall-clock seconds), by contact ID."""
+
+    times: tuple[tuple[str, float], ...]
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class WorkspaceSnap:
     """Everything the unlocked app shows at once, taken atomically when the node unlocked."""

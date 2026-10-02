@@ -14,7 +14,7 @@ from typing import Final
 from qrp2p.services.models import TEXT_SCALES, Appearance, Retention, TrustState
 from qrp2p.services.node import Node, NodeError, profile_by_name
 from qrp2p.ui.host import Op, network_snap
-from qrp2p.ui.snapshots import ID_HEX_LEN, message_snap, settings_snap
+from qrp2p.ui.snapshots import ID_HEX_LEN, ActivitySnap, message_snap, settings_snap
 
 HISTORY_PAGE: Final = 300
 """History entries a conversation loads at first; more on request."""
@@ -105,14 +105,14 @@ def history(contact_id: str, limit: int = HISTORY_PAGE) -> Op:
 
 
 def recent_activity() -> Op:
-    """When each conversation last had an entry: ``{contact_id: time}`` (wall clock)."""
+    """When each conversation last had an entry (or the contact was added, if never)."""
 
-    async def op(node: Node) -> dict[str, float]:
-        latest: dict[str, float] = {}
+    async def op(node: Node) -> ActivitySnap:
+        times: list[tuple[str, float]] = []
         for contact in node.contacts():
             last = await node.history(contact.contact_id, 1)
-            latest[contact.contact_id.hex()] = last[-1].time if last else contact.created
-        return latest
+            times.append((contact.contact_id.hex(), last[-1].time if last else contact.created))
+        return ActivitySnap(tuple(times))
 
     return op
 

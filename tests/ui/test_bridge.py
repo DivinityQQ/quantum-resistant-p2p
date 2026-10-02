@@ -170,3 +170,19 @@ def test_nothing_is_dispatched_after_stop(setup: tuple[Bridge, FakeHost, Probe])
     settle()
     assert probe.lifecycles == []
     assert not bridge.request(noop, scoped=False)
+
+
+def test_a_scope_ends_with_its_generation(setup: tuple[Bridge, FakeHost, Probe]) -> None:
+    bridge, host, _ = setup
+    host.post(Lifecycle(1, "unlocked"))
+    settle()
+    scope = bridge.scope()
+    assert scope.request(noop)
+    assert host.submitted[-1][0] == 1
+    host.post(Lifecycle(2, "locked"))
+    host.post(Lifecycle(3, "unlocked"))
+    settle()
+    assert bridge.accepting
+    assert not scope.request(noop)  # the bridge accepts again, but not for this scope
+    assert bridge.scope().request(noop)
+    assert [gen for gen, *_ in host.submitted] == [1, 3]

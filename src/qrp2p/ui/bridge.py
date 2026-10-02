@@ -11,6 +11,11 @@ the order they were posted. The bridge then applies the generation rule (:mod:`q
 When the user locks, the bridge stops accepting data at once, before the services thread has
 even started to close the sessions: clearing the views once is not enough if already queued
 deliveries could fill them again. Scoped requests are refused while not unlocked.
+
+View models of an unlocked period make their requests through a :class:`Scope` pinned to that
+period's generation, not the bridge's current one: a view model that outlives a lock (a dialog
+QML still holds, say) cannot answer a request of the next unlocked period, even though the node
+numbers prompts afresh and the IDs may match.
 """
 
 import itertools
@@ -19,7 +24,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Final, Protocol
 
-from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtCore import QObject, Qt, Signal, SignalInstance
 
 from qrp2p.services.events import NodeState
 from qrp2p.ui import ops
@@ -55,6 +60,30 @@ class _Pending:
     gen: int
     scoped: bool
     done: Done | None
+
+
+class Scope:
+    """Makes requests for one generation; refused once that generation is over."""
+
+    __slots__ = ("_bridge", "_gen")
+
+    def __init__(self, bridge: Bridge, gen: int) -> None:
+        self._bridge = bridge
+        self._gen = gen
+
+    @property
+    def gen(self) -> int:
+        """The generation these requests belong to."""
+        return self._gen
+
+    @property
+    def updates(self) -> SignalInstance:
+        """The bridge's update signal (it carries only the current generation's updates)."""
+        return self._bridge.updates
+
+    def request(self, op: Op, done: Done | None = None) -> bool:
+        """Run ``op`` if this generation is still the current, accepting one."""
+        return self._bridge.submit_for(self._gen, op, done)
 
 
 class Bridge(QObject):
@@ -104,14 +133,26 @@ class Bridge(QObject):
     def request(self, op: Op, done: Done | None = None, *, scoped: bool = True) -> bool:
         """Run ``op`` on the services thread; ``done`` gets its reply on the Qt thread.
 
-        A scoped request is refused (``False``, and ``done`` is never called) unless the bridge
-        is accepting: its reply would belong to a generation the views no longer show.
+        A scoped request belongs to the current generation and is refused (``False``, and
+        ``done`` is never called) unless the bridge is accepting: its reply would belong to a
+        generation the views no longer show. View models use :meth:`scope` instead.
         """
-        if self._closed or (scoped and not self.accepting):
+        return self._submit(op, done, self._gen, scoped=scoped)
+
+    def submit_for(self, gen: int, op: Op, done: Done | None = None) -> bool:
+        """A scoped request of generation ``gen``: refused unless it is the current one."""
+        return self._submit(op, done, gen, scoped=True)
+
+    def scope(self) -> Scope:
+        """Requests pinned to the current generation (for one unlocked period's view models)."""
+        return Scope(self, self._gen)
+
+    def _submit(self, op: Op, done: Done | None, gen: int, *, scoped: bool) -> bool:
+        if self._closed or (scoped and not (self.accepting and gen == self._gen)):
             return False
         request_id = next(self._ids)
-        self._pending[request_id] = _Pending(self._gen, scoped, done)
-        self._host.submit(self._gen, request_id, op, scoped=scoped)
+        self._pending[request_id] = _Pending(gen, scoped, done)
+        self._host.submit(gen, request_id, op, scoped=scoped)
         return True
 
     def lock(self, done: Done | None = None) -> None:
