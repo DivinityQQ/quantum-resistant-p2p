@@ -75,7 +75,9 @@ OQS_INSTALL_PATH=/path/to/liboqs-install QRP2P_REQUIRE_LIBOQS=1 uv run pytest -m
 ```
 
 Run a node (M2): `uv run qrp2p-cli --data-dir /tmp/a` (a second node needs another data directory
-and, on one machine, another `--port`). Real-multicast discovery test: `QRP2P_TEST_MDNS=1 uv run
+and, on one machine, another `--port`). The desktop app (M3): `uv run qrp2p --data-dir /tmp/b
+--port 47471` (`--dev-preview` adds the Inspector layout preview). UI tests run offscreen
+(`tests/ui/conftest.py`); any Qt warning fails them. Native builds: `packaging/README.md`. Real-multicast discovery test: `QRP2P_TEST_MDNS=1 uv run
 pytest tests/services/test_discovery.py`.
 
 Formal model (ProVerif 2.05; CI runs it when `formal/` or `ci.yml` changes, and weekly):

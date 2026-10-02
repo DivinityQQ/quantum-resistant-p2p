@@ -150,7 +150,9 @@ The compact contact strip shows a bounded set of recent contacts and the selecte
 Use an **All contacts** chooser for the full list, with separate Contacts and Nearby sections
 and an **Enter address** action. A starting limit of five strip items is reasonable; reduce it
 as space becomes scarce. Do not wrap dozens of contacts into multiple header rows. The chooser
-may use a searchable virtualized list once the contact count warrants search.
+may use a searchable virtualized list once the contact count warrants search. Chips already in
+the strip keep their places when their contact becomes more recent; a newcomer enters at the
+front. A message from a visible contact must never reshuffle the chips under the pointer.
 
 Each contact item exposes name, short ID, trust, availability and unread count in a compact
 form or accessible detail. Trust cannot depend on an avatar or display name. Nearby items
@@ -227,6 +229,12 @@ remain intact. Update this table when adopting a different palette.
 | `labFill` | `#F2ECFA` | `#2E273B` | Subtle lab surface |
 | `dangerText` | `#AA343D` | `#EE9B9B` | Failure or dangerous action |
 | `dangerFill` | `#FBEAEC` | `#392329` | Failure detail / weakened-engine banner |
+| `hoverFill` | `#F4F3EF` | `#202426` | Pointer hover on quiet controls and rows |
+| `pressedFill` | `#E7E6E1` | `#2B3033` | Pressed state, distinct from hover and selection |
+| `primaryHover` | `#3A3D40` | `#FFFFFF` | Hovered primary action |
+| `online` | `#2F8A4C` | `#7FC495` | The open-session dot (always beside the word *Online*) |
+| `avatarFill` | `#E6E5E0` | `#2C3134` | Identity circle behind an initial |
+| `scrim` | `#242628` at 35% | `#000000` at 60% | Behind modal dialogs |
 
 Neutral actions keep the main UI quiet. Selection blue is a functional focus of attention,
 not a second branding palette. Green does not mean the entire protocol has been certified.
@@ -249,8 +257,10 @@ Use WCAG 2.2 AA contrast targets as engineering acceptance criteria: at least 4.
 text, 3:1 for qualifying large text, and 3:1 for essential non-text controls/graphical information.
 Decorative dividers may be subtler. Do not use them as the sole boundary of an editable field.
 The token pairings above pass the stated targets for main/secondary text, selection text,
-semantic banner text, focus on canvas and control boundaries on surface; actual composed
-components still need checking. See the [contrast references](#14-references-and-asset-provenance).
+semantic banner text, focus on canvas and control boundaries on surface. The pairs the M3
+components actually compose (text on every fill, banner text, the online dot, the glass-box
+frame) are measured in both themes by `tests/ui/test_contrast.py`, which reads `Theme.qml`.
+See the [contrast references](#14-references-and-asset-provenance).
 
 ### 4.3 Typography and geometry
 
@@ -609,8 +619,7 @@ value and states its format. Do not auto-copy secrets or auto-save an exposure r
 
 ### 11.1 Existing foundations versus planned work
 
-As of this guide, `src/qrp2p/ui/` is a package placeholder. The desktop controls/models below
-are proposed work. Available foundations include:
+M3 built the messenger on these foundations (§11.2 describes the result). Available inputs are:
 
 - [`services.node.Node`](../../src/qrp2p/services/node.py): front-end commands and node events;
   the CLI is an example of driving it.
@@ -635,53 +644,60 @@ Do not invent missing signature-check events, CPU timings or key lifecycle event
 Add public trace instrumentation in the relevant phase when needed, with tests and the same
 visibility rules. Public metadata may require careful review if it leaks message correlation.
 
-### 11.2 Suggested organization
+### 11.2 Organization (as built in M3)
 
 ```text
 ui/
-  app.py                    # Qt startup, resources, GUI entry point
-  bridge.py                 # queued Qt signals / services asyncio thread
+  app.py                    # Qt startup, fonts, icon provider, the `qrp2p` entry point
+  host.py                   # the services thread: owns the Node, generations, batching (no Qt)
+  ops.py                    # the requests view models may make (each runs on the services thread)
+  snapshots.py              # immutable values that cross the bridge, built on the services thread
+  bridge.py                 # Qt side: queued deliveries, generation filter, per-period Scope
+  text.py, icons.py         # display-safe peer text; Lucide icons tinted per theme
   viewmodels/
-    application.py          # locked/unlocked, navigation, appearance
-    contacts.py             # contact/nearby models and selection
-    conversation.py         # history, draft, delivery and transfers
-    prompts.py              # admission, verification, mismatch
-    inspector.py            # public evidence models and shared selection (M4)
-    lab.py                  # isolated run controller adapter (M4/M5)
-  qml/
-    theme/                  # semantic colors, type, geometry and motion
-    components/             # shared controls, indicators and pane patterns
-    screens/                # messenger, unlock, prompts, settings
-    inspector/              # timeline, bytes, keys, evidence views (M4)
-    lab/                    # hub, scenario controls, lessons (M4/M5)
-  resources/                # fonts, licensed Lucide icons, resource manifest
+    application.py          # which screen shows, unlock/lock, appearance, password change
+    workspace.py            # one unlocked period: contacts, strip, Nearby, selection, routing
+    conversation.py         # history (race-free load), drafts, delivery, files, contact actions
+    prompts.py              # contact/glass-box requests and key mismatches, with real outcomes
+    settings.py, rows.py    # the Settings screen; pure row builders for every list
+    listmodel.py            # list models updated by minimal diffs
+  qml/Main.qml, qml/Qrp2p/{Theme,Components,Screens}/
+  resources/                # Inter (OFL), Lucide (ISC), app icon
 ```
 
-Use the established Qt-main-thread / separate-asyncio-thread bridge. Read node state and
-subscribe to `Node.trace` on the services thread; never let QML call core machines or traverse
-mutable live engine state. Copy safe event batches across the boundary through queued signals.
-Qt list/table models mutate on the Qt thread. A trace callback must be bounded and fast; it
-cannot synchronously render, hash, format huge hex strings or block the service loop.
+Only `host.py` and `ops.py` touch the node, and only on the services thread; QML never reaches
+a live object. Read node state and subscribe to `Node.trace` on the services thread when the
+Inspector arrives (M4); never let QML call core machines or traverse mutable live engine state.
+Copy safe event batches across the boundary through queued signals. Qt list/table models mutate
+on the Qt thread. A trace callback must be bounded and fast; it cannot synchronously render, hash,
+format huge hex strings or block the service loop.
 
-The current `Node.session_info()` and `Node.transfers()` return mutable service objects. They
-are service-thread inputs to the adapter, not objects to expose to QML. Define immutable
-snapshots with primitive values: session/contact IDs, authenticated peer ID, role, profile,
-phase, trust, exposure, directional epoch/generation and transfer state/progress as needed.
-Do not include a `Session`, `Channel`, provider, signing key or arbitrary live object in a Qt
-property. Commands carry the expected session/request identity and return their real outcome;
-showing busy or a successful local enqueue is not a completed remote action.
+`Node.session_info()` and `Node.transfers()` return mutable service objects: they are
+services-thread inputs to `snapshots.py`, never Qt properties. Snapshots hold primitive values
+(IDs as hex, display-safe text, numbers): contact, session (profile, exposure, role), message,
+file transfer, prompt, mismatch, settings, identity and network facts. Requests return their real
+outcome (an accepted prompt can still end *busy*); a successful local enqueue is not a completed
+remote action.
 
-Assign a monotonic application generation to each unlocked lifecycle. Every queued snapshot,
-trace batch and prompt response carries that generation; invalidate it when lock begins and
-reject older batches before mutating models. Clearing visible models once is insufficient if
-already queued signals can refill them. Session-scoped IDs additionally prevent an old session's
-updates from changing its replacement. Test lock/unlock while signals and user decisions are
-queued. This generation is local bridge state, not a protocol field.
+Each unlocked lifecycle has a generation, assigned by the services thread at every node state
+change; the unlocked snapshot is taken in the same step. Every delivery carries it; the bridge
+stops accepting data when the user locks, before the node has started closing sessions, and drops
+anything not of the current unlocked generation. View models of one period request through a
+`Scope` pinned to its generation, so a stale dialog cannot answer a request of a later period even
+when the node reuses an ID. Locking destroys the period's workspace view model and every QML view
+of it. Tests cover lock with queued updates, a stale prompt after relock, replies racing a history
+load, admission ending busy, and an interrupted password change. This generation is local bridge
+state, not a protocol field.
 
-Choose one Basic style-loading strategy consistently; consult the pinned Qt documentation.
-Application components can wrap Basic controls. If implementing an actual Qt style module,
-its controls must use the appropriate Templates roots rather than derive recursively from
-themselves. This guide does not require creating a full custom style module on day one.
+Data flows one way: view-model properties are read-only to QML, and QML states intent through
+slots. Lists are pure functions of the snapshots, applied as minimal model diffs (moves, runs of
+inserts/removals, per-role changes), so delegates keep focus and scroll position.
+
+Choose one Basic style-loading strategy consistently; consult the pinned Qt documentation. M3
+sets the Basic style at startup and builds its controls on `QtQuick.Templates` roots
+(`AppButton`, `AppTextField`, `AppDialog`, `AppComboBox`…), with no custom style module.
+Every text item is `AppText` (plain text fixed) or sets `textFormat` to plain text explicitly;
+`tests/ui/test_qml.py` enforces this statically and checks every text item of a live window.
 
 ### 11.3 Performance and lifecycle
 

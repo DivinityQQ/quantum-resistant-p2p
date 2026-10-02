@@ -2,7 +2,7 @@
 
 | | |
 | --- | --- |
-| Version | 1.5 |
+| Version | 1.6 |
 | Date | 2026-10-02 |
 | Status | Approved for implementation |
 | Scope | Complete rewrite of `quantum-resistant-p2p` (v1) |
@@ -793,6 +793,7 @@ flowchart TB
 
 - **Sans-I/O core.** Bytes and events in, bytes and events out: no sockets, threads, clocks or Qt. Time and randomness are injected, which makes it deterministic to test, easy to fuzz, and trivially steppable.
 - **Separate asyncio thread.** Networking and storage run on their own event loop; the Qt UI talks to them only through the bridge, so neither can stall the other.
+- **The desktop bridge (M3).** Only the services thread holds the node and its objects. It hands the Qt side immutable snapshots of primitives (IDs as hex, display-safe text, numbers) and never a session, contact, bundle or exception object; a failed request crosses as a kind and a message. Every delivery carries a **lifecycle generation** that increases at each node state change, at the moment the services thread reports it; the unlocked snapshot is taken in that same step, so no event falls between snapshot and subscription. The Qt side accepts data only of the current unlocked generation and stops accepting the moment the user locks, so already queued deliveries cannot refill cleared views. View models of one unlocked period request through a scope pinned to its generation: a request from an earlier period is refused, because the node numbers prompts and mismatches afresh at every unlock and an old ID could name a new request. Updates are batched (at most 30 times a second) and flushed before any lifecycle change or reply, so a reply never overtakes the events before it.
 - **Trace bus.** Typed events with `session_id`, a monotonic timestamp, layer, kind and public fields. Each session has a ring buffer of 10,000 events; the UI receives batches at most 30 times a second.
 
 ### 12.1 Package layout
@@ -836,7 +837,7 @@ Versions are the latest on PyPI as of 2026-09-27 and are pinned in `uv.lock`.
 | Area | Package | Version | Role |
 | --- | --- | --- | --- |
 | Crypto | `cryptography` (pyca) | 50.0.1 | ML-KEM, ML-DSA, X25519, Ed25519, HKDF, HMAC, AEADs, Argon2id; bundles OpenSSL |
-| UI (extra `[gui]`) | `PySide6` | 6.11.2 | Qt 6 / QML, Qt Graphs for charts; optional, so `qrp2p-cli` runs without Qt |
+| UI (extra `[gui]`) | `PySide6-Essentials` | 6.11.2 | Qt 6 / QML (Qt Quick, Controls, Dialogs, Svg); optional, so `qrp2p-cli` runs without Qt. The Addons (Qt Graphs, for the Algorithm Lab's charts) join in M5 |
 | App payloads | `msgspec` | 0.21.1 | Typed Inner schemas; never used for hashed bytes |
 | Discovery | `zeroconf` | 0.151.5 | mDNS/DNS-SD, asyncio-native |
 | Interfaces | `ifaddr` | 0.2.0 | Local addresses to announce (a `zeroconf` dependency, used directly) |
@@ -852,7 +853,7 @@ SHA-3 and SHAKE come from the standard library's `hashlib`.
 
 **Development tooling:** `uv`, `ruff`, `pyright` (strict), `pytest` + `pytest-asyncio`, `hypothesis`, `mutmut`, `import-linter`, `pip-audit`, ProVerif and Tamarin. CI runs on GitHub Actions on Windows, macOS and Linux.
 
-**Packaging:** `pyside6-deploy` (Nuitka) produces a native build per OS, shipped as MSI/MSIX on Windows, a signed and notarised `.dmg` on macOS, and an AppImage or Flatpak on Linux. `pip install qrp2p` remains available for learners who want to read and modify the code: it installs the headless node and `qrp2p-cli`; `pip install qrp2p[gui]` adds the desktop app.
+**Packaging:** Nuitka with its PySide6 plugin (the engine `pyside6-deploy` drives, called directly by `packaging/build.py` so the QML, fonts and icons stay package data) produces a native build per OS, shipped as MSI/MSIX on Windows, a signed and notarised `.dmg` on macOS, and an AppImage or Flatpak on Linux; `packaging/README.md` has the installer and signing plan. `pip install qrp2p` remains available for learners who want to read and modify the code: it installs the headless node and `qrp2p-cli`; `pip install qrp2p[gui]` adds the desktop app, started with `qrp2p`.
 
 **Deliberately not used:** SQLCipher (column-level AEAD suffices and avoids native wheels), `qasync`/`QtAsyncio` (a separate loop thread instead), Electron or Tauri, and the stdlib `ssl` module (PQ support depends on each platform's OpenSSL build).
 
@@ -872,7 +873,7 @@ protocol fixtures or evidence that the GUI is implemented.
 | --- | --- |
 | Onboarding / unlock | Create the vault (with a note on why key derivation takes about a second), generate the identity with its sizes shown |
 | Main window | Compact recent-contact strip and full contact chooser (name, short ID, trust shield, availability, unread count), with separate *Nearby* from mDNS and manual connect. Spacious chat with sent/delivered states and file items with real progress. Inspector (Ctrl+I / Cmd+I) reflows the window into a resizable workspace, retaining chat where space permits; Timeline, Messages, Keys and Security tabs share selection. Narrow windows show one principal pane at a time |
-| Contact request / glass-box prompt | Authenticated identity, short ID, trust state, the decision |
+| Contact request / glass-box prompt | Authenticated identity, short ID, trust state, the decision, then what actually happened: an acceptance can still end *busy* (§6.4), the initiator can leave, the deadline can pass |
 | Verify contact | Safety-number grid, *Mark as verified* |
 | Key mismatch | Old vs new fingerprint, what a MITM is, *Cancel* / *Re-pin* |
 | Labs hub | Solo lab, Attack Lab, weakened engines, Algorithm Lab, lessons with progress |
@@ -900,7 +901,7 @@ identified explicitly rather than replaced with invented data.
 - **Design system:** custom QML components on Qt Quick Controls' *Basic* style, with the shared visual language in UI_DESIGN.md and platform window behavior, shortcuts and native dialogs where available. Light and dark themes follow the OS by default, with explicit overrides; semantic color/type/spacing tokens are shared by every screen. Inter as the bundled typeface (SIL OFL) and Lucide icons (ISC licence). Animations of 150–250 ms, only for state changes with meaning; immediate transitions under reduced motion.
 - **Performance:** virtualised lists, hex views that render only visible rows, trace events batched at 30 Hz or less, and no crypto or disk work on the UI thread.
 - **Accessibility:** keyboard access and semantic roles/actions for custom controls; textual alternatives to protocol graphs; text scaling, readable focus and contrast in both themes. UI_DESIGN.md defines contrast targets and reflow guidance.
-- Peer-supplied text is always rendered as plain text, never as rich text or HTML.
+- Peer-supplied text is always rendered as plain text, never as rich text or HTML. The desktop app also replaces control characters and bidirectional overrides as a terminal does (§14.4), so a file name cannot read differently from what it is, and wraps a name it embeds in a sentence in a first-strong isolate, so right-to-left text cannot reorder the sentence; ordinary right-to-left text still displays correctly.
 
 ### 14.4 Command line
 
