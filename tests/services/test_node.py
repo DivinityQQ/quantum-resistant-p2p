@@ -1,6 +1,7 @@
 """Two whole nodes over loopback: contacts, admission, chat, trust, lock (DESIGN §5, §7.6, §10)."""
 
 import asyncio
+import sqlite3
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import replace
 from pathlib import Path
@@ -324,6 +325,26 @@ async def test_change_password(nodes: tuple[NodeHarness, NodeHarness]) -> None:
     with pytest.raises(WrongPasswordError):
         await alice.node.unlock("pw")
     await alice.node.unlock("better password")
+
+
+async def test_rotation_storage_lock_also_locks_node(
+    nodes: tuple[NodeHarness, NodeHarness], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice, bob = nodes
+    _, alice_id = await befriend(alice, bob)
+
+    def uncertain_commit(*_: object) -> None:
+        alice.node._vault.lock()  # the vault rejects further use after an uncertain commit
+        msg = "injected commit failure"
+        raise sqlite3.OperationalError(msg)
+
+    monkeypatch.setattr(alice.node._vault, "_rekey_database", uncertain_commit)
+    with pytest.raises(sqlite3.OperationalError, match="injected commit failure"):
+        await alice.node.change_password("pw", "new")
+    assert alice.node.state is NodeState.LOCKED
+    assert alice.node._identity is None
+    await until(lambda: bob.node.session_info(alice_id) is None)
+    await alice.node.unlock("pw")
 
 
 async def test_a_second_node_on_the_same_directory_is_refused(tmp_path: Path) -> None:

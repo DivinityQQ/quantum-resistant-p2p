@@ -82,6 +82,10 @@ class VaultError(Exception):
     """A vault operation failed. Messages are fixed strings, never data or keys."""
 
 
+class PasswordChangeCleanupError(VaultError):
+    """The new password is active, but post-commit VACUUM/checkpoint cleanup failed."""
+
+
 class NoVaultError(VaultError):
     """There is no vault in the data directory yet."""
 
@@ -715,6 +719,9 @@ class Vault:
         Raises:
             WrongPasswordError: ``old`` is not the current password.
             ValueError: ``new`` is empty.
+            PasswordChangeCleanupError: The new password is active but cleanup failed.
+
+        A commit error closes the vault; unlock must verify the surviving headers before use.
         """
         state = self._state()
         header = state.file.header
@@ -735,16 +742,26 @@ class Vault:
                 )
         file = VaultFile(new_header, self._wrap(kek, new_header, dek, b"dek"), device_kek)
         pending = self._dir / VAULT_FILE_NEW
+        if pending.exists():
+            # A previous rotation may have committed before header promotion failed. Preserve
+            # the current key's header before overwriting its only recovery copy.
+            write_private_file(self._dir / VAULT_FILE, state.file.to_json())
         write_private_file(pending, file.to_json())
-        try:
-            self._rekey_database(_subkeys(dek))
-        except BaseException:
-            pending.unlink(missing_ok=True)
-            raise
+        # Keep the pending header on every failure: a COMMIT error can have an ambiguous
+        # outcome. Unlock checks the database against both headers and keeps the matching one.
+        self._rekey_database(_subkeys(dek))
         state.file = file
         state.kek = kek
         write_private_file(self._dir / VAULT_FILE, file.to_json())
         pending.unlink(missing_ok=True)
+        # Cleanup is after durable header promotion, so failure cannot strand a committed DB
+        # with only its old header. The new password is already active at this point.
+        try:
+            state.db.execute("VACUUM")
+            state.db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        except sqlite3.Error:
+            msg = "password changed, but vault cleanup failed"
+            raise PasswordChangeCleanupError(msg) from None
         _log.info(
             "vault re-keyed (Argon2id t=%d, m=%d KiB, p=%d)", params.t, params.m_kib, params.p
         )
@@ -759,6 +776,7 @@ class Vault:
         histories = {c.conv_id: self._entries(c.conv_id) for c in contacts}
         old_keys, old_conv_keys = state.keys, state.conv_keys
         state.keys, state.conv_keys = keys, {}
+        ready_to_commit = False
         try:
             with self._transaction():
                 for table in ("identity", "settings", "contacts", "conv_keys", "messages"):
@@ -769,11 +787,21 @@ class Vault:
                     self._insert_contact(contact)  # a new CK_c for each conversation
                     for entry in histories[contact.conv_id]:
                         self._insert_entry(contact.conv_id, entry)
+                ready_to_commit = True
         except BaseException:
-            state.keys, state.conv_keys = old_keys, old_conv_keys
+            if ready_to_commit:
+                # COMMIT failed: do not keep using keys whose match to the committed database
+                # is uncertain. Closing rolls back an uncommitted transaction; both headers
+                # survive so unlock can select the one that actually matches.
+                db.close()
+                state.keys.clear()
+                state.conv_keys.clear()
+                old_keys.clear()
+                old_conv_keys.clear()
+                self._open = None
+            else:
+                state.keys, state.conv_keys = old_keys, old_conv_keys
             raise
-        db.execute("VACUUM")
-        db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
 
     @property
     def device_unlock_configured(self) -> bool:

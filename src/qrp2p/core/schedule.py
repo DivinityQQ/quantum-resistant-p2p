@@ -9,6 +9,7 @@ cs_{n+1}   = HKDF-Extract(salt = Derive-Secret(cs_n, "derived", H("")), ikm = ss
 ap_I, ap_R = Derive-Secret(cs, "i ap traffic" | "r ap traffic", th)     th = th_final | th_rekey
 exporter   = Derive-Secret(cs, "exporter", th)
 ap'        = Expand-Label(ap, "traffic upd", "", Hlen)                   KeyUpdate
+rekey_salt = Derive-Secret(cs, "derived", H(""))                         retain instead of cs
 ```
 
 Every step goes through the session's :class:`~qrp2p.core.crypto.provider.CryptoProvider`, so a
@@ -51,18 +52,32 @@ class HandshakeSecrets:
 
 
 @dataclass(frozen=True, slots=True)
+class EpochState:
+    """Retained rekey state; neither secret can reconstruct this epoch's traffic keys."""
+
+    epoch: int
+    rekey_salt: Secret
+    exporter: Secret
+
+
+@dataclass(frozen=True, slots=True)
 class EpochSecrets:
-    """The chaining secret of an epoch and what it yields."""
+    """Temporary derivation results, consumed when installing directional traffic state."""
 
     epoch: int
     cs: Secret
     ap_i: Secret
     ap_r: Secret
     exporter: Secret
+    rekey_salt: Secret
+
+    def retained(self) -> EpochState:
+        """Discard the root and traffic-secret references from retained epoch state."""
+        return EpochState(self.epoch, self.rekey_salt, self.exporter)
 
     def all(self) -> tuple[Secret, ...]:
         """Every secret, for tracing labels and sizes."""
-        return (self.cs, self.ap_i, self.ap_r, self.exporter)
+        return (self.cs, self.ap_i, self.ap_r, self.exporter, self.rekey_salt)
 
 
 def handshake_secrets(
@@ -95,6 +110,7 @@ def _epoch(
         ap_i=provider.derive_secret(profile, cs, "i ap traffic", th, name=f"ap_I[{epoch}]"),
         ap_r=provider.derive_secret(profile, cs, "r ap traffic", th, name=f"ap_R[{epoch}]"),
         exporter=provider.derive_secret(profile, cs, "exporter", th, name=f"exporter_{epoch}"),
+        rekey_salt=_derived(provider, profile, cs, epoch + 1),
     )
 
 
@@ -113,12 +129,11 @@ def first_epoch(
 
 
 def next_epoch(
-    provider: CryptoProvider, profile: Profile, current: EpochSecrets, ss: Secret, th_rekey: bytes
+    provider: CryptoProvider, profile: Profile, current: EpochState, ss: Secret, th_rekey: bytes
 ) -> EpochSecrets:
-    """Derive epoch ``n+1`` from ``cs_n`` and the rekey's shared secret ``ss'``."""
+    """Derive epoch ``n+1`` from the precomputed salt and the rekey's shared secret ``ss'``."""
     n = current.epoch + 1
-    salt = _derived(provider, profile, current.cs, n)
-    cs = provider.extract(profile, salt, ss, name=f"cs_{n}")
+    cs = provider.extract(profile, current.rekey_salt, ss, name=f"cs_{n}")
     return _epoch(provider, profile, n, cs, th_rekey)
 
 

@@ -1,0 +1,9 @@
+(* Regression witness: caching initial traffic secrets defeats later directional updates. *)
+(* EXPECT false: not attacker(updatePastI *)
+query attacker(updatePastI).
+(* EXPECT false: not attacker(updatePastR *)
+query attacker(updatePastR).
+(* EXPECT false: not attacker(updateIntermediate *)
+query attacker(updateIntermediate).
+
+process KeyUpdateCompromise(false, true)

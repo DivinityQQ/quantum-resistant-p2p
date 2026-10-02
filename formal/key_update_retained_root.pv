@@ -1,0 +1,9 @@
+(* Regression witness: retaining cs defeats KeyUpdate even if obsolete traffic refs are gone. *)
+(* EXPECT false: not attacker(updatePastI *)
+query attacker(updatePastI).
+(* EXPECT false: not attacker(updatePastR *)
+query attacker(updatePastR).
+(* EXPECT false: not attacker(updateIntermediate *)
+query attacker(updateIntermediate).
+
+process KeyUpdateCompromise(true, false)
