@@ -1,10 +1,19 @@
 # Native desktop builds (packaging/build.py: Nuitka with its PySide6 plugin) on each OS, kept as
 # artifacts for testing the app without Python (the M3 gate). Unsigned: see packaging/README.md.
-# Manual only (Actions -> Build desktop apps -> Run workflow); not part of the "CI result" gate.
+# Runs on demand (Actions -> Build desktop apps -> Run workflow) and on pull requests that change
+# the packaging; it is not part of the "CI result" gate.
 name: Build desktop apps
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - "packaging/**"
+      - ".github/workflows/build.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
