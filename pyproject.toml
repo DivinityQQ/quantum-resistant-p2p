@@ -133,6 +133,11 @@ max-args = 7  # Expand-Label(h, S, label, ctx, L, name) mirrors the spec's signa
     "EM102",
 ]
 "tests/mutation_gate.py" = ["T201"]  # its output is the report
+"packaging/**" = [
+    "INP001",   # standalone scripts, not a package
+    "T201",     # their output is the report
+    "S603",     # they run the build tools with fixed arguments
+]
 "tools/**" = [
     "INP001",   # standalone scripts, not a package
     "T201",     # their output is the report
@@ -146,7 +151,7 @@ docstring-code-format = true
 # --- pyright ------------------------------------------------------------------------------------
 
 [tool.pyright]
-include = ["src", "tests", "tools"]
+include = ["src", "tests", "tools", "packaging"]
 exclude = ["docs/v2/research"]
 pythonVersion = "3.14"
 typeCheckingMode = "standard"

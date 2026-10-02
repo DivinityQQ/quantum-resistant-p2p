@@ -1,0 +1,80 @@
+# Native desktop builds (packaging/build.py: Nuitka with its PySide6 plugin) on each OS, kept as
+# artifacts for testing the app without Python (the M3 gate). Unsigned: see packaging/README.md.
+# Manual only (Actions -> Build desktop apps -> Run workflow); not part of the "CI result" gate.
+name: Build desktop apps
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  UV_VERSION: "0.12.19"
+  PYTHON_VERSION: "3.14"
+  NUITKA_VERSION: "4.2.2"
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # ubuntu-22.04: the oldest glibc we build against, so the Linux build runs on newer ones.
+        os: [ubuntu-22.04, windows-latest, macos-latest, macos-13]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Libraries Qt needs (Linux)
+        if: runner.os == 'Linux'
+        run: >-
+          sudo apt-get update &&
+          sudo apt-get install -y --no-install-recommends
+          libegl1 libgl1 libxkbcommon0 libfontconfig1 patchelf
+      - name: Build environment (separate from the development one)
+        run: |
+          uv venv build-env --python "$PYTHON_VERSION"
+          uv pip install --python build-env ".[gui]" "nuitka==$NUITKA_VERSION"
+      - name: Build
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then py=build-env/Scripts/python.exe; else py=build-env/bin/python; fi
+          "$py" packaging/build.py --out dist
+      - name: Smoke test (start, render the first screen, exit; any Qt warning fails it)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          case "$RUNNER_OS" in
+            Windows) app=dist/qrp2p_app.dist/qrp2p-desktop.exe ;;
+            macOS) app=dist/qrp2p_app.app/Contents/MacOS/qrp2p-desktop ;;
+            *) app=dist/qrp2p_app.dist/qrp2p-desktop ;;
+          esac
+          "$app" --data-dir smoke-data --no-mdns --smoke-test "dist/first-screen-${RUNNER_OS}.png"
+      - name: Pack
+        run: |
+          cd dist
+          name="qrp2p-${RUNNER_OS}-${RUNNER_ARCH}"
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            ditto -c -k --keepParent qrp2p_app.app "$name.zip"
+          elif [ "$RUNNER_OS" = "Windows" ]; then
+            7z a "$name.zip" qrp2p_app.dist
+          else
+            tar czf "$name.tar.gz" qrp2p_app.dist
+          fi
+      - uses: actions/upload-artifact@v7
+        with:
+          name: qrp2p-${{ runner.os }}-${{ runner.arch }}
+          path: |
+            dist/*.zip
+            dist/*.tar.gz
+            dist/first-screen-*.png
+          retention-days: 14

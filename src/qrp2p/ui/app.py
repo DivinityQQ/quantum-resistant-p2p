@@ -13,12 +13,22 @@ import logging
 import os
 import signal
 import sys
+import time
 from pathlib import Path
 from typing import Final
 
-from PySide6.QtCore import QEvent, QObject, Qt, QTimer
+from PySide6.QtCore import (
+    QEvent,
+    QMessageLogContext,
+    QObject,
+    Qt,
+    QTimer,
+    QtMsgType,
+    qInstallMessageHandler,
+)
 from PySide6.QtGui import QFont, QFontDatabase, QGuiApplication, QIcon
 from PySide6.QtQml import QQmlApplicationEngine
+from PySide6.QtQuick import QQuickWindow
 from PySide6.QtQuickControls2 import QQuickStyle
 
 from qrp2p.services.logs import setup_logging
@@ -35,6 +45,10 @@ FONTS: Final = ROOT / "resources" / "fonts"
 APP_ICON: Final = ROOT / "resources" / "app-icon.svg"
 STOP_TIMEOUT: Final = 20.0
 """Seconds to wait at exit for the node to lock and close."""
+SMOKE_DELAY_MS: Final = 2500
+"""``--smoke-test``: how long the first screen gets to open the node and render."""
+SMOKE_UNLOCK_TIMEOUT: Final = 60.0
+"""``--smoke-test``: seconds the throwaway vault may take to create and unlock."""
 
 _log = logging.getLogger(__name__)
 
@@ -75,7 +89,100 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--dev-preview", action="store_true", help="show development previews (Inspector layout)"
     )
+    parser.add_argument(
+        "--smoke-test",
+        type=Path,
+        metavar="PNG",
+        help="build check: render the first screen to PNG (in a new data directory, also a "
+        "throwaway vault and the messenger), then quit; 1 if Qt warned or a step failed",
+    )
     return parser.parse_args(argv)
+
+
+class WarningCounter:
+    """Counts Qt warnings (QML errors among them) for ``--smoke-test``."""
+
+    def __init__(self) -> None:
+        self.messages: list[str] = []
+
+    def __call__(self, mode: QtMsgType, _context: QMessageLogContext, message: str) -> None:
+        """Qt's message handler: record warnings and worse, print everything."""
+        if mode in {QtMsgType.QtWarningMsg, QtMsgType.QtCriticalMsg, QtMsgType.QtFatalMsg}:
+            self.messages.append(message)
+        sys.stderr.write(f"{message}\n")
+
+
+class SmokeTest:
+    """``--smoke-test``: prove a build works, then quit (exit 1 if Qt warned or a step failed).
+
+    It renders the first screen to the given PNG. In a data directory that did not exist before,
+    it then creates a throwaway vault (exercising Argon2id, the identity keys, SQLite and the
+    listener) and renders the messenger beside it as ``<name>-messenger.png``. It never touches
+    an existing vault.
+    """
+
+    def __init__(
+        self,
+        app: QGuiApplication,
+        engine: QQmlApplicationEngine,
+        controller: AppController,
+        out: Path,
+        warnings: WarningCounter,
+        *,
+        fresh: bool,
+    ) -> None:
+        self._app = app
+        self._engine = engine
+        self._controller = controller
+        self._out = out
+        self._warnings = warnings
+        self._fresh = fresh
+        self._deadline = 0.0
+        self._timer = QTimer()
+        self._timer.setInterval(100)
+        self._timer.timeout.connect(self._wait_for_messenger)
+
+    def start(self) -> None:
+        """Begin once the first screen has had time to settle."""
+        QTimer.singleShot(SMOKE_DELAY_MS, self._first_screen)
+
+    def _window(self) -> QQuickWindow | None:
+        roots = self._engine.rootObjects()
+        window = roots[0] if roots else None
+        return window if isinstance(window, QQuickWindow) else None
+
+    def _first_screen(self) -> None:
+        window = self._window()
+        if window is None:
+            self._app.exit(1)
+            return
+        window.grabWindow().save(str(self._out))
+        if not self._fresh or self._controller.property("phase") != "noVault":
+            self._finish(ok=True)
+            return
+        password = "smoke test only"  # noqa: S105  # a throwaway vault in a new directory
+        self._controller.createVault("Smoke test", password, password)
+        self._deadline = time.monotonic() + SMOKE_UNLOCK_TIMEOUT
+        self._timer.start()
+
+    def _wait_for_messenger(self) -> None:
+        if self._controller.property("phase") == "unlocked":
+            self._timer.stop()
+            self._controller.dismissWelcome()
+            QTimer.singleShot(500, self._messenger)
+        elif time.monotonic() > self._deadline or self._controller.property("error"):
+            self._timer.stop()
+            sys.stderr.write(f"smoke test: no messenger ({self._controller.property('error')})\n")
+            self._finish(ok=False)
+
+    def _messenger(self) -> None:
+        window = self._window()
+        if window is not None:
+            window.grabWindow().save(str(self._out.with_name(f"{self._out.stem}-messenger.png")))
+        self._finish(ok=window is not None)
+
+    def _finish(self, *, ok: bool) -> None:
+        self._app.exit(0 if ok and not self._warnings.messages else 1)
 
 
 def configure_qt() -> None:
@@ -130,11 +237,15 @@ def main(argv: list[str] | None = None) -> int:
     """The ``qrp2p`` entry point."""
     args = parse_args(argv)
     data_dir: Path = args.data_dir or default_data_dir()
+    fresh = not data_dir.exists()
     try:
         setup_logging(data_dir, verbose=args.verbose)
     except OSError as error:
         sys.stderr.write(f"Cannot use the data directory {data_dir}: {error.strerror or error}\n")
         return 1
+    warnings = WarningCounter()
+    if args.smoke_test is not None:
+        qInstallMessageHandler(warnings)
     configure_qt()
     app = QGuiApplication(sys.argv[:1])
     app.setWindowIcon(QIcon(str(APP_ICON)))
@@ -157,6 +268,10 @@ def main(argv: list[str] | None = None) -> int:
     ticker.timeout.connect(lambda: None)
     ticker.start(250)
     bridge.start()
+    smoke = None
+    if args.smoke_test is not None:
+        smoke = SmokeTest(app, engine, controller, args.smoke_test, warnings, fresh=fresh)
+        smoke.start()
     code = app.exec()
     ticker.stop()
     if not bridge.stop(STOP_TIMEOUT):

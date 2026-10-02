@@ -31,7 +31,7 @@ def test_wheel_contains_every_module_and_the_cli(tmp_path: Path) -> None:
         if path.is_file()
         and "__pycache__" not in path.parts
         and (
-            path.suffix in {".py", ".qml", ".svg", ".ttf", ".txt"}
+            path.suffix in {".py", ".qml", ".svg", ".png", ".ico", ".ttf", ".txt"}
             or path.name in {"py.typed", "qmldir"}
         )
     }
