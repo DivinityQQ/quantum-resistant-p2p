@@ -21,6 +21,7 @@ from qrp2p.services.discovery import NearbyPeer
 from qrp2p.services.events import (
     AdmissionPrompt,
     ConnectFailed,
+    ConnectProgress,
     ContactsChanged,
     HistoryChanged,
     KeyMismatchDetected,
@@ -236,7 +237,7 @@ class Cli:
 
     # -- events ---------------------------------------------------------------------------------
 
-    def on_event(self, event: NodeEvent) -> None:  # noqa: C901
+    def on_event(self, event: NodeEvent) -> None:  # noqa: C901, PLR0912  # one case per event
         """Print what the user should see."""
         match event:
             case StateChanged(state=NodeState.LOCKED):
@@ -262,6 +263,9 @@ class Cli:
                 reason = event.admit_reason or event.reason
                 label = reason.label if reason is not None else event.detail
                 self.out(f"** Connection to {display_text(event.target)} failed: {label}")
+            case ConnectProgress(contact_id=contact_id):
+                who = self._name(contact_id) if contact_id else display_text(event.target)
+                self.out(f"** Waiting for {who} to accept…")
             case AdmissionPrompt():
                 self._show_prompt(event)
             case PromptClosed(outcome="expired" | "withdrawn"):

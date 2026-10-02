@@ -14,8 +14,6 @@ import argparse
 import asyncio
 import contextlib
 import getpass
-import logging
-import logging.handlers
 import sys
 import threading
 from collections.abc import Callable
@@ -26,12 +24,11 @@ from prompt_toolkit import PromptSession, print_formatted_text
 
 from qrp2p.cli.commands import Cli
 from qrp2p.services.events import NodeState
+from qrp2p.services.logs import setup_logging
 from qrp2p.services.node import Node
-from qrp2p.services.paths import default_data_dir, ensure_private_dir
+from qrp2p.services.paths import default_data_dir
 from qrp2p.services.vault import VaultInUseError
 
-LOG_FILE: Final = "app.log"
-LOG_BYTES: Final = 1_000_000
 PROMPT: Final = "> "
 
 
@@ -141,23 +138,6 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     parser.add_argument("-v", "--verbose", action="store_true", help="log to standard error")
     return parser.parse_args(argv)
-
-
-def setup_logging(data_dir: Path, *, verbose: bool) -> None:
-    """Diagnostics to ``app.log`` in the data directory (never secrets or message text)."""
-    ensure_private_dir(data_dir)
-    handler = logging.handlers.RotatingFileHandler(
-        data_dir / LOG_FILE, maxBytes=LOG_BYTES, backupCount=1, encoding="utf-8"
-    )
-    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
-    root = logging.getLogger()
-    root.setLevel(logging.INFO)
-    root.addHandler(handler)
-    logging.getLogger("zeroconf").setLevel(logging.WARNING)
-    if verbose:
-        stream = logging.StreamHandler(sys.stderr)
-        stream.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
-        root.addHandler(stream)
 
 
 async def run(args: argparse.Namespace, terminal: Terminal) -> int:

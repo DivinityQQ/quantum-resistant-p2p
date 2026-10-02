@@ -5,6 +5,7 @@ import sqlite3
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -18,10 +19,12 @@ from qrp2p.services.discovery import SERVICE_TYPE, NearbyPeer
 from qrp2p.services.events import (
     AdmissionPrompt,
     ConnectFailed,
+    ConnectProgress,
     HistoryChanged,
     KeyMismatchDetected,
     NodeState,
     PromptClosed,
+    PromptOutcome,
     SessionEnded,
     SessionOpened,
     StateChanged,
@@ -146,11 +149,93 @@ async def test_declined_contact_request(nodes: tuple[NodeHarness, NodeHarness]) 
     alice, bob = nodes
     connecting = asyncio.create_task(alice.node.connect_address(LOOPBACK, bob.port))
     prompt = await bob.next(AdmissionPrompt)
-    await bob.node.answer_prompt(prompt.prompt_id, accept=False)
+    outcome = await bob.node.answer_prompt(prompt.prompt_id, accept=False)
+    assert outcome is PromptOutcome.DECLINED
     with pytest.raises(NodeError, match="declined"):
         await connecting
     assert alice.node.contacts() == []
     assert bob.node.contacts() == []
+    closed = await bob.next(PromptClosed)
+    assert closed == PromptClosed(prompt.prompt_id, PromptOutcome.DECLINED)
+
+
+async def test_accepted_contact_request_reports_its_outcome(
+    nodes: tuple[NodeHarness, NodeHarness],
+) -> None:
+    alice, bob = nodes
+    await befriend(alice, bob)
+    closed = await bob.next(PromptClosed)
+    assert closed.outcome is PromptOutcome.ACCEPTED
+
+
+async def test_initiator_hears_that_the_peer_decides(
+    nodes: tuple[NodeHarness, NodeHarness],
+) -> None:
+    alice, bob = nodes
+    connecting = asyncio.create_task(alice.node.connect_address(LOOPBACK, bob.port))
+    prompt = await bob.next(AdmissionPrompt)
+    progress = await alice.next(ConnectProgress)
+    assert progress == ConnectProgress(f"{LOOPBACK}:{bob.port}", None, "waiting_for_admission")
+    await bob.node.answer_prompt(prompt.prompt_id, accept=True, name="Alice")
+    bob_id = await connecting
+    await alice.node.disconnect(bob_id)
+    await until(lambda: not alice.node.is_online(bob_id))
+    # A pinned contact is admitted at once: the progress names the contact.
+    await alice.node.connect_contact(bob_id)
+    progress = await alice.next(ConnectProgress, lambda e: e.contact_id is not None)
+    assert progress.contact_id == bob_id
+    assert len(alice.of(ConnectProgress)) == 2
+
+
+async def test_acceptance_reports_busy_when_capacity_ran_out(
+    tmp_path: Path, nodes: tuple[NodeHarness, NodeHarness], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice, bob = nodes
+    monkeypatch.setattr(session_manager_module, "MAX_LIVE_SESSIONS", 1)
+    carol = await NodeHarness(tmp_path, "carol").start()
+    try:
+        connecting = asyncio.create_task(alice.node.connect_address(LOOPBACK, bob.port))
+        prompt = await bob.next(AdmissionPrompt)
+        # Carol takes Bob's only live slot while Alice's prompt is open.
+        carol_connecting = asyncio.create_task(carol.node.connect_address(LOOPBACK, bob.port))
+        carol_prompt = await bob.next(AdmissionPrompt, lambda e: e.prompt_id != prompt.prompt_id)
+        await bob.node.answer_prompt(carol_prompt.prompt_id, accept=True, name="Carol")
+        await carol_connecting
+        outcome = await bob.node.answer_prompt(prompt.prompt_id, accept=True, name="Alice")
+        assert outcome is PromptOutcome.BUSY
+        with pytest.raises(NodeError, match="busy"):
+            await connecting
+        closed = await bob.next(PromptClosed, lambda e: e.prompt_id == prompt.prompt_id)
+        assert closed.outcome is PromptOutcome.BUSY
+        # The user accepted the contact; only the session was refused.
+        assert [c.name for c in bob.node.contacts()] == ["Alice", "Carol"]
+    finally:
+        await carol.node.close()
+
+
+async def test_acceptance_reports_an_initiator_that_left(
+    nodes: tuple[NodeHarness, NodeHarness], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice, bob = nodes
+    connecting = asyncio.create_task(alice.node.connect_address(LOOPBACK, bob.port))
+    prompt = await bob.next(AdmissionPrompt)
+    real_new_contact = bob.node._new_contact
+    alice_manager, bob_manager = alice.node._manager, bob.node._manager
+    assert alice_manager is not None
+    assert bob_manager is not None
+
+    async def leave_while_saving(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+        for session in list(alice_manager.sessions()):  # Alice gives up while Bob saves
+            session.close()
+        await until(lambda: not any(s.awaiting_admission for s in bob_manager.sessions()))
+        return await real_new_contact(*args, **kwargs)
+
+    monkeypatch.setattr(bob.node, "_new_contact", leave_while_saving)
+    outcome = await bob.node.answer_prompt(prompt.prompt_id, accept=True, name="Alice")
+    assert outcome is PromptOutcome.GONE
+    assert [c.name for c in bob.node.contacts()] == ["Alice"]
+    with pytest.raises(NodeError):
+        await connecting
 
 
 async def test_unanswered_prompt_expires(nodes: tuple[NodeHarness, NodeHarness]) -> None:
@@ -158,7 +243,8 @@ async def test_unanswered_prompt_expires(nodes: tuple[NodeHarness, NodeHarness])
     connecting = asyncio.create_task(alice.node.connect_address(LOOPBACK, bob.port))
     prompt = await bob.next(AdmissionPrompt)
     bob.clock.advance(61.0)
-    await bob.next(PromptClosed, lambda e: e.prompt_id == prompt.prompt_id)
+    closed = await bob.next(PromptClosed, lambda e: e.prompt_id == prompt.prompt_id)
+    assert closed.outcome is PromptOutcome.EXPIRED
     with pytest.raises(NodeError, match="timeout"):
         await connecting
     with pytest.raises(NodeError):
@@ -173,7 +259,7 @@ async def test_glass_box_consent(nodes: tuple[NodeHarness, NodeHarness]) -> None
     connecting = asyncio.create_task(alice.node.connect_contact(bob_id, glass_box=True))
     prompt = await bob.next(AdmissionPrompt, lambda e: e.kind is PromptKind.GLASS_BOX)
     assert prompt.contact_id == alice_id
-    await bob.node.answer_prompt(prompt.prompt_id, accept=True)
+    assert await bob.node.answer_prompt(prompt.prompt_id, accept=True) is PromptOutcome.GLASS_BOX
     await connecting
     opened = await alice.next(SessionOpened, lambda e: e.glass_box)
     assert opened.contact_id == bob_id
@@ -192,7 +278,7 @@ async def test_declined_glass_box_gives_a_normal_session_and_rate_limits(
     await until(lambda: not bob.node.is_online(alice_id))
     connecting = asyncio.create_task(alice.node.connect_contact(bob_id, glass_box=True))
     prompt = await bob.next(AdmissionPrompt, lambda e: e.kind is PromptKind.GLASS_BOX)
-    await bob.node.answer_prompt(prompt.prompt_id, accept=False)
+    assert await bob.node.answer_prompt(prompt.prompt_id, accept=False) is PromptOutcome.NORMAL
     await connecting
     session = alice.node.session_info(bob_id)
     assert session is not None
@@ -222,6 +308,8 @@ async def test_key_mismatch_and_repin(
         mismatch = await alice.next(KeyMismatchDetected)
         assert mismatch.expected_short_id == bob.node.identity.short_id
         assert mismatch.actual_short_id == impostor.node.identity.short_id
+        assert mismatch.expected_peer_id == bob.node.identity.peer_id
+        assert mismatch.actual_peer_id == impostor.node.identity.peer_id
         assert impostor.of(AdmissionPrompt) == []  # Alice never revealed herself
         await alice.node.resolve_mismatch(mismatch.mismatch_id, repin=True)
         contact = alice.node.contact(bob_id)

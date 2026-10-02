@@ -32,7 +32,9 @@ from qrp2p.core.handshake import (
     AdmissionRequired,
     KeyMismatch,
     ProfileRejected,
+    State,
 )
+from qrp2p.core.trace import StateChanged as MachineStateChanged
 from qrp2p.core.wire import (
     Chat,
     FileAccept,
@@ -52,6 +54,7 @@ from qrp2p.services.discovery import Discovery, NearbyPeer, instance_name
 from qrp2p.services.events import (
     AdmissionPrompt,
     ConnectFailed,
+    ConnectProgress,
     ContactsChanged,
     HistoryChanged,
     KeyMismatchDetected,
@@ -60,6 +63,7 @@ from qrp2p.services.events import (
     NodeState,
     Notice,
     PromptClosed,
+    PromptOutcome,
     SessionEnded,
     SessionOpened,
     StateChanged,
@@ -87,7 +91,7 @@ from qrp2p.services.models import (
 from qrp2p.services.paths import default_downloads_dir
 from qrp2p.services.session import Session, SessionEnd, SessionNotOpenError, SessionRole
 from qrp2p.services.session_manager import SessionManager
-from qrp2p.services.trace_bus import TraceBus
+from qrp2p.services.trace_bus import TraceBus, TraceRecord
 from qrp2p.services.transport import ConnectFailed as TransportConnectFailed
 from qrp2p.services.transport import Listener
 from qrp2p.services.vault import DEFAULT_KDF, KdfPolicy, Keychain, Vault
@@ -216,6 +220,7 @@ class Node:
         self._subscribers: list[Subscriber] = []
         self._state = NodeState.CLOSED
         self.trace = TraceBus()
+        self.trace.subscribe(self._on_trace)
         self._reset_unlocked_state()
 
     def _reset_unlocked_state(self) -> None:
@@ -868,11 +873,13 @@ class Node:
             deadline=prompt.deadline,
         )
 
-    async def answer_prompt(self, prompt_id: int, *, accept: bool, name: str = "") -> None:
-        """Answer an admission prompt.
+    async def answer_prompt(self, prompt_id: int, *, accept: bool, name: str = "") -> PromptOutcome:
+        """Answer an admission prompt and report what actually happened.
 
         Contact request: ``accept`` pins the contact under ``name``. Glass-box request: ``accept``
-        gives a glass-box session, declining a normal one.
+        gives a glass-box session, declining a normal one. Either acceptance can still end as
+        :attr:`~PromptOutcome.BUSY` if the live-session cap was reached while the prompt was
+        open (DESIGN §6.4).
 
         Raises:
             NodeError: No such prompt, or it expired.
@@ -888,17 +895,25 @@ class Node:
             if accept:
                 profile = session.profile or profile_by_id(self._settings.default_profile)
                 await self._new_contact(prompt.peer, name, profile)
-                if session.awaiting_admission:
-                    session.accept(glass_box=False)
-            elif session.awaiting_admission:
+                if not session.awaiting_admission:  # the initiator left while we saved
+                    outcome = PromptOutcome.GONE
+                elif session.accept(glass_box=False):
+                    outcome = PromptOutcome.ACCEPTED
+                else:
+                    outcome = PromptOutcome.BUSY
+            else:
                 session.reject(AdmitReason.DECLINED)
+                outcome = PromptOutcome.DECLINED
         elif accept:
             self._limiter.accepted(peer_id)
-            session.accept(glass_box=True)
+            admitted = session.accept(glass_box=True)
+            outcome = PromptOutcome.GLASS_BOX if admitted else PromptOutcome.BUSY
         else:
             self._limiter.declined(peer_id, self._clock())
-            session.accept(glass_box=False)
-        self._emit(PromptClosed(prompt_id, "accepted" if accept else "declined"))
+            admitted = session.accept(glass_box=False)
+            outcome = PromptOutcome.NORMAL if admitted else PromptOutcome.BUSY
+        self._emit(PromptClosed(prompt_id, outcome))
+        return outcome
 
     async def resolve_mismatch(self, mismatch_id: int, *, repin: bool) -> None:
         """After a key mismatch: cancel, or re-pin the contact to the identity that answered.
@@ -1140,8 +1155,21 @@ class Node:
                 outgoing.contact_id,
                 event.expected.short_id,
                 event.actual.short_id,
+                event.expected.peer_id,
+                event.actual.peer_id,
             )
         )
+
+    def _on_trace(self, record: TraceRecord) -> None:
+        """Tell front ends when an outgoing handshake waits for the peer's user (DESIGN §7.6)."""
+        event = record.event
+        if not isinstance(event, MachineStateChanged) or event.state != State.WAIT_ADMIT:
+            return
+        outgoing = self._outgoing.get(record.session_id)
+        if outgoing is not None:
+            self._emit(
+                ConnectProgress(outgoing.target, outgoing.contact_id, "waiting_for_admission")
+            )
 
     def _on_profile_rejected(self, session: Session, event: ProfileRejected) -> None:
         outgoing = self._outgoing.get(session.id)
@@ -1253,7 +1281,8 @@ class Node:
         for prompt_id, prompt in list(self._prompts.items()):
             if prompt.session is session:
                 del self._prompts[prompt_id]
-                self._emit(PromptClosed(prompt_id, "expired" if end.reason else "withdrawn"))
+                outcome = PromptOutcome.EXPIRED if end.reason else PromptOutcome.WITHDRAWN
+                self._emit(PromptClosed(prompt_id, outcome))
         if self._transfers is not None:
             await self._transfers.session_ended(session)
         await self._fail_unsent(session)

@@ -33,9 +33,15 @@ dependencies = [
 # Lab-only algorithms (DESIGN §11.9). Never imported directly: qrp2p.lab.oqs_loader checks for a
 # bundled liboqs first, because liboqs-python otherwise builds liboqs at import time.
 lab = ["liboqs-python>=0.16.0.1"]
+# The desktop app (DESIGN §13, §14): Qt Quick and Controls are in PySide6-Essentials; the Addons
+# (Qt Graphs for the Algorithm Lab) join in M5.
+gui = ["PySide6-Essentials>=6.11.2"]
 
 [project.scripts]
 qrp2p-cli = "qrp2p.cli.app:main"
+
+[project.gui-scripts]
+qrp2p = "qrp2p.ui.app:main"
 
 [project.urls]
 Repository = "https://github.com/DivinityQQ/quantum-resistant-p2p"
@@ -51,6 +57,7 @@ dev = [
     "pyright>=1.1.414",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
+    "pytest-qt>=4.5.0",
     "ruff>=0.16.9",
 ]
 

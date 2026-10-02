@@ -9,11 +9,13 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+import msgspec
 import pytest
 
 from qrp2p.core.crypto.profiles import ProfileId
 from qrp2p.services import vault as vault_module
 from qrp2p.services.models import (
+    Appearance,
     Contact,
     Direction,
     FileInfo,
@@ -904,12 +906,31 @@ def test_every_setting_round_trips_in_one_row(tmp_path: Path) -> None:
         port=40000,
         downloads_dir="/somewhere",
         max_file_size=123,
+        appearance=Appearance.DARK,
+        reduced_motion=True,
+        text_scale=130,
     )
     vault.save_settings(Settings())
     vault.save_settings(settings)
     again = reopen(vault)
     assert again.settings() == settings
     assert again._state().db.execute("SELECT count(*) FROM settings").fetchone() == (1,)
+
+
+def test_settings_of_a_newer_version_fall_back_to_defaults(tmp_path: Path) -> None:
+    vault = make_vault(tmp_path)
+    vault.save_settings(Settings(display_name="Zed"))
+    uid = vault._state().db.execute("SELECT row_uid FROM settings").fetchone()[0]
+    row = msgspec.msgpack.encode(
+        {"display_name": "Zed", "appearance": "sepia", "text_scale": 999, "future_field": 1}
+    )
+    sealed = vault._seal_row(vault._key("settings"), "settings", uid, "data", row)
+    with vault._transaction():
+        vault._state().db.execute("UPDATE settings SET data = ?", (sealed,))
+    settings = reopen(vault).settings()
+    assert settings.display_name == "Zed"
+    assert settings.appearance is Appearance.SYSTEM
+    assert settings.text_scale == 100
 
 
 def test_every_contact_field_round_trips(tmp_path: Path) -> None:
