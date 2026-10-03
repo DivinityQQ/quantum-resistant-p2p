@@ -642,18 +642,13 @@ class SoloLab:
 
         return reveal
 
-    def _describe_peer(self, node: _Node) -> None:
+    def _note_peer(self, node: _Node) -> None:
+        """Once Reply authenticated Bob, Alice's view names him: he matched her pin."""
         if isinstance(node.machine, Initiator) and node.machine.peer is not None:
-            peer = node.machine.peer
-            self._bus.describe(
-                node.session_id,
-                peer_id=peer.peer_id,
-                peer_short_id=peer.short_id,
-                pin_result="matched",
-            )
+            self._bus.authenticated(node.session_id, node.machine.peer, pin="matched")
 
     def _absorb(self, node: _Node, events: Sequence[object]) -> None:
-        self._describe_peer(node)
+        self._note_peer(node)
         for event in events:
             match event:
                 case Send(frame=frame):
@@ -668,15 +663,17 @@ class SoloLab:
                     self._ended(node, event)
                 case AdmissionRequired():
                     node.awaiting_admission = True
-                    self._bus.describe(
+                    self._bus.admitting(
                         node.session_id,
-                        peer_id=event.peer.peer_id,
-                        peer_short_id=event.peer.short_id,
+                        event.peer,
+                        event.profile.name,
+                        glass_box_requested=event.gb_request,
                     )
                 case Established():
                     node.channel, node.machine = event.channel, None
-                    self._bus.handshake_done(node.session_id)
-                    self._bus.describe(node.session_id, established=True)
+                    self._bus.established(
+                        node.session_id, event.peer, event.profile.name, glass_box=event.glass_box
+                    )
                 case KeyMismatch() | ProfileRejected():
                     pass  # the lab pins the true identity and serves its own profile
                 case _:
@@ -689,14 +686,9 @@ class SoloLab:
     def _ended(self, node: _Node, closed: Closed) -> None:
         node.ended = True
         node.awaiting_admission = False
-        admit = closed.admit_reason.label if closed.admit_reason is not None else ""
-        self._bus.describe(
-            node.session_id,
-            end_reason=closed.reason.label,
-            admit_reason=admit,
-            by_peer=closed.by_peer,
+        self._bus.closed(
+            node.session_id, closed.reason, closed.admit_reason, by_peer=closed.by_peer
         )
-        self._bus.session_ended(node.session_id)
 
     def _drain(self, node: _Node) -> None:
         """Seal what ``node`` queued, as its writer would; a closing channel sends only close."""

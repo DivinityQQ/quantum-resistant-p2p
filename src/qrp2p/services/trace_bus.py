@@ -25,6 +25,8 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Final, Literal
 
+from qrp2p.core.crypto.identity import IdentityBundle
+from qrp2p.core.errors import AdmitReason, CloseReason
 from qrp2p.core.trace import FrameTraced, RecordTraced, TraceEvent
 from qrp2p.core.wire import FRAME_HEADER_LEN, FrameType
 from qrp2p.services.exposure import Exposure, RecordRevealed, ValueRevealed
@@ -172,15 +174,77 @@ class TraceBus:
         self._rings[info.session_id] = ring
         self._announce(info)
 
-    def describe(self, session_id: int, **changes: object) -> None:
-        """Update a session's descriptor (fields of :class:`SessionInfo`)."""
-        ring = self._rings.get(session_id)
-        if ring is None:
-            return
-        info = replace(ring.info, **changes)
-        if info != ring.info:
-            ring.info = info
-            self._announce(info)
+    # The descriptor follows a session's life: every driver (the session manager, the solo
+    # lab) reports the same moments through these, so the Inspector reads them the same way.
+
+    def authenticated(self, session_id: int, peer: IdentityBundle, *, pin: PinResult = "") -> None:
+        """The handshake authenticated the peer; ``pin`` is an initiator's comparison with it.
+
+        A mismatched peer proved its identity too, just not the pinned one.
+        """
+        self._describe(
+            session_id, peer_id=peer.peer_id, peer_short_id=peer.short_id, pin_result=pin
+        )
+
+    def admitting(
+        self, session_id: int, peer: IdentityBundle, profile: str, *, glass_box_requested: bool
+    ) -> None:
+        """A responder authenticated the initiator in Confirm; admission decides next."""
+        self._describe(
+            session_id,
+            peer_id=peer.peer_id,
+            peer_short_id=peer.short_id,
+            profile=profile,
+            glass_box_requested=glass_box_requested,
+        )
+
+    def established(
+        self, session_id: int, peer: IdentityBundle, profile: str, *, glass_box: bool
+    ) -> None:
+        """The session is open: later events go to the bounded tail."""
+        self._describe(
+            session_id,
+            peer_id=peer.peer_id,
+            peer_short_id=peer.short_id,
+            profile=profile,
+            glass_box=glass_box,
+            established=True,
+        )
+        self.handshake_done(session_id)
+
+    def bound(self, session_id: int) -> None:
+        """The authenticated peer is a saved contact, and the session was bound to it."""
+        self._describe(session_id, contact_saved=True)
+
+    def closed(
+        self,
+        session_id: int,
+        reason: CloseReason | None,
+        admit_reason: AdmitReason | None = None,
+        *,
+        by_peer: bool = False,
+    ) -> None:
+        """The session ended, with its named reason (``None``: the connection was lost)."""
+        self._describe(
+            session_id,
+            end_reason=reason.label if reason is not None else "",
+            admit_reason=admit_reason.label if admit_reason is not None else "",
+            by_peer=by_peer,
+        )
+        self.session_ended(session_id)
+
+    def session_ended(self, session_id: int) -> None:
+        """Keep the ring for a while; drop the oldest ended ring beyond :data:`ENDED_KEPT`.
+
+        Idempotent: :meth:`closed` calls it, and a session's runner calls it again when done.
+        """
+        self.handshake_done(session_id)
+        self._describe(session_id, ended=True)
+        self._ended[session_id] = None
+        while len(self._ended) > ENDED_KEPT:
+            oldest, _ = self._ended.popitem(last=False)
+            self._rings.pop(oldest, None)
+            self._removed(oldest)
 
     def handshake_done(self, session_id: int) -> None:
         """The handshake is over: later events go to the bounded tail."""
@@ -188,15 +252,14 @@ class TraceBus:
         if ring is not None:
             ring.head_open = False
 
-    def session_ended(self, session_id: int) -> None:
-        """Keep the ring for a while; drop the oldest ended ring beyond :data:`ENDED_KEPT`."""
-        self.handshake_done(session_id)
-        self.describe(session_id, ended=True)
-        self._ended[session_id] = None
-        while len(self._ended) > ENDED_KEPT:
-            oldest, _ = self._ended.popitem(last=False)
-            self._rings.pop(oldest, None)
-            self._removed(oldest)
+    def _describe(self, session_id: int, **changes: object) -> None:
+        ring = self._rings.get(session_id)
+        if ring is None:
+            return
+        info = replace(ring.info, **changes)
+        if info != ring.info:
+            ring.info = info
+            self._announce(info)
 
     def sessions(self) -> tuple[SessionInfo, ...]:
         """Every session with a ring, oldest first."""
