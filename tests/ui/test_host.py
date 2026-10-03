@@ -10,7 +10,7 @@ import pytest
 from qrp2p.services.events import AdmissionPrompt, SessionOpened
 from qrp2p.services.node import Node, NodeError
 from qrp2p.ui import ops
-from qrp2p.ui.host import CLOSED, IN_USE, STALE, ServiceHost
+from qrp2p.ui.host import CLOSED, IN_USE, STALE, ServiceHost, Services
 from qrp2p.ui.labhost import INACTIVE, LabSnap
 from qrp2p.ui.snapshots import (
     Batch,
@@ -217,7 +217,7 @@ async def test_failures_reach_the_requester_as_text(alice: HostHarness) -> None:
     assert malformed.error is not None
     assert malformed.error.kind == "value"
 
-    async def broken(_: Node) -> None:
+    async def broken(_: Services) -> None:
         msg = "a bug"
         raise RuntimeError(msg)
 

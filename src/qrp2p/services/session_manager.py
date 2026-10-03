@@ -366,22 +366,16 @@ class SessionManager:
             # Reply authenticated the responder, and a pinned one also matched its pin: a
             # mismatch raises before the machine knows its peer (DESIGN §7.5).
             matched = session.expected_peer is not None
-            self._trace.describe(
-                session.id,
-                peer_id=peer.peer_id,
-                peer_short_id=peer.short_id,
-                pin_result="matched" if matched else "",
-            )
+            self._trace.authenticated(session.id, peer, pin="matched" if matched else "")
         self._trace.publish(session.id, self._clock(), event)
 
     def admission(self, session: Session, request: AdmissionRequired) -> None:
         """Busy checks first (simultaneous open, live-session cap), then the node's policy."""
         peer_id = request.peer.peer_id
-        self._trace.describe(
+        self._trace.admitting(
             session.id,
-            peer_id=peer_id,
-            peer_short_id=request.peer.short_id,
-            profile=request.profile.name,
+            request.peer,
+            request.profile.name,
             glass_box_requested=request.gb_request,
         )
         if not request.gb_request:
@@ -408,12 +402,7 @@ class SessionManager:
     def key_mismatch(self, session: Session, event: KeyMismatch) -> None:
         """See :class:`~qrp2p.services.session.SessionHooks`."""
         # It proved this identity, even if not the pinned one.
-        self._trace.describe(
-            session.id,
-            peer_id=event.actual.peer_id,
-            peer_short_id=event.actual.short_id,
-            pin_result="mismatched",
-        )
+        self._trace.authenticated(session.id, event.actual, pin="mismatched")
         self._hooks.key_mismatch(session, event)
 
     def profile_rejected(self, session: Session, event: ProfileRejected) -> None:
@@ -441,15 +430,8 @@ class SessionManager:
             self._open_gate(session)
         else:
             self._close_gate(session)
-        self._trace.describe(
-            session.id,
-            peer_id=peer.peer_id,
-            peer_short_id=peer.short_id,
-            profile=session.profile.name if session.profile else "",
-            glass_box=session.glass_box,
-            established=True,
-        )
-        self._trace.handshake_done(session.id)
+        profile = session.profile.name if session.profile else ""
+        self._trace.established(session.id, peer, profile, glass_box=session.glass_box)
         if not self._capacity_available(peer.peer_id):
             # An outgoing handshake can finish after another session consumed the last slot.
             # Do not register or report it as connected; send an authenticated close instead.
@@ -492,12 +474,7 @@ class SessionManager:
         """Forget the session; tell the node whether it merely lost a simultaneous open."""
         self._release_slot(session)
         self._close_gate(session)
-        self._trace.describe(
-            session.id,
-            end_reason=end.reason.label if end.reason is not None else "",
-            admit_reason=end.admit_reason.label if end.admit_reason is not None else "",
-            by_peer=end.by_peer,
-        )
+        self._trace.closed(session.id, end.reason, end.admit_reason, by_peer=end.by_peer)
         peer = session.peer or session.expected_peer
         if session.peer is not None and self._live.get(session.peer.peer_id) is session:
             del self._live[session.peer.peer_id]

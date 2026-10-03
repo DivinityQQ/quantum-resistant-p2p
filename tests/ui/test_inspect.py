@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from qrp2p.core.crypto.identity import BUNDLE_LEN
 from qrp2p.core.crypto.profiles import HYBRID_1
 from qrp2p.core.errors import AdmitReason, CloseReason
 from qrp2p.core.trace import (
@@ -73,6 +74,11 @@ def frames(items: list[TraceItem]) -> list[tuple[int, FrameTraced]]:
 
 def frame_of(items: list[TraceItem], kind: FrameType, direction: Direction) -> FrameTraced:
     return next(f for _, f in frames(items) if f.frame.type is kind and f.direction is direction)
+
+
+def test_the_dissector_uses_the_cores_sizes_and_names() -> None:
+    assert fields.BUNDLE_LEN == BUNDLE_LEN
+    assert fields.PROFILE_IDS == {0x01: "HYBRID-1", 0x02: "PQ-CNSA-1", 0x7F: "LAB-CLASSICAL"}
 
 
 def test_reply_fields_carry_frame_and_body_offsets() -> None:

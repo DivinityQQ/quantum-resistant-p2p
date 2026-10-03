@@ -877,7 +877,7 @@ formal/            # ProVerif models (+ weakened variants), Tamarin cross-check
 
 - `core` imports nothing from `services`, `lab` or `ui`, and no third-party package other than `cryptography` and `msgspec`.
 - `services` never imports `lab.weakened` or liboqs (`oqs`).
-- `ui` may import types from `core.trace` and `core.wire` for the Inspector, but never drives `core` directly.
+- `ui` may import types from `core.trace`, `core.wire` and `core.errors` for the Inspector (events, layouts and reason names), but never drives `core` directly.
 - `cli` drives `services` only: it never imports `core`, `lab` or `ui`.
 - `services` and `cli` never import Qt, so a node runs headless.
 - Only `cli` imports `prompt_toolkit`.

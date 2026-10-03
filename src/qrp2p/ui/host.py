@@ -20,7 +20,6 @@ one file transfer are coalesced: only the latest counts.
 
 import asyncio
 import contextlib
-import inspect
 import logging
 import threading
 from collections.abc import Awaitable, Callable
@@ -100,27 +99,23 @@ CLOSED: Final = ErrorInfo("closed", "The app is shutting down.")
 
 _log = logging.getLogger(__name__)
 
-type NodeOp = Callable[[Node], Awaitable[object]]
-"""A request: runs on the services thread with the node; returns a snapshot or a primitive."""
-
 
 @dataclass(frozen=True, slots=True)
-class TapOp:
-    """A request to an Inspector's :class:`~qrp2p.ui.tap.TraceTap` (services thread)."""
+class Services:
+    """What a request runs with, on the services thread: the node, the Inspector taps, the lab."""
 
-    run: Callable[[TraceTap], object]
-    source: str = "node"
-    """Which tap: the node's (``node``) or the solo lab's (``lab``)."""
+    node: Node
+    lab: LabHost
+    node_tap: TraceTap
+    """The Inspector's tap of the node's sessions (the lab has its own, ``lab.tap``)."""
 
-
-@dataclass(frozen=True, slots=True)
-class LabOp:
-    """A request to the solo lab (services thread): returns a snapshot of the lab."""
-
-    run: Callable[[LabHost], object]
+    def tap(self, source: str) -> TraceTap:
+        """The tap of ``source``: the node's sessions (``node``) or the solo lab's (``lab``)."""
+        return self.lab.tap if source == "lab" else self.node_tap
 
 
-type Op = NodeOp | TapOp | LabOp
+type Op = Callable[[Services], Awaitable[object]]
+"""A request: runs on the services thread; returns a snapshot or a primitive."""
 type Post = Callable[[Delivery], None]
 
 
@@ -200,8 +195,7 @@ class ServiceHost:
         self._progress_at: dict[tuple[str, str], int] = {}
         self._flush_handle: asyncio.TimerHandle | None = None
         self._requests: set[asyncio.Task[None]] = set()
-        self._tap: TraceTap | None = None
-        self._lab: LabHost | None = None
+        self._services: Services | None = None
 
     # -- Qt thread -------------------------------------------------------------------------------
 
@@ -254,8 +248,11 @@ class ServiceHost:
             return
         self._node = node
         node.subscribe(self._on_event)
-        self._tap = TraceTap.of_node(node, wake=self._schedule_flush)
-        self._lab = LabHost(wake=self._schedule_flush, node=node)
+        self._services = Services(
+            node,
+            LabHost(wake=self._schedule_flush, node=node),
+            TraceTap.of_node(node, wake=self._schedule_flush),
+        )
         try:
             await node.open()
         except VaultInUseError:
@@ -284,32 +281,19 @@ class ServiceHost:
         task.add_done_callback(self._requests.discard)
 
     async def _execute(self, gen: int, request_id: int, op: Op, *, scoped: bool) -> None:
-        node = self._node
-        if node is None:
+        services = self._services
+        if services is None:
             self._reply(Reply(gen, request_id, error=CLOSED))
             return
         if scoped and gen != self._gen:
             self._reply(Reply(gen, request_id, error=STALE))
             return
         try:
-            if isinstance(op, TapOp):
-                value = op.run(self._tap_of(op.source))
-            elif isinstance(op, LabOp):
-                assert self._lab is not None  # noqa: S101  # created with the node
-                value = op.run(self._lab)
-                if inspect.isawaitable(value):  # recordings go through the vault's thread
-                    value = await value
-            else:
-                value = await op(node)
+            value = await op(services)
         except Exception as error:  # noqa: BLE001  # every failure becomes a reply
             self._reply(Reply(gen, request_id, error=error_info(error)))
             return
         self._reply(Reply(gen, request_id, value=value))
-
-    def _tap_of(self, source: str) -> TraceTap:
-        tap = self._lab.tap if source == "lab" and self._lab is not None else self._tap
-        assert tap is not None  # noqa: S101  # created with the node
-        return tap
 
     def _reply(self, reply: Reply) -> None:
         self._flush()
@@ -326,10 +310,9 @@ class ServiceHost:
 
     def _lifecycle(self, state: str, *, error: str = "") -> None:
         self._flush()
-        if self._tap is not None:
-            self._tap.close()  # a lock clears the bus; a new period inspects afresh
-        if self._lab is not None:
-            self._lab.close()  # the lab's run and values belong to the unlocked period
+        if self._services is not None:
+            self._services.node_tap.close()  # a lock clears the bus; a new period inspects afresh
+            self._services.lab.close()  # the lab's run and values belong to the unlocked period
         self._gen += 1
         workspace = self._workspace() if state == NodeState.UNLOCKED else None
         self._post(Lifecycle(self._gen, state, workspace, error))
@@ -410,10 +393,9 @@ class ServiceHost:
         if self._flush_handle is not None:
             self._flush_handle.cancel()
             self._flush_handle = None
-        if self._tap is not None:
-            self._outbox.extend(self._tap.drain())
-        if self._lab is not None:
-            self._outbox.extend(self._lab.tap.drain())
+        if self._services is not None:
+            self._outbox.extend(self._services.node_tap.drain())
+            self._outbox.extend(self._services.lab.tap.drain())
         if not self._outbox:
             return
         batch = Batch(self._gen, tuple(self._outbox))

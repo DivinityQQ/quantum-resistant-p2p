@@ -40,7 +40,7 @@ def inspecting(
     ui.key(Qt.Key.Key_I, CTRL)
     ui.backend.reply(ui.backend.one("inspect_sessions"), (facts(**changes),))
     request = ui.backend.one("inspect")
-    assert request.args == {"session_id": 7, "after": -1}
+    assert request.args == {"session_id": 7, "after": -1, "source": "node"}
     ui.backend.reply(request, InspectSnap(facts(**changes), tuple(trace), missing=False))  # type: ignore[arg-type]
     settled(ui)
     inspector = ui.app.property("workspace").inspector_model
@@ -217,7 +217,7 @@ def test_pausing_and_following_send_their_requests(ui: Ui) -> None:
     ui.backend.one("inspect_pause")
     assert ui.item("pausedTag").isVisible()
     ui.click("followButton")
-    assert ui.backend.one("inspect").args == {"session_id": 7, "after": last}
+    assert ui.backend.one("inspect").args == {"session_id": 7, "after": last, "source": "node"}
     assert ui.find("pausedTag") is None or not ui.item("pausedTag").isVisible()
 
 
@@ -235,7 +235,7 @@ def test_another_retained_session_is_chosen_from_the_picker(ui: Ui) -> None:
     assert popup.property("visible")
     assert "decrypt_failed" in " ".join(texts_of(ui.item("session-3")))
     ui.click("session-3")
-    assert ui.backend.one("inspect").args == {"session_id": 3, "after": -1}
+    assert ui.backend.one("inspect").args == {"session_id": 3, "after": -1, "source": "node"}
     assert not popup.property("visible")
 
 

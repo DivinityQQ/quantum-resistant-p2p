@@ -1,13 +1,12 @@
 """Serve the lab's requests from a real :class:`~qrp2p.ui.labhost.LabHost` on the test thread.
 
 The fake backend records each request with its op; :func:`serve` runs the lab's ops (and the
-lab Inspector's tap ops, and the recording ops) against the host and an in-memory recording
-store, answers them, and delivers the tap's updates as the services host would, so the QML and
+lab Inspector's tap ops, and the recording ops) with the host and an in-memory recording
+store as their services, answers them, and delivers the tap's updates as the services host would, so the QML and
 view models see the real lab without a services thread.
 """
 
 import asyncio
-import inspect
 import secrets
 from typing import cast
 
@@ -15,8 +14,10 @@ from qrp2p.lab.recording import LabRecording, Meta, Recording, RecordingError, d
 from qrp2p.lab.solo import LabRun, lab_profile
 from qrp2p.services.node import Node
 from qrp2p.services.recordings import RecordingInfo
-from qrp2p.ui.host import LabOp, TapOp, error_info
+from qrp2p.services.trace_bus import TraceBus
+from qrp2p.ui.host import Services, error_info
 from qrp2p.ui.labhost import LabHost
+from qrp2p.ui.tap import TraceTap
 from tests.support import DeterministicRandom
 from tests.ui.fakes import FakeBackend, Request
 
@@ -73,28 +74,15 @@ def lab_host(store: Recordings | None = None) -> LabHost:
 
 
 def _ours(request: Request) -> bool:
-    op = request.op
-    if isinstance(op, LabOp) or (isinstance(op, TapOp) and op.source == "lab"):
-        return True
-    return request.name in RECORDING_OPS
+    lab = request.name.startswith("lab_") or request.args.get("source") == "lab"
+    return lab or request.name in RECORDING_OPS
 
 
 def _run(request: Request, host: LabHost) -> object:
-    op = request.op
-    if isinstance(op, LabOp):
-        value = op.run(host)
-    elif isinstance(op, TapOp):
-        value = op.run(host.tap)
-    else:
-        assert op is not None
-        value = op(cast("Node", host._node))  # the recording ops ask the node
-    if inspect.isawaitable(value):
-        value = asyncio.run(_awaited(value))
-    return value
-
-
-async def _awaited(value: object) -> object:
-    return await value  # type: ignore[misc]
+    assert request.op is not None
+    node = cast("Node", host._node)  # the recording ops ask the node: the in-memory store
+    node_tap = TraceTap(TraceBus(), lambda _: None, wake=lambda: None)  # type: ignore[arg-type,return-value]
+    return asyncio.run(request.op(Services(node, host, node_tap)))
 
 
 def serve(backend: FakeBackend, host: LabHost, rounds: int = 10) -> None:

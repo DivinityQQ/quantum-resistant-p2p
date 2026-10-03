@@ -6,9 +6,8 @@ from dataclasses import dataclass, field
 import pytest
 from PySide6.QtCore import QCoreApplication
 
-from qrp2p.services.node import Node
 from qrp2p.ui.bridge import STARTING, Bridge
-from qrp2p.ui.host import Op, Post
+from qrp2p.ui.host import Op, Post, Services
 from qrp2p.ui.snapshots import Batch, Lifecycle, NoticePosted, Reply, Update
 
 
@@ -62,7 +61,7 @@ def notice(text: str) -> tuple[Update, ...]:
     return (NoticePosted(text),)
 
 
-async def noop(_: Node) -> None:
+async def noop(_: Services) -> None:
     pass
 
 

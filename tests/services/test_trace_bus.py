@@ -1,6 +1,7 @@
 """The trace bus (DESIGN §11.2, §12): ordinals, retention, descriptors and subscribers."""
 
 from qrp2p.core.crypto.secret import Secret
+from qrp2p.core.errors import AdmitReason, CloseReason
 from qrp2p.core.trace import Direction, FrameTraced, StateChanged
 from qrp2p.core.wire import Frame, FrameType
 from qrp2p.services.exposure import RecordRevealed, ValueRevealed
@@ -13,6 +14,7 @@ from qrp2p.services.trace_bus import (
     TraceBus,
     event_bytes,
 )
+from tests.support import identity_from_label as identity
 
 STATE = StateChanged("m", "s")
 
@@ -143,19 +145,37 @@ def test_descriptors_are_announced_when_they_change() -> None:
     seen: list[SessionInfo] = []
     unsubscribe = bus.subscribe_sessions(seen.append)
     opened(bus)
-    bus.describe(1, profile="HYBRID-1")
-    bus.describe(1, profile="HYBRID-1")  # unchanged: not announced again
-    bus.describe(42, profile="x")  # unknown session: ignored
-    bus.session_ended(1)
-    assert [(i.profile, i.ended) for i in seen] == [
-        ("", False),
-        ("HYBRID-1", False),
-        ("HYBRID-1", True),
+    bob = identity("bob").bundle
+    bus.authenticated(1, bob, pin="matched")
+    bus.authenticated(1, bob, pin="matched")  # unchanged: not announced again
+    bus.authenticated(42, bob)  # unknown session: ignored
+    bus.closed(1, CloseReason.NORMAL)
+    assert [(i.peer_short_id, i.pin_result, i.end_reason, i.ended) for i in seen] == [
+        ("", "", "", False),
+        (bob.short_id, "matched", "", False),
+        (bob.short_id, "matched", "normal", False),
+        (bob.short_id, "matched", "normal", True),
     ]
     assert bus.sessions() == (seen[-1],)
     unsubscribe()
-    bus.describe(1, end_reason="normal")
-    assert len(seen) == 3
+    bus.bound(1)
+    assert len(seen) == 4
+
+
+def test_the_lifecycle_fills_the_descriptor() -> None:
+    bus = opened(TraceBus())
+    alice = identity("alice").bundle
+    bus.admitting(1, alice, "PQ-CNSA-1", glass_box_requested=True)
+    bus.established(1, alice, "PQ-CNSA-1", glass_box=True)
+    bus.bound(1)
+    bus.publish(1, 1.0, frame_event(10))  # after the handshake: the tail
+    bus.closed(1, None, AdmitReason.BUSY, by_peer=True)
+    info = bus.info(1)
+    assert info is not None
+    assert (info.peer_id, info.profile) == (alice.peer_id, "PQ-CNSA-1")
+    assert (info.glass_box_requested, info.glass_box, info.established) == (True, True, True)
+    assert (info.contact_saved, info.ended, info.by_peer) == (True, True, True)
+    assert (info.end_reason, info.admit_reason) == ("", "busy")
 
 
 def test_event_subscribers() -> None:

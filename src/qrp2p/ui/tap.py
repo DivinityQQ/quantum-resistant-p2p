@@ -104,23 +104,36 @@ def profile_facts(name: str) -> ProfileFacts | None:
     )
 
 
-def session_facts(node: Node, info: SessionInfo) -> SessionFacts:
-    """What the Inspector shows about a session besides its trace."""
-    contact = node.contact_for_peer(info.peer_id) if info.peer_id else None
+def session_facts(  # noqa: PLR0913  # how one Inspector names and classes a session
+    info: SessionInfo,
+    *,
+    local_name: str,
+    peer_name: str,
+    exposed: bool,
+    lab: bool = False,
+    recorded: bool = False,
+    contact_id: str = "",
+    trust: str = "",
+) -> SessionFacts:
+    """What the Inspector shows about a session besides its trace.
+
+    That is its descriptor, plus how the Inspector showing it names the two sides and classes
+    its exposure.
+    """
     return SessionFacts(
         session_id=info.session_id,
         initiator=info.initiator,
         address=display_name(info.address),
         profile=profile_facts(info.profile) if info.profile else None,
-        local_name="You",
-        peer_name=display_name(contact.name) if contact is not None else info.peer_short_id,
+        local_name=local_name,
+        peer_name=peer_name,
         peer_short_id=info.peer_short_id,
-        contact_id=contact.contact_id.hex() if contact is not None else "",
-        trust=contact.trust.value if contact is not None else "",
+        contact_id=contact_id,
+        trust=trust,
         glass_box_requested=info.glass_box_requested,
         glass_box=info.glass_box,
-        exposed=info.glass_box,
-        lab=False,
+        exposed=exposed,
+        lab=lab,
         established=info.established,
         ended=info.ended,
         end_reason=info.end_reason,
@@ -128,7 +141,24 @@ def session_facts(node: Node, info: SessionInfo) -> SessionFacts:
         by_peer=info.by_peer,
         pin_result=info.pin_result,
         contact_saved=info.contact_saved,
-        recorded=False,
+        recorded=recorded,
+    )
+
+
+def node_facts(node: Node, info: SessionInfo) -> SessionFacts:
+    """A real session: the peer named as its contact, exposed only if glass-box."""
+    contact = node.contact_for_peer(info.peer_id) if info.peer_id else None
+    if contact is None:
+        return session_facts(
+            info, local_name="You", peer_name=info.peer_short_id, exposed=info.glass_box
+        )
+    return session_facts(
+        info,
+        local_name="You",
+        peer_name=display_name(contact.name),
+        exposed=info.glass_box,
+        contact_id=contact.contact_id.hex(),
+        trust=contact.trust.value,
     )
 
 
@@ -188,7 +218,7 @@ class TraceTap:
     @classmethod
     def of_node(cls, node: Node, wake: Callable[[], None]) -> TraceTap:
         """The tap of the node's own sessions."""
-        return cls(node.trace, lambda info: session_facts(node, info), wake)
+        return cls(node.trace, lambda info: node_facts(node, info), wake)
 
     def detach(self) -> None:
         """Stop reading the bus for good (the lab replaced its bus)."""
