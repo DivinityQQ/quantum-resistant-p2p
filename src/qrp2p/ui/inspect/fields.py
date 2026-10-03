@@ -15,14 +15,16 @@ from typing import Final
 
 from msgspec import Struct
 
+from qrp2p.core.errors import AdmitReason
 from qrp2p.core.trace import Direction, Field, FrameTraced, RecordTraced
-from qrp2p.core.wire import FrameType, decode_inner
+from qrp2p.core.wire import FRAME_HEADER_LEN, PROFILE_BITS, Decision, FrameType, decode_inner
+from qrp2p.lab.classical import LAB_PROFILES
 from qrp2p.ui.inspect.model import ProfileFacts, RecordOpened
 from qrp2p.ui.text import display_text
 
-HEADER_LEN: Final = 5
+HEADER_LEN: Final = FRAME_HEADER_LEN
 BUNDLE_LEN: Final = 4577
-"""An identity bundle's size (DESIGN §5.1)."""
+"""An identity bundle's size (DESIGN §5.1); a test holds it to the core's."""
 
 WIRE: Final = "Captured wire bytes"
 DECRYPTED: Final = "Decrypted with this session's revealed keys"
@@ -36,8 +38,7 @@ FRAME_NAMES: Final[dict[FrameType, str]] = {
     FrameType.PROFILE_UNSUPPORTED: "ProfileUnsupported",
     FrameType.RECORD: "Record",
 }
-PROFILE_IDS: Final[dict[int, str]] = {0x01: "HYBRID-1", 0x02: "PQ-CNSA-1", 0x7F: "LAB-CLASSICAL"}
-_PROFILE_BITS: Final = ((0x01, "HYBRID-1"), (0x02, "PQ-CNSA-1"))
+PROFILE_IDS: Final[dict[int, str]] = {p.id: p.name for p in LAB_PROFILES}
 
 
 @dataclass(frozen=True, slots=True)
@@ -247,7 +248,7 @@ def _value(field: Field, body: bytes) -> str:
         case "flags":
             return f"gb_request = {chunk[0] & 1}" if chunk[0] in {0, 1} else f"0x{chunk[0]:02x}"
         case "supported":
-            names = [name for bit, name in _PROFILE_BITS if chunk[0] & bit]
+            names = [PROFILE_IDS[pid] for pid, bit in PROFILE_BITS.items() if chunk[0] & bit]
             return ", ".join(names) or "none"
         case _:
             return ""
@@ -344,8 +345,8 @@ def plaintext_fields(
     return rows
 
 
-_DECISIONS: Final = {0: "accept", 1: "reject"}
-_ADMIT_REASONS: Final = {0: "none", 1: "declined", 2: "profile_policy", 3: "timeout", 4: "busy"}
+_DECISIONS: Final = {d.value: d.name.lower() for d in Decision}
+_ADMIT_REASONS: Final = {r.value: r.label for r in AdmitReason}
 
 
 def _admit_value(name: str, chunk: bytes) -> str:

@@ -181,11 +181,11 @@ source_modules = ["qrp2p.services"]
 forbidden_modules = ["qrp2p.lab.weakened", "oqs"]
 
 [[tool.importlinter.contracts]]
-name = "ui may read core.trace and core.wire but never drives core"
+name = "ui may read core.trace, core.wire and core.errors but never drives core"
 type = "forbidden"
 source_modules = ["qrp2p.ui"]
 forbidden_modules = ["qrp2p.core"]
-ignore_imports = ["qrp2p.ui.** -> qrp2p.core.trace", "qrp2p.ui.** -> qrp2p.core.wire"]
+ignore_imports = ["qrp2p.ui.** -> qrp2p.core.trace", "qrp2p.ui.** -> qrp2p.core.wire", "qrp2p.ui.** -> qrp2p.core.errors"]
 allow_indirect_imports = true
 unmatched_ignore_imports_alerting = "none"
 
