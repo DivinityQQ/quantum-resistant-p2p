@@ -2,8 +2,8 @@
 
 | | |
 | --- | --- |
-| Version | 1.6 |
-| Date | 2026-10-02 |
+| Version | 1.7 |
+| Date | 2026-10-03 |
 | Status | Approved for implementation |
 | Scope | Complete rewrite of `quantum-resistant-p2p` (v1) |
 
@@ -421,6 +421,7 @@ erase: ss, hs, hs_R, hs_I, fk_R, fk_I, the ephemeral KEM private key
 
 - Prompts are bounded by the admission deadline; expiry gives reject `timeout`.
 - Accepting a contact request pins the initiator's bundle with the Hello's profile as the contact's profile.
+- A `profile_policy` rejection is shown to both users. The initiator sees that the peer expects another profile than the one it offered. The responder's user sees which profile the contact offered (authenticated by then, unlike `ProfileUnsupported`, §7.7) and may switch the contact to it; nothing changes without that choice.
 - The initiator shows "waiting for <contact>".
 - Glass-box prompts are rate-limited to one per contact per minute and muted for one hour after three declines in a row (an accept resets the count). While a contact's prompts are rate-limited or muted, a glass-box request is admitted as a normal session without a prompt.
 - These rules run after the `busy` checks of §7.8 and §6.4.

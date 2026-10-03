@@ -29,6 +29,7 @@ from qrp2p.services.events import (
     NodeEvent,
     NodeState,
     Notice,
+    ProfileRefused,
     PromptClosed,
     SessionEnded,
     SessionOpened,
@@ -263,6 +264,15 @@ class Cli:
                 reason = event.admit_reason or event.reason
                 label = reason.label if reason is not None else event.detail
                 self.out(f"** Connection to {display_text(event.target)} failed: {label}")
+            case ProfileRefused(contact_id=contact_id, offered=offered, configured=configured):
+                try:
+                    ref = self.node.contact(contact_id).short_id  # a name may have spaces
+                except NodeError:
+                    return  # deleted meanwhile
+                self.out(
+                    f"** Refused {self._name(contact_id)}: they connected with {offered}, but "
+                    f"their profile here is {configured}. To use theirs: /profile {ref} {offered}"
+                )
             case ConnectProgress(contact_id=contact_id):
                 who = self._name(contact_id) if contact_id else display_text(event.target)
                 self.out(f"** Waiting for {who} to accept…")

@@ -20,6 +20,7 @@ from qrp2p.ui.snapshots import (
     MessageChanged,
     MessageSnap,
     NetworkSnap,
+    ProfileRefused,
     PromptClosed,
     PromptOpened,
     Reply,
@@ -266,6 +267,19 @@ async def test_session_end_names_its_reason(alice: HostHarness, bob: NodeHarness
     assert ended == SessionEnded(bob_id, "normal", by_peer=True)
     offline = await alice.update(ContactChanged, lambda u: u.contact.session is None)
     assert offline.contact.contact_id == bob_id
+
+
+async def test_a_refused_profile_reaches_the_ui(alice: HostHarness, bob: NodeHarness) -> None:
+    await unlocked(alice)
+    bob_id = await befriended(alice, bob)
+    alice_id = (await bob.next(SessionOpened)).contact_id
+    await bob.node.disconnect(alice_id)
+    await alice.update(ContactChanged, lambda u: u.contact.session is None)
+    await alice.ok(ops.set_contact_profile(bob_id, "PQ-CNSA-1"))
+    with pytest.raises(NodeError, match="profile_policy"):
+        await bob.node.connect_contact(alice_id)  # Bob still offers HYBRID-1
+    refused = await alice.update(ProfileRefused)
+    assert refused == ProfileRefused(bob_id, "HYBRID-1", "PQ-CNSA-1")
 
 
 async def test_waiting_for_admission_is_reported(alice: HostHarness, bob: NodeHarness) -> None:

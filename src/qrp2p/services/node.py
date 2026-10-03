@@ -62,6 +62,7 @@ from qrp2p.services.events import (
     NodeEvent,
     NodeState,
     Notice,
+    ProfileRefused,
     PromptClosed,
     PromptOutcome,
     SessionEnded,
@@ -168,6 +169,8 @@ class _Outgoing:
     name_hint: str
     result: asyncio.Future[bytes]
     """The contact ID once open; an exception if it failed."""
+    profile: Profile
+    """The profile offered in the Hello."""
     supported: int | None = None
     session: Session | None = None
 
@@ -858,7 +861,12 @@ class Node:
                 return contact.contact_id  # the peer connected to us meanwhile
             target = f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
             outgoing = _Outgoing(
-                target, contact.contact_id if contact else None, (host, port), name_hint, future
+                target,
+                contact.contact_id if contact else None,
+                (host, port),
+                name_hint,
+                future,
+                profile,
             )
 
             def register(session: Session, outgoing: _Outgoing = outgoing) -> None:
@@ -1195,6 +1203,9 @@ class Node:
             case admission.Reject(reason=reason):
                 _log.info("rejected %s: %s", request.peer.short_id, reason.label)
                 session.reject(reason)
+                if reason is AdmitReason.PROFILE_POLICY and contact is not None:
+                    configured = profile_by_id(contact.profile_id).name
+                    self._emit(ProfileRefused(contact.contact_id, request.profile.name, configured))
             case admission.Ask(kind=kind, glass_box_refused=refused):
                 if kind is PromptKind.GLASS_BOX:
                     self._limiter.prompted(peer_id, self._clock())
@@ -1385,9 +1396,21 @@ class Node:
                 await self._update_entry(pending.contact_id, failed)
 
 
+_REFUSED: Final = {
+    AdmitReason.DECLINED: "the peer declined the connection",
+    AdmitReason.PROFILE_POLICY: (
+        "the peer expects another profile than {profile} with you; the profile is set per "
+        "contact on both sides, and the two settings must match"
+    ),
+    AdmitReason.TIMEOUT: "the peer did not answer the request in time",
+    AdmitReason.BUSY: "the peer is busy (connecting to us at the same time, or full)",
+}
+
+
 def _describe_failure(end: SessionEnd, outgoing: _Outgoing) -> str:
     if end.admit_reason is not None:
-        return f"the peer rejected the session: {end.admit_reason.label}"
+        text = _REFUSED.get(end.admit_reason, "the peer rejected the session")
+        return f"{text.format(profile=outgoing.profile.name)} ({end.admit_reason.label})"
     if end.reason is CloseReason.POLICY and outgoing.supported is not None:
         names = [p.name for p in profiles_in(outgoing.supported)]
         return f"the peer does not serve this profile (it offers: {', '.join(names) or 'none'})"

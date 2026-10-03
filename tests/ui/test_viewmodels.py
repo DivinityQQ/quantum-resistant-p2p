@@ -23,6 +23,7 @@ from qrp2p.ui.snapshots import (
     MessageSnap,
     MismatchOpened,
     MismatchSnap,
+    ProfileRefused,
     PromptClosed,
     PromptOpened,
     PromptSnap,
@@ -683,3 +684,30 @@ def test_a_file_offer_is_answered_once(backend: FakeBackend, app: AppController)
     assert conversation.messages.rows()[0].file_busy
     backend.reply(backend.one("accept_file"))
     assert not conversation.messages.rows()[0].file_busy
+
+
+def test_a_refused_profile_offers_the_contacts_choice(
+    backend: FakeBackend, app: AppController
+) -> None:
+    ws = unlock(backend, app, BOB, CAROL)
+    conversation = selected(ws)
+    load(backend)
+    shown = conversation.property("contactId")
+    backend.updates(ProfileRefused(shown, "PQ-CNSA-1", "HYBRID-1"))
+    assert conversation.property("banner") == "profile"
+    assert "PQ-CNSA-1" in conversation.property("bannerText")
+    assert conversation.property("offeredProfile") == "PQ-CNSA-1"
+    conversation.useOfferedProfile()
+    assert backend.one("set_contact_profile").args["profile"] == "PQ-CNSA-1"
+    assert conversation.property("banner") == ""
+
+
+def test_a_refused_profile_elsewhere_is_announced(backend: FakeBackend, app: AppController) -> None:
+    ws = unlock(backend, app, BOB, CAROL)
+    load(backend)
+    other = next(c for c in (BOB, CAROL) if c.contact_id != ws.property("selectedId"))
+    notices: list[str] = []
+    ws.noticePosted.connect(notices.append)
+    backend.updates(ProfileRefused(other.contact_id, "PQ-CNSA-1", "HYBRID-1"))
+    assert len(notices) == 1
+    assert "PQ-CNSA-1" in notices[0]

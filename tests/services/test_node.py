@@ -24,6 +24,7 @@ from qrp2p.services.events import (
     KeyMismatchDetected,
     NearbyChanged,
     NodeState,
+    ProfileRefused,
     PromptClosed,
     PromptOutcome,
     SessionEnded,
@@ -124,10 +125,13 @@ async def test_profile_policy(nodes: tuple[NodeHarness, NodeHarness]) -> None:
     await alice.node.disconnect(bob_id)
     await until(lambda: not bob.node.is_online(alice_id))
     await bob.node.update_contact(alice_id, profile_id=PQ_CNSA_1.id)
-    with pytest.raises(NodeError, match="profile_policy"):
+    with pytest.raises(NodeError, match=r"another profile than HYBRID-1.*\(profile_policy\)"):
         await alice.node.connect_contact(bob_id)  # Alice still offers HYBRID-1
     failed = await alice.next(ConnectFailed)
     assert failed.admit_reason is AdmitReason.PROFILE_POLICY
+    # Bob is told, with what Alice (authenticated) asked for; nothing changes by itself.
+    assert bob.of(ProfileRefused) == [ProfileRefused(alice_id, "HYBRID-1", "PQ-CNSA-1")]
+    assert bob.node.contact(alice_id).profile_id == PQ_CNSA_1.id
     await alice.node.update_contact(bob_id, profile_id=profile_by_name("pq-cnsa-1").id)
     await alice.node.connect_contact(bob_id)
     session = alice.node.session_info(bob_id)

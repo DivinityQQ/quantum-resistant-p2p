@@ -72,6 +72,13 @@ Item {
                 text: view.conversation.banner === "ended" ? qsTr("Reconnect") : qsTr("Try again")
                 onClicked: view.conversation.connectSession()
             }
+            AppButton {
+                objectName: "useOfferedProfile"
+                visible: view.conversation.banner === "profile"
+                compact: true
+                text: qsTr("Use %1").arg(view.conversation.offeredProfile)
+                onClicked: view.conversation.useOfferedProfile()
+            }
         }
         MessageList {
             id: messages
