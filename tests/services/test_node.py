@@ -22,7 +22,9 @@ from qrp2p.services.events import (
     ConnectProgress,
     HistoryChanged,
     KeyMismatchDetected,
+    NearbyChanged,
     NodeState,
+    ProfileRefused,
     PromptClosed,
     PromptOutcome,
     SessionEnded,
@@ -123,10 +125,13 @@ async def test_profile_policy(nodes: tuple[NodeHarness, NodeHarness]) -> None:
     await alice.node.disconnect(bob_id)
     await until(lambda: not bob.node.is_online(alice_id))
     await bob.node.update_contact(alice_id, profile_id=PQ_CNSA_1.id)
-    with pytest.raises(NodeError, match="profile_policy"):
+    with pytest.raises(NodeError, match=r"another profile than HYBRID-1.*\(profile_policy\)"):
         await alice.node.connect_contact(bob_id)  # Alice still offers HYBRID-1
     failed = await alice.next(ConnectFailed)
     assert failed.admit_reason is AdmitReason.PROFILE_POLICY
+    # Bob is told, with what Alice (authenticated) asked for; nothing changes by itself.
+    assert bob.of(ProfileRefused) == [ProfileRefused(alice_id, "HYBRID-1", "PQ-CNSA-1")]
+    assert bob.node.contact(alice_id).profile_id == PQ_CNSA_1.id
     await alice.node.update_contact(bob_id, profile_id=profile_by_name("pq-cnsa-1").id)
     await alice.node.connect_contact(bob_id)
     session = alice.node.session_info(bob_id)
@@ -567,6 +572,25 @@ async def test_first_contact_through_mdns(nodes: tuple[NodeHarness, NodeHarness]
     assert alice.node.contact_for_nearby(announced(bob)) == alice.node.contact(bob_id)
 
 
+async def test_nearby_is_matched_again_when_contacts_change(
+    nodes: tuple[NodeHarness, NodeHarness], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A peer announced before it became a contact must not stay "not a contact" in Nearby."""
+    alice, bob = nodes
+    seen = announced(bob, LOOPBACK)
+    monkeypatch.setattr(alice.node, "nearby", lambda: [seen])
+    alice.events.clear()
+    bob_id, _ = await befriend(alice, bob)
+    (changed,) = alice.of(NearbyChanged)
+    assert alice.node.contact_for_nearby(changed.peers[0]) == alice.node.contact(bob_id)
+    alice.events.clear()
+    await alice.node.update_contact(bob_id, name="Robert")  # same identity: no new match
+    assert not alice.of(NearbyChanged)
+    await alice.node.delete_contact(bob_id)
+    (changed,) = alice.of(NearbyChanged)
+    assert alice.node.contact_for_nearby(changed.peers[0]) is None
+
+
 async def test_a_contact_is_dialled_at_its_last_address_first(
     nodes: tuple[NodeHarness, NodeHarness], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -631,7 +655,7 @@ async def test_unreachable_hints_at_a_firewall(nodes: tuple[NodeHarness, NodeHar
     alice, bob = nodes
     port = bob.port
     await bob.node.lock()
-    with pytest.raises(NodeError, match="firewall"):
+    with pytest.raises(NodeError, match=f"at {LOOPBACK}:{port} .*firewall.* port {port}\\?"):
         await alice.node.connect_address(LOOPBACK, port)
     (failed,) = alice.of(ConnectFailed)
     assert failed.detail == "unreachable"

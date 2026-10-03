@@ -27,7 +27,8 @@ ApplicationWindow {
     minimumWidth: 720
     minimumHeight: 540
     visible: true
-    title: "QRP2P"
+    // Unread messages show in the title (taskbar, window switcher) while unlocked; never names.
+    title: app.unread > 0 ? qsTr("QRP2P (%1)").arg(app.unread) : "QRP2P"
     color: Theme.canvas
     font.family: Theme.family
     font.pixelSize: Theme.sizeBody

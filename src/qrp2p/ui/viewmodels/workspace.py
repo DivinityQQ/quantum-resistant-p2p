@@ -26,6 +26,7 @@ from qrp2p.ui.snapshots import (
     NearbySnap,
     NetworkSnap,
     NoticePosted,
+    ProfileRefused,
     PromptClosed,
     PromptOpened,
     Reply,
@@ -33,6 +34,7 @@ from qrp2p.ui.snapshots import (
     Update,
     WorkspaceSnap,
 )
+from qrp2p.ui.text import isolate
 from qrp2p.ui.viewmodels.conversation import Conversation
 from qrp2p.ui.viewmodels.listmodel import RowModel
 from qrp2p.ui.viewmodels.prompts import Prompts
@@ -91,6 +93,7 @@ class Workspace(ViewModel):
     readyChanged = Signal()  # noqa: N815
     noticePosted = Signal(str)  # noqa: N815
     """A short message for a toast."""
+    unreadChanged = Signal()  # noqa: N815
     incomingMessage = Signal(str)  # noqa: N815
     """A message or file offer arrived (the contact's name), to draw attention to the window."""
     addressConnected = Signal(str)  # noqa: N815
@@ -112,6 +115,8 @@ class Workspace(ViewModel):
     nearby = constant(QObject, "_nearby_model")
     contactCount = readonly(int, "_contact_count", contactsChanged)  # noqa: N815
     hiddenUnread = readonly(int, "_hidden_unread", contactsChanged)  # noqa: N815
+    unread = readonly(int, "_total_unread", unreadChanged)
+    """Unread messages and file offers in all conversations (the window title and app badge)."""
     selectedId = readonly(str, "_selected", selectionChanged)  # noqa: N815
     conversation = readonly(QObject, "_conversation", selectionChanged)
     search = readonly(str, "_search", searchChanged)
@@ -152,6 +157,7 @@ class Workspace(ViewModel):
         self._strip_limit = STRIP_LIMIT
         self._contact_count = 0
         self._hidden_unread = 0
+        self._total_unread = 0
         self._selected = ""
         self._conversation: Conversation | None = None
         self._search = ""
@@ -224,6 +230,8 @@ class Workspace(ViewModel):
                     conversation = self._conversations.get(contact_id)
                     if conversation is not None:
                         conversation.session_ended(reason, by_peer=by_peer)
+                case ProfileRefused(contact_id=contact_id, offered=offered):
+                    self._profile_refused(contact_id, offered, update.configured)
                 case NoticePosted(text=text):
                     self.noticePosted.emit(text)
         if rebuild:
@@ -280,6 +288,18 @@ class Workspace(ViewModel):
         elif self._address_busy:
             self._address_stage = "waiting"
             self.addressChanged.emit()
+
+    def _profile_refused(self, contact_id: str, offered: str, configured: str) -> None:
+        """We refused the contact for its profile: its conversation offers the switch."""
+        contact = self._contacts.get(contact_id)
+        if contact is None:
+            return
+        self._conversation_for(contact_id).profile_refused(offered, configured)
+        if contact_id != self._selected:
+            self.noticePosted.emit(
+                f"{isolate(contact.name)} could not connect: they use {offered}, "
+                f"your setting for them is {configured}. Their conversation offers the switch."
+            )
 
     # -- slots -----------------------------------------------------------------------------------
 
@@ -457,3 +477,7 @@ class Workspace(ViewModel):
             self._contact_count = count
             self._hidden_unread = hidden
             self.contactsChanged.emit()
+        total = sum(self._unread.values())
+        if total != self._total_unread:
+            self._total_unread = total
+            self.unreadChanged.emit()

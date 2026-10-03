@@ -39,6 +39,8 @@ T.Dialog {
     height: Math.min(implicitHeight, parent ? parent.height - Theme.s4 * 2 : implicitHeight)
     padding: Theme.s6
     topPadding: Theme.s4
+    // The body reaches into the padding by the scroll bar's gutter (see contentItem).
+    rightPadding: Theme.s6 - Theme.scrollGutter
     spacing: 0
     closePolicy: T.Popup.CloseOnEscape
 
@@ -106,7 +108,7 @@ T.Dialog {
 
         ColumnLayout {
             id: body
-            width: flick.width
+            width: flick.width - Theme.scrollGutter
             spacing: Theme.s4
         }
     }

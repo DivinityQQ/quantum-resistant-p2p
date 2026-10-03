@@ -81,6 +81,21 @@ class ConnectFailed:
 
 
 @dataclass(frozen=True, slots=True)
+class ProfileRefused:
+    """We refused a contact's session with ``profile_policy`` (DESIGN §7.6).
+
+    The contact authenticated, so ``offered`` is what it really asked for; our user may switch
+    the contact to it. Nothing changes without that choice.
+    """
+
+    contact_id: bytes
+    offered: str
+    """The profile in the contact's Hello."""
+    configured: str
+    """The contact's profile here."""
+
+
+@dataclass(frozen=True, slots=True)
 class AdmissionPrompt:
     """An authenticated initiator waits for our user's decision (DESIGN §7.6).
 
@@ -186,6 +201,7 @@ type NodeEvent = (
     | SessionOpened
     | SessionEnded
     | ConnectFailed
+    | ProfileRefused
     | ConnectProgress
     | AdmissionPrompt
     | PromptClosed

@@ -41,6 +41,7 @@ from qrp2p.services.events import (
     StateChanged,
 )
 from qrp2p.services.events import NearbyChanged as NodeNearbyChanged
+from qrp2p.services.events import ProfileRefused as NodeProfileRefused
 from qrp2p.services.events import PromptClosed as NodePromptClosed
 from qrp2p.services.keychain import KeychainUnavailableError
 from qrp2p.services.node import Node, NodeError, NotConnectedError
@@ -63,6 +64,7 @@ from qrp2p.ui.snapshots import (
     NearbyChanged,
     NetworkSnap,
     NoticePosted,
+    ProfileRefused,
     PromptClosed,
     PromptOpened,
     Reply,
@@ -316,6 +318,8 @@ class ServiceHost:
             case ConnectProgress(contact_id=contact_id, target=target, stage=stage):
                 hex_id = contact_id.hex() if contact_id is not None else ""
                 return [ConnectStage(hex_id, display_text(target), stage)]
+            case NodeProfileRefused(contact_id=contact_id, offered=offered, configured=configured):
+                return [ProfileRefused(contact_id.hex(), offered, configured)]
             case Notice(text=text):
                 return [NoticePosted(text)]
             case ConnectFailed() | StateChanged():

@@ -36,6 +36,11 @@ Rectangle {
             area.clear()
     }
 
+    function paste() {
+        if (!conversation.pasteFiles())
+            area.paste()
+    }
+
     function focusInput() {
         area.forceActiveFocus()
     }
@@ -84,16 +89,27 @@ Rectangle {
             id: flick
             Layout.fillWidth: true
             Layout.fillHeight: true
-            implicitHeight: Math.min(area.implicitHeight, Theme.sizeBody * 1.45 * 6 + area.topPadding + area.bottomPadding)
+            // Grows with its text up to six lines, then scrolls.
+            implicitHeight: Math.min(area.implicitHeight,
+                Math.ceil(metrics.lineSpacing * 6) + area.topPadding + area.bottomPadding)
             contentWidth: width
             contentHeight: area.implicitHeight
             boundsBehavior: Flickable.StopAtBounds
             clip: true
             T.ScrollBar.vertical: AppScrollBar {}
 
+            FontMetrics {
+                id: metrics
+                font: area.font
+            }
+
             T.TextArea.flickable: T.TextArea {
                 id: area
                 objectName: "composerInput"
+                // The template has no implicit size (Qt's styles add it): without one the
+                // composer never grows with its lines.
+                implicitWidth: contentWidth + leftPadding + rightPadding
+                implicitHeight: contentHeight + topPadding + bottomPadding
                 textFormat: TextEdit.PlainText
                 wrapMode: TextEdit.Wrap
                 font.family: Theme.family
@@ -106,13 +122,24 @@ Rectangle {
                 topPadding: Theme.s2 + 1
                 bottomPadding: Theme.s2 + 1
                 leftPadding: Theme.s1
-                rightPadding: Theme.s1
+                rightPadding: Theme.scrollGutter  // the scroll bar's room, also while hidden
                 focus: true
                 Accessible.name: qsTr("Message to %1").arg(composer.conversation.name)
                 Accessible.description: qsTr("Enter sends; Shift+Enter starts a new line.")
 
                 onTextChanged: composer.conversation.setDraft(text)
                 Component.onCompleted: text = composer.conversation.draft
+
+                // Copied files and images are offered as files; text is pasted as usual.
+                T.ContextMenu.menu: TextEditMenu {
+                    editor: area
+                    paste: () => composer.paste()
+                    canPasteOther: () => composer.conversation.clipboardHasFiles()
+                }
+                Keys.onPressed: event => {
+                    if (event.matches(StandardKey.Paste) && composer.conversation.pasteFiles())
+                        event.accepted = true
+                }
 
                 Keys.onReturnPressed: event => composer.handleReturn(event)
                 Keys.onEnterPressed: event => composer.handleReturn(event)

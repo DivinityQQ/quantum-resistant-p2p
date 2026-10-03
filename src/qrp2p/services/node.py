@@ -62,6 +62,7 @@ from qrp2p.services.events import (
     NodeEvent,
     NodeState,
     Notice,
+    ProfileRefused,
     PromptClosed,
     PromptOutcome,
     SessionEnded,
@@ -73,7 +74,9 @@ from qrp2p.services.files import (
     PeerMisbehavedError,
     Transfer,
     TransferDirection,
+    clear_outgoing,
     remove_partial,
+    stage_outgoing,
 )
 from qrp2p.services.keychain import KeychainUnavailableError, OsKeychain
 from qrp2p.services.models import (
@@ -103,6 +106,8 @@ RETENTION_CHECK: Final = 3600.0
 CONNECT_WAIT: Final = 90.0
 """Upper bound for :meth:`Node.connect_contact` and friends to report an outcome: the handshake
 deadline plus the initiator's wait for Admit (DESIGN §6.4)."""
+OUTGOING_DIR: Final = "outgoing"
+"""In the data directory: pasted images until their transfer ends (DESIGN §10.1)."""
 
 _log = logging.getLogger(__name__)
 
@@ -168,6 +173,8 @@ class _Outgoing:
     name_hint: str
     result: asyncio.Future[bytes]
     """The contact ID once open; an exception if it failed."""
+    profile: Profile
+    """The profile offered in the Hello."""
     supported: int | None = None
     session: Session | None = None
 
@@ -401,6 +408,7 @@ class Node:
         await self._db(self._vault.purge_expired, self._wall())
         for final in await self._db(self._vault.fail_interrupted):
             await asyncio.to_thread(remove_partial, Path(final))
+        await asyncio.to_thread(clear_outgoing, self._outgoing_dir)  # left by a crash
         self._contacts = {c.contact_id: c for c in await self._db(self._vault.contacts)}
         self._manager = SessionManager(
             identity=identity,
@@ -463,6 +471,11 @@ class Node:
     def _nearby_changed(self) -> None:
         self._emit(NearbyChanged(tuple(self.nearby())))
 
+    def _contacts_rematched(self) -> None:
+        """Contacts were added, removed or re-pinned: Nearby's matches to them are stale."""
+        if self.nearby():
+            self._nearby_changed()
+
     async def lock(self) -> None:
         """Lock (DESIGN §10.4).
 
@@ -483,6 +496,7 @@ class Node:
             await self._manager.stop(CloseReason.LOCKED)
         if self._transfers is not None:
             await self._transfers.close()
+        await asyncio.to_thread(clear_outgoing, self._outgoing_dir)
         others = self._background - {asyncio.current_task()}
         if others:  # let history updates of the closing sessions reach the vault
             _, pending = await asyncio.wait(others, timeout=2.0)
@@ -645,8 +659,11 @@ class Node:
 
     async def _save_contact(self, contact: Contact) -> Contact:
         await self._db(self._vault.save_contact, contact)
+        previous = self._contacts.get(contact.contact_id)
         self._contacts[contact.contact_id] = contact
         self._emit(ContactsChanged(contact.contact_id))
+        if previous is None or previous.peer_id != contact.peer_id:
+            self._contacts_rematched()
         return contact
 
     async def _new_contact(self, bundle: IdentityBundle, name: str, profile: Profile) -> Contact:
@@ -722,6 +739,7 @@ class Node:
             await self._db(self._vault.delete_contact, contact)
             del self._contacts[contact_id]
             self._emit(ContactsChanged(contact_id))
+            self._contacts_rematched()
 
     async def delete_conversation(self, contact_id: bytes) -> None:
         """Delete a conversation's history and key (DESIGN §10.4)."""
@@ -849,7 +867,12 @@ class Node:
                 return contact.contact_id  # the peer connected to us meanwhile
             target = f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
             outgoing = _Outgoing(
-                target, contact.contact_id if contact else None, (host, port), name_hint, future
+                target,
+                contact.contact_id if contact else None,
+                (host, port),
+                name_hint,
+                future,
+                profile,
             )
 
             def register(session: Session, outgoing: _Outgoing = outgoing) -> None:
@@ -877,9 +900,13 @@ class Node:
                 raise NodeError(msg) from None
         if contact is not None and self.is_online(contact.contact_id):
             return contact.contact_id
-        targets = ", ".join(f"{h}:{p}" for h, p in addresses)
+        targets = ", ".join(f"[{h}]:{p}" if ":" in h else f"{h}:{p}" for h, p in addresses)
         self._emit(ConnectFailed(targets, None, detail="unreachable"))
-        msg = "could not reach the peer (is it running, and does its firewall allow the port?)"
+        ports = ", ".join(sorted({str(p) for _, p in addresses}))
+        msg = (
+            f"could not reach the peer at {targets} (is it running, and does its firewall allow "
+            f"incoming TCP on port {ports}? Or ask them to connect to you)"
+        )
         raise NodeError(msg)
 
     async def disconnect(self, contact_id: bytes) -> None:
@@ -1060,6 +1087,45 @@ class Node:
         await self._add_entry(contact_id, entry)
         return entry
 
+    async def send_file_data(self, contact_id: bytes, name: str, data: bytes) -> HistoryEntry:
+        """Offer ``data`` (a pasted image) as a file called ``name``.
+
+        It is saved in ``outgoing/`` (owner-only) for the transfer to read and deleted when the
+        transfer ends, at lock, or at the next unlock after a crash.
+
+        Raises:
+            NotConnectedError: No open session (nothing is saved then).
+            ValueError: ``data`` is empty.
+            OSError: It cannot be saved.
+        """
+        self.touch()
+        self._require_session(contact_id)
+        if not data:
+            msg = "there is nothing to send"
+            raise ValueError(msg)
+        staged = await asyncio.to_thread(stage_outgoing, self._outgoing_dir, name, data)
+        try:
+            return await self.send_file(contact_id, staged)
+        except BaseException:
+            await asyncio.to_thread(staged.unlink, missing_ok=True)
+            raise
+
+    @property
+    def _outgoing_dir(self) -> Path:
+        return self.data_dir / OUTGOING_DIR
+
+    async def _release_staged(self, transfer: Transfer) -> None:
+        """An outgoing transfer of a pasted image ended: its saved copy goes."""
+        path = transfer.path
+        if (
+            transfer.direction is TransferDirection.OUT
+            and path is not None
+            and path.parent == self._outgoing_dir.resolve()
+        ):
+            # Windows refuses while the sender still has it open: then lock or unlock clears it.
+            with contextlib.suppress(OSError):
+                await asyncio.to_thread(path.unlink, missing_ok=True)
+
     def transfers(self) -> list[Transfer]:
         """Transfers in progress or waiting."""
         return self._transfers.active() if self._transfers is not None else []
@@ -1130,6 +1196,8 @@ class Node:
         return contact.contact_id if contact is not None else None
 
     async def _transfer_changed(self, transfer: Transfer) -> None:
+        if transfer.finished:
+            await self._release_staged(transfer)
         contact_id = self._transfer_contact(transfer)
         if contact_id is None:
             return
@@ -1186,6 +1254,9 @@ class Node:
             case admission.Reject(reason=reason):
                 _log.info("rejected %s: %s", request.peer.short_id, reason.label)
                 session.reject(reason)
+                if reason is AdmitReason.PROFILE_POLICY and contact is not None:
+                    configured = profile_by_id(contact.profile_id).name
+                    self._emit(ProfileRefused(contact.contact_id, request.profile.name, configured))
             case admission.Ask(kind=kind, glass_box_refused=refused):
                 if kind is PromptKind.GLASS_BOX:
                     self._limiter.prompted(peer_id, self._clock())
@@ -1376,9 +1447,21 @@ class Node:
                 await self._update_entry(pending.contact_id, failed)
 
 
+_REFUSED: Final = {
+    AdmitReason.DECLINED: "the peer declined the connection",
+    AdmitReason.PROFILE_POLICY: (
+        "the peer expects another profile than {profile} with you; the profile is set per "
+        "contact on both sides, and the two settings must match"
+    ),
+    AdmitReason.TIMEOUT: "the peer did not answer the request in time",
+    AdmitReason.BUSY: "the peer is busy (connecting to us at the same time, or full)",
+}
+
+
 def _describe_failure(end: SessionEnd, outgoing: _Outgoing) -> str:
     if end.admit_reason is not None:
-        return f"the peer rejected the session: {end.admit_reason.label}"
+        text = _REFUSED.get(end.admit_reason, "the peer rejected the session")
+        return f"{text.format(profile=outgoing.profile.name)} ({end.admit_reason.label})"
     if end.reason is CloseReason.POLICY and outgoing.supported is not None:
         names = [p.name for p in profiles_in(outgoing.supported)]
         return f"the peer does not serve this profile (it offers: {', '.join(names) or 'none'})"

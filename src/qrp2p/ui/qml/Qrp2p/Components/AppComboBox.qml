@@ -46,7 +46,7 @@ T.ComboBox {
         required property var model
         required property int index
 
-        width: ListView.view ? ListView.view.width : implicitWidth
+        width: ListView.view ? ListView.view.width - listBar.gutter : implicitWidth
         implicitHeight: Theme.controlHeight
         leftPadding: Theme.s3
         rightPadding: Theme.s3
@@ -97,7 +97,9 @@ T.ComboBox {
             implicitHeight: contentHeight
             model: control.delegateModel
             currentIndex: control.highlightedIndex
-            T.ScrollBar.vertical: AppScrollBar {}
+            T.ScrollBar.vertical: AppScrollBar {
+                id: listBar
+            }
         }
         background: Rectangle {
             color: Theme.surface

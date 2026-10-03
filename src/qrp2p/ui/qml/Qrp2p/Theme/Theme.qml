@@ -68,6 +68,9 @@ QtObject {
     readonly property int radiusBubble: 16
     readonly property int radiusTight: 4
     readonly property int readingWidth: Math.round(760 * Math.max(1, scale * 0.9))
+    // Room a scroll bar takes beside wrapping content, reserved whether or not it shows: content
+    // whose height depends on its width must not change width when its scroll bar appears.
+    readonly property int scrollGutter: 12
     readonly property int iconSize: Math.round(18 * Math.max(1, (scale + 1) / 2))
 
     // -- motion ----------------------------------------------------------------------------------------

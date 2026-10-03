@@ -21,15 +21,17 @@ from PySide6.QtCore import (
     QCoreApplication,
     QEvent,
     QMessageLogContext,
+    QMetaObject,
     QObject,
     Qt,
     QTimer,
     QtMsgType,
+    QUrl,
     qInstallMessageHandler,
 )
 from PySide6.QtGui import QFont, QFontDatabase, QGuiApplication, QIcon
-from PySide6.QtQml import QQmlApplicationEngine
-from PySide6.QtQuick import QQuickWindow
+from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent, QQmlEngine
+from PySide6.QtQuick import QQuickItem, QQuickWindow
 from PySide6.QtQuickControls2 import QQuickStyle
 
 from qrp2p.services.logs import setup_logging
@@ -38,6 +40,7 @@ from qrp2p.services.paths import default_data_dir
 from qrp2p.ui.bridge import Bridge
 from qrp2p.ui.host import Post, ServiceHost
 from qrp2p.ui.icons import IconProvider
+from qrp2p.ui.portal import portal_running
 from qrp2p.ui.viewmodels.application import AppController
 
 ROOT: Final = Path(__file__).parent
@@ -50,6 +53,30 @@ SMOKE_DELAY_MS: Final = 2500
 """``--smoke-test``: how long the first screen gets to open the node and render."""
 SMOKE_UNLOCK_TIMEOUT: Final = 60.0
 """``--smoke-test``: seconds the throwaway vault may take to create and unlock."""
+SMOKE_DIALOGS: Final = b"""
+import QtQuick
+import QtQuick.Dialogs
+
+// Qt's own file and folder dialogs, which open wherever the platform has no native one (KDE
+// without its Qt plugin, for one). A build missing a module they need opens nothing at all.
+Item {
+    readonly property bool shown: files.visible && folders.visible
+
+    function openAll() {
+        files.open()
+        folders.open()
+    }
+    function closeAll() {
+        files.close()
+        folders.close()
+    }
+
+    FileDialog { id: files; options: FileDialog.DontUseNativeDialog }
+    FolderDialog { id: folders; options: FolderDialog.DontUseNativeDialog }
+}
+"""
+SMOKE_DIALOG_MS: Final = 1000
+"""``--smoke-test``: how long Qt's own dialogs get to open."""
 
 _log = logging.getLogger(__name__)
 
@@ -119,7 +146,7 @@ class SmokeTest:
     It renders the first screen to the given PNG. In a data directory that did not exist before,
     it then creates a throwaway vault (exercising Argon2id, the identity keys, SQLite and the
     listener) and renders the messenger beside it as ``<name>-messenger.png``. It never touches
-    an existing vault.
+    an existing vault. Last, it opens Qt's own file and folder dialogs.
     """
 
     def __init__(
@@ -142,6 +169,8 @@ class SmokeTest:
         self._timer = QTimer()
         self._timer.setInterval(100)
         self._timer.timeout.connect(self._wait_for_messenger)
+        self._component: QQmlComponent | None = None
+        self._dialogs: QObject | None = None
 
     def start(self) -> None:
         """Begin once the first screen has had time to settle."""
@@ -159,7 +188,7 @@ class SmokeTest:
             return
         window.grabWindow().save(str(self._out))
         if not self._fresh or self._controller.property("phase") != "noVault":
-            self._finish(ok=True)
+            self._open_dialogs()
             return
         password = "smoke test only"  # noqa: S105  # a throwaway vault in a new directory
         self._controller.createVault("Smoke test", password, password)
@@ -178,16 +207,54 @@ class SmokeTest:
 
     def _messenger(self) -> None:
         window = self._window()
-        if window is not None:
-            window.grabWindow().save(str(self._out.with_name(f"{self._out.stem}-messenger.png")))
-        self._finish(ok=window is not None)
+        if window is None:
+            self._finish(ok=False)
+            return
+        window.grabWindow().save(str(self._out.with_name(f"{self._out.stem}-messenger.png")))
+        self._open_dialogs()
+
+    def _open_dialogs(self) -> None:
+        window = self._window()
+        component = QQmlComponent(self._engine)
+        component.setData(SMOKE_DIALOGS, QUrl())
+        dialogs = component.create()
+        if window is None or not isinstance(dialogs, QQuickItem):
+            sys.stderr.write(f"smoke test: no dialogs ({component.errorString()})\n")
+            self._finish(ok=False)
+            return
+        QQmlEngine.setObjectOwnership(dialogs, QQmlEngine.ObjectOwnership.CppOwnership)
+        dialogs.setParentItem(window.contentItem())
+        self._component, self._dialogs = component, dialogs
+        QMetaObject.invokeMethod(dialogs, "openAll")
+        QTimer.singleShot(SMOKE_DIALOG_MS, self._dialogs_opened)
+
+    def _dialogs_opened(self) -> None:
+        dialogs = self._dialogs
+        shown = dialogs is not None and bool(dialogs.property("shown"))
+        if not shown:
+            sys.stderr.write("smoke test: Qt's file and folder dialogs did not open\n")
+        if dialogs is not None:
+            QMetaObject.invokeMethod(dialogs, "closeAll")
+        self._finish(ok=shown)
 
     def _finish(self, *, ok: bool) -> None:
         self._app.exit(0 if ok and not self._warnings.messages else 1)
 
 
+def choose_platform_theme() -> None:
+    """Linux: use the XDG desktop portal where it runs, unless the user chose a theme.
+
+    The Qt in PySide6 and in our builds cannot load the desktop's own Qt plugin (KDE's is built
+    against the system Qt), so KDE users would get Qt's generic file dialogs. The portal gives
+    every desktop its real ones.
+    """
+    if sys.platform == "linux" and "QT_QPA_PLATFORMTHEME" not in os.environ and portal_running():
+        os.environ["QT_QPA_PLATFORMTHEME"] = "xdgdesktopportal"
+
+
 def configure_qt() -> None:
     """Process-wide Qt settings, before the application object exists."""
+    choose_platform_theme()
     QQuickStyle.setStyle("Basic")
     QGuiApplication.setApplicationName("QRP2P")
     QGuiApplication.setApplicationDisplayName("QRP2P")

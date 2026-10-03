@@ -7,6 +7,10 @@ import Qrp2p.Theme
 T.ToolTip {
     id: control
 
+    // The template has no position: without one the tooltip covers its own control and takes
+    // its clicks. Above and centred, as in Qt's styles; Qt flips it below at the window edge.
+    x: parent ? Math.round((parent.width - width) / 2) : 0
+    y: -height - Theme.s1
     delay: 600
     timeout: 8000
     margins: Theme.s2

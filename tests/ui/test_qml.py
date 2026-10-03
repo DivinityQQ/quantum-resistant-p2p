@@ -10,8 +10,19 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass, replace
 
 import pytest
-from PySide6.QtCore import QCoreApplication, QEvent, QObject, QPointF, QSize, Qt, QUrl
-from PySide6.QtGui import QColor, QGuiApplication, QKeyEvent
+from PySide6.QtCore import (
+    QCoreApplication,
+    QEvent,
+    QMimeData,
+    QObject,
+    QPoint,
+    QPointF,
+    QRectF,
+    QSize,
+    Qt,
+    QUrl,
+)
+from PySide6.QtGui import QColor, QContextMenuEvent, QGuiApplication, QImage, QKeyEvent
 from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent, QQmlEngine, QQmlExpression
 from PySide6.QtQuick import QQuickItem, QQuickWindow
 from PySide6.QtTest import QTest
@@ -66,8 +77,11 @@ class Ui:
         return found
 
     def click(self, name: str) -> None:
-        target = self.item(name)
-        assert target.isVisible(), name
+        self.click_item(self.item(name))
+
+    def click_item(self, target: QQuickItem) -> None:
+        self.frame()  # positions are final only after a frame (a menu lays out its entries)
+        assert target.isVisible(), target.objectName()
         center = target.mapToScene(QPointF(target.width() / 2, target.height() / 2)).toPoint()
         QTest.mouseClick(
             self.window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, center
@@ -146,6 +160,51 @@ def text_formats(engine: QQmlApplicationEngine, window: QQuickWindow) -> list[tu
         assert not failed
         found.append((item.metaObject().className(), int(value)))
     return found
+
+
+def scene_rect(item: QQuickItem) -> QRectF:
+    return QRectF(
+        item.mapToScene(QPointF(0, 0)),
+        QPointF(item.mapToScene(QPointF(item.width(), item.height()))),
+    )
+
+
+def of_type(ui: Ui, prefix: str) -> list[QQuickItem]:
+    """Visible items whose QML type starts with ``prefix``."""
+    ui.frame()
+    return [
+        i
+        for i in items(ui.window)
+        if i.metaObject().className().startswith(prefix) and i.isVisible()
+    ]
+
+
+def hover(ui: Ui, item: QQuickItem) -> None:
+    center = item.mapToScene(QPointF(item.width() / 2, item.height() / 2)).toPoint()
+    QTest.mouseMove(ui.window, center + QPoint(1, 0))  # a move, so hover changes
+    QTest.mouseMove(ui.window, center)
+    settle()
+
+
+def context_menu(ui: Ui, item: QQuickItem) -> QObject:
+    """Ask ``item`` for its context menu (right click or the menu key) and return it, open."""
+    point = item.mapToScene(QPointF(min(20, item.width() / 2), item.height() - 10)).toPoint()
+    event = QContextMenuEvent(QContextMenuEvent.Reason.Mouse, point, ui.window.mapToGlobal(point))
+    QGuiApplication.sendEvent(ui.window, event)
+    settle()
+    menus = [  # from the item: list delegates have no QObject parent the window could search
+        o
+        for o in item.findChildren(QObject)
+        if o.metaObject().className().startswith("TextEditMenu") and o.property("visible")
+    ]
+    assert len(menus) == 1
+    return menus[0]
+
+
+def menu_entry(menu: QObject, name: str) -> QQuickItem:
+    entry = menu.findChild(QQuickItem, name)
+    assert entry is not None, name
+    return entry
 
 
 # -- files and rules ---------------------------------------------------------------------------------
@@ -429,3 +488,156 @@ def test_qml_sources_follow_the_rules() -> None:
                 body = text[at : text.find("}", at)]
                 assert "textFormat:" in body, (name, block)
                 assert "PlainText" in body, (name, block)
+
+
+# -- controls -----------------------------------------------------------------------------------------
+
+
+def test_the_composer_grows_with_its_lines_then_scrolls(ui: Ui) -> None:
+    ui.unlock(online(BOB))
+    ui.backend.reply(ui.backend.one("history"), ())
+    area = ui.item("composerInput")
+    area.forceActiveFocus()
+    flick = area.parentItem().parentItem()
+    ui.type("one")
+    for line in ("two", "three"):
+        ui.key(Qt.Key.Key_Return, Qt.KeyboardModifier.ShiftModifier)
+        ui.type(line)
+    ui.frame()
+    assert flick.height() >= area.property("contentHeight")  # all three lines show
+    for line in range(10):
+        ui.key(Qt.Key.Key_Return, Qt.KeyboardModifier.ShiftModifier)
+        ui.type(f"more {line}")
+    ui.frame()
+    assert flick.height() < area.height()  # capped: it scrolls now
+    assert flick.property("contentY") + flick.height() >= area.height() - 1  # to the cursor
+
+
+def test_tooltips_never_cover_their_control(ui: Ui) -> None:
+    ui.unlock(online(BOB))
+    ui.backend.reply(ui.backend.one("history"), ())
+    buttons = sorted(of_type(ui, "IconButton"), key=lambda b: scene_rect(b).top())
+    for button in (buttons[0], buttons[-1]):  # one at the top of the window, one at the bottom
+        hover(ui, button)
+        tips = [
+            t
+            for t in button.findChildren(QObject)
+            if t.metaObject().className().startswith("AppToolTip")
+        ]
+        assert len(tips) == 1
+        ui.until(lambda tip=tips[0]: bool(tip.property("opened")))
+        box = scene_rect(tips[0].property("background"))
+        assert not box.intersects(scene_rect(button)), button.property("label")
+        assert box.top() >= 0
+        assert box.bottom() <= ui.window.height()
+
+
+def test_buttons_show_the_busy_cursor_only_while_busy(ui: Ui) -> None:
+    ui.unlock(BOB)
+    dialog = ui.window.findChild(QObject, "connectDialog")
+    assert dialog is not None
+    dialog.setProperty("visible", True)
+    ui.until(lambda: ui.window.activeFocusItem() is ui.item("connectHost"))
+    ui.type("10.0.0.9")
+    button = ui.item("connectButton")
+    hover(ui, button)
+    assert ui.window.cursor().shape() != Qt.CursorShape.BusyCursor
+    ui.key(Qt.Key.Key_Return)
+    hover(ui, button)
+    assert ui.window.cursor().shape() == Qt.CursorShape.BusyCursor
+
+
+def test_the_password_toggle_leaves_the_field_border_visible(ui: Ui) -> None:
+    ui.backend.lifecycle("no_vault")
+    field = ui.item("createPassword")
+    (toggle,) = [b for b in of_type(ui, "IconButton") if field.isAncestorOf(b)]
+    inner = scene_rect(field).adjusted(2, 2, -2, -2)  # inside the focused (2 px) border
+    assert inner.contains(scene_rect(toggle))
+
+
+def test_scroll_bars_never_cover_wrapping_content(ui: Ui) -> None:
+    ui.unlock(BOB)
+    ui.window.resize(720, 420)
+    dialog = ui.window.findChild(QObject, "settingsDialog")
+    assert dialog is not None
+    dialog.setProperty("visible", True)
+    ui.frame()
+    flick = dialog.property("contentItem")
+    (bar,) = [b for b in of_type(ui, "AppScrollBar") if b.parentItem() is flick]
+    (body,) = flick.property("contentItem").childItems()
+    assert scene_rect(body).right() <= scene_rect(bar).left()
+
+
+def test_text_has_a_context_menu(ui: Ui) -> None:
+    ui.unlock(online(BOB))
+    ui.backend.reply(ui.backend.one("history"), (chat("copy me"),))
+    area = ui.item("composerInput")
+    area.forceActiveFocus()
+    ui.type("draft")
+    menu = context_menu(ui, area)
+    assert menu_entry(menu, "menuPaste").isVisible()
+    menu.setProperty("visible", False)
+    settle()
+
+    bubble = ui.item("bubbleText")
+    menu = context_menu(ui, bubble)
+    assert not menu_entry(menu, "menuPaste").isVisible()  # read-only
+    copy = menu_entry(menu, "menuCopy")
+    assert copy.isEnabled()  # nothing selected: copies the whole message
+    QGuiApplication.clipboard().clear()
+    ui.click_item(copy)
+    assert QGuiApplication.clipboard().text() == "copy me"
+    assert bubble.property("selectedText") == ""
+
+
+def test_a_masked_password_cannot_be_copied_out(ui: Ui) -> None:
+    ui.backend.lifecycle("locked")
+    field = ui.item("unlockPassword")
+    field.forceActiveFocus()
+    ui.type("hunter2")
+    ui.key(Qt.Key.Key_A, Qt.KeyboardModifier.ControlModifier)
+    menu = context_menu(ui, field)
+    assert not menu_entry(menu, "menuCopy").isEnabled()
+    assert menu_entry(menu, "menuPaste").isVisible()
+
+
+def test_pasting_files_or_an_image_offers_them(ui: Ui) -> None:
+    ui.unlock(online(BOB))
+    ui.backend.reply(ui.backend.one("history"), ())
+    area = ui.item("composerInput")
+    area.forceActiveFocus()
+    clipboard = QGuiApplication.clipboard()
+
+    picture = QImage(8, 8, QImage.Format.Format_RGB32)
+    picture.fill(QColor("teal"))
+    clipboard.setImage(picture)
+    ui.key(Qt.Key.Key_V, Qt.KeyboardModifier.ControlModifier)
+    offer = ui.backend.one("send_file_data")
+    assert str(offer.args["name"]).startswith("Pasted image ")
+    assert bytes(offer.args["data"]).startswith(b"\x89PNG")  # type: ignore[arg-type]
+    assert area.property("text") == ""
+
+    files = QMimeData()
+    files.setUrls([QUrl.fromLocalFile("/data/report.pdf")])
+    clipboard.setMimeData(files)
+    menu = context_menu(ui, area)
+    paste = menu_entry(menu, "menuPaste")
+    assert paste.isEnabled()  # no text on the clipboard, but files to offer
+    ui.click_item(paste)
+    assert ui.backend.one("send_file").args["path"] == "/data/report.pdf"
+
+    clipboard.setText("just text")
+    ui.key(Qt.Key.Key_V, Qt.KeyboardModifier.ControlModifier)
+    assert area.property("text") == "just text"
+    assert len(ui.backend.pending("send_file_data")) == 1
+    assert len(ui.backend.pending("send_file")) == 1
+
+
+def test_the_title_counts_unread_messages_while_unlocked(ui: Ui) -> None:
+    carol = contact("Carol")
+    ui.unlock(online(BOB), online(carol))
+    other = next(c for c in (BOB, carol) if c.contact_id != ui.app.workspace.property("selectedId"))  # type: ignore[attr-defined]
+    ui.backend.updates(MessageChanged(other.contact_id, chat("psst"), added=True))
+    assert ui.window.title() == "QRP2P (1)"
+    ui.key(Qt.Key.Key_L, Qt.KeyboardModifier.ControlModifier)
+    assert ui.window.title() == "QRP2P"

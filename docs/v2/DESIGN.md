@@ -2,8 +2,8 @@
 
 | | |
 | --- | --- |
-| Version | 1.6 |
-| Date | 2026-10-02 |
+| Version | 1.7 |
+| Date | 2026-10-03 |
 | Status | Approved for implementation |
 | Scope | Complete rewrite of `quantum-resistant-p2p` (v1) |
 
@@ -421,6 +421,7 @@ erase: ss, hs, hs_R, hs_I, fk_R, fk_I, the ephemeral KEM private key
 
 - Prompts are bounded by the admission deadline; expiry gives reject `timeout`.
 - Accepting a contact request pins the initiator's bundle with the Hello's profile as the contact's profile.
+- A `profile_policy` rejection is shown to both users. The initiator sees that the peer expects another profile than the one it offered. The responder's user sees which profile the contact offered (authenticated by then, unlike `ProfileUnsupported`, §7.7) and may switch the contact to it; nothing changes without that choice.
 - The initiator shows "waiting for <contact>".
 - Glass-box prompts are rate-limited to one per contact per minute and muted for one hour after three declines in a row (an accept resets the count). While a contact's prompts are rate-limited or muted, a glass-box request is admitted as a normal session without a prompt.
 - These rules run after the `busy` checks of §7.8 and §6.4.
@@ -552,6 +553,8 @@ Offers, answers and cancels travel at chat priority; chunks and `file_done` at f
 - **Limits:** default 4 GiB per file (configurable); at most 3 pending offers per contact; an accept needs the file's size plus 16 MiB free. Anything over a limit is cancelled with `limit` or `disk_full`. A size mismatch or extra data aborts the transfer.
 - The SHA-256 is cryptographically redundant with AEAD records. It is kept so a learner can verify a file independently, and the Inspector says so.
 
+**Pasting.** Files copied in a file manager are offered as they are. A copied image (a screenshot, a browser's Copy Image) has no file, so it is saved as a PNG in `outgoing/` (§10.1), owner-only, and offered from there; that copy is deleted when its transfer ends, at lock, and at the next unlock after a crash. Until then it is the only plaintext the app keeps outside the vault and Downloads.
+
 Resuming interrupted transfers is out of scope for v2.0.
 
 ---
@@ -565,6 +568,7 @@ Resuming interrupted transfers is out of scope for v2.0.
 | `vault.json` | `format_version`, KDF parameters, salt, wrapped DEK, optional device-wrapped KEK |
 | `data.sqlite3` (+ WAL) | Identity seeds, settings, contacts, conversation keys, messages, file metadata |
 | `lab/*.qrlab` | Saved glass-box and lab recordings (§11.5) |
+| `outgoing/` | Pasted images waiting to be sent, until their transfer ends (§9) |
 | `app.log` | Diagnostics only; never secrets or message text |
 | `qrp2p.lock` | The single-instance lock |
 

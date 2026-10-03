@@ -72,6 +72,7 @@ class AppController(ViewModel):
     phaseChanged = Signal()  # noqa: N815
     statusChanged = Signal()  # noqa: N815
     workspaceChanged = Signal()  # noqa: N815
+    unreadChanged = Signal()  # noqa: N815
     appearanceChanged = Signal()  # noqa: N815
     welcomeChanged = Signal()  # noqa: N815
     passwordChangeFinished = Signal(bool, str)  # noqa: N815
@@ -84,6 +85,7 @@ class AppController(ViewModel):
     notice = readonly(str, "_notice", statusChanged)
     deviceUnlockAvailable = readonly(bool, "_device_available", statusChanged)  # noqa: N815
     workspace = readonly(QObject, "_workspace", workspaceChanged)
+    unread = readonly(int, "_unread", unreadChanged)
     appearance = readonly(str, "_appearance", appearanceChanged)
     reducedMotion = readonly(bool, "_reduced_motion", appearanceChanged)  # noqa: N815
     textScale = readonly(int, "_text_scale", appearanceChanged)  # noqa: N815
@@ -114,6 +116,7 @@ class AppController(ViewModel):
         self._first_state = True
         """No node state seen yet: only a start onto a locked vault may use the device key."""
         self._workspace: Workspace | None = None
+        self._unread = 0
         self._appearance = "system"
         self._reduced_motion = False
         self._text_scale = 100
@@ -153,9 +156,25 @@ class AppController(ViewModel):
         if old is workspace:
             return
         self._workspace = workspace
+        if workspace is not None:
+            workspace.unreadChanged.connect(self._sync_unread)
+        self._sync_unread()
         self.workspaceChanged.emit()
         if old is not None:
+            old.unreadChanged.disconnect(self._sync_unread)
             old.deleteLater()
+
+    def _sync_unread(self) -> None:
+        """Unread messages for the window title and the app badge; none while locked.
+
+        Nothing of an unlocked period outlives it, not even a count.
+        """
+        unread = int(self._workspace.property("unread")) if self._workspace is not None else 0
+        if not self._set("_unread", unread, self.unreadChanged):
+            return
+        app = QGuiApplication.instance()
+        if isinstance(app, QGuiApplication):
+            app.setBadgeNumber(unread)
 
     def _set_phase(self, phase: str) -> None:
         self._set("_phase", phase, self.phaseChanged)

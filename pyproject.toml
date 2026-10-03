@@ -35,7 +35,8 @@ dependencies = [
 lab = ["liboqs-python>=0.16.0.1"]
 # The desktop app (DESIGN §13, §14): Qt Quick and Controls are in PySide6-Essentials; the Addons
 # (Qt Graphs for the Algorithm Lab) join in M5.
-gui = ["PySide6-Essentials>=6.11.2"]
+# jeepney: asks the session bus whether the XDG desktop portal runs (Linux file dialogs).
+gui = ["PySide6-Essentials>=6.11.2", "jeepney>=0.9.0; sys_platform == 'linux'"]
 
 [project.scripts]
 qrp2p-cli = "qrp2p.cli.app:main"

@@ -10,8 +10,8 @@ Linux–Linux and Windows–Linux (see the M2 status notes). v1 is tagged
 `v1-final`. CI runs lint, types, layers, audit, the tests on three OSes, liboqs on three OSes, the
 ProVerif models and mutation testing, each job only when its inputs changed; the `main` ruleset
 requires the gate job "CI result". Local hooks run the fast suite (`tools/check.py`) before every
-push. **M3 (desktop app) is built** on branch `claude/v2-m3-desktop` (see the M3 status notes);
-its gate, daily use on three OSes, is the owner's to run. `qrp2p` 2.0.0.dev0 is on PyPI, published by
+push. **M3 (desktop app) is merged** (PR #12); its gate, daily use on three OSes, is under way: the
+first round of findings is fixed on `claude/v2-m3-usage-fixes` (see the M3 status notes). `qrp2p` 2.0.0.dev0 is on PyPI, published by
 `.github/workflows/release.yml` (trusted publishing). Steps that need the owner's accounts (the v1
 Pages site, the liboqs bug report) are in [OWNER_TODO.md](OWNER_TODO.md).
 
@@ -360,10 +360,24 @@ design (DESIGN 1.3):
   and ProVerif pass. The native builds for Linux (AppImage), Windows (zip) and macOS arm64
   (`.dmg`) pass their smoke test in CI: each, without Python, creates a throwaway vault and
   renders the messenger with no Qt warning.
-- **Still to do for the gate (owner):** run the app on Windows, macOS and Linux for daily use
+- **Gate, first round (2026-10-03, two machines, Linux AppImage and Windows):** merged as PR #12
+  first; the findings were fixed at their cause, each with a test that fails without the fix
+  (branch `claude/v2-m3-usage-fixes`). Shared components: tooltips sat on their control (the
+  template has no position), every button showed the busy cursor (a disabled MouseArea still
+  sets it), the password toggle hid the field border, scroll bars covered content, the composer
+  did not grow (the TextArea template has no implicit size), and text had no context menu.
+  Linux builds opened no file dialog (the build stripped Qt Labs' folderlistmodel, which Qt's
+  own dialogs need; the smoke test now opens them on every OS, and Linux uses the portal's
+  dialogs where it runs). Nearby offered Connect for a contact (its match went stale when the
+  contact was added). A profile mismatch was a bare code on one side and silent on the other
+  (DESIGN 1.7: both are told; the refusing side can switch). Pasting a copied file or image now
+  offers it (DESIGN §9). Not an app fault: the other machine could not reach this one at all
+  (its firewall); the message now names the address and port.
+- **Still to do for the gate (owner):** keep using the app on Windows, macOS and Linux
   (`uv run qrp2p`, or a `build.yml` artifact) and record the findings here. Code-signing
   identities stay an open decision (below).
 
+## M4 — Learning layer I
 
 Reuse the shell, theme and evidence components from [UI_DESIGN.md](UI_DESIGN.md). Connect
 timeline/field/byte/key selection; handle ring eviction, local clock origin and bounded pause

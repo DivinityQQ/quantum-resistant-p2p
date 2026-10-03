@@ -142,6 +142,15 @@ def send_file(contact_id: str, path: str) -> Op:
     return op
 
 
+def send_file_data(contact_id: str, name: str, data: bytes) -> Op:
+    """Offer ``data`` (a pasted image) as a file called ``name``."""
+
+    async def op(node: Node) -> None:
+        await node.send_file_data(_id(contact_id), name, data)
+
+    return op
+
+
 def accept_file(file_id: str, directory: str = "") -> Op:
     """Accept an offered file into ``directory`` (empty: the downloads folder)."""
 

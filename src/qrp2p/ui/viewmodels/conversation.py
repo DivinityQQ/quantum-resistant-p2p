@@ -7,15 +7,18 @@ read, and nothing is lost or shown twice.
 """
 
 from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 from typing import Final
 
 from PySide6.QtCore import Property, QObject, QUrl, Signal, Slot
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QDesktopServices, QGuiApplication
 
 from qrp2p.ui import ops
 from qrp2p.ui.bridge import Scope
+from qrp2p.ui.clipboard import PastedFiles, PastedImage, has_files, what_to_paste
 from qrp2p.ui.snapshots import ContactSnap, MessageChanged, MessageSnap, Reply, SafetySnap
+from qrp2p.ui.text import isolate
 from qrp2p.ui.viewmodels.listmodel import RowModel
 from qrp2p.ui.viewmodels.qt import ViewModel, constant, items, mapped, readonly
 from qrp2p.ui.viewmodels.rows import (
@@ -78,6 +81,8 @@ class Conversation(ViewModel):
         self._banner = ""
         self._banner_text = ""
         self._banner_tone = "neutral"
+        self._offered = ""
+        """The profile the contact asked for when we refused it (the banner's switch)."""
         self._loading = True
         self._has_earlier = False
         self._safety: SafetySnap | None = None
@@ -108,7 +113,9 @@ class Conversation(ViewModel):
     presence = mapped(str, "_view", "presence", contactChanged)
     presenceText = mapped(str, "_view", "presence_text", contactChanged)  # noqa: N815
     banner = readonly(str, "_banner", bannerChanged)
-    """``""``, ``connecting``, ``waiting``, ``error`` or ``ended``."""
+    """``""``, ``connecting``, ``waiting``, ``error``, ``ended`` or ``profile`` (we refused it)."""
+    offeredProfile = readonly(str, "_offered", bannerChanged)  # noqa: N815
+    """For ``profile``: what the contact asked for."""
     bannerText = readonly(str, "_banner_text", bannerChanged)  # noqa: N815
     bannerTone = readonly(str, "_banner_tone", bannerChanged)  # noqa: N815
     """``neutral`` or ``danger`` (a failure the user should notice)."""
@@ -183,6 +190,17 @@ class Conversation(ViewModel):
         text = ended_text(reason, by_peer=by_peer, peer=self._contact.name)
         self._set_banner("ended", text, tone)
 
+    def profile_refused(self, offered: str, configured: str) -> None:
+        """We refused the contact's session: it asked for ``offered``, we have ``configured``."""
+        self._offered = offered
+        name = isolate(self._contact.name)
+        self._set_banner(
+            "profile",
+            f"{name} tried to connect with {offered}, but your setting for them is "
+            f"{configured}. Both sides must use the same profile.",
+            "danger",
+        )
+
     def apply(self, update: MessageChanged) -> None:
         """A history entry was added or changed."""
         if self._held is not None:  # a load is under way: replay this after it
@@ -234,6 +252,30 @@ class Conversation(ViewModel):
         if not path:
             return
         self._request(ops.send_file(self._contact.contact_id, path), "Could not offer the file")
+
+    @Slot(result=bool)
+    def clipboardHasFiles(self) -> bool:  # noqa: N802
+        """Whether pasting now would offer files or an image rather than insert text."""
+        return self._contact.session is not None and has_files(
+            QGuiApplication.clipboard().mimeData()
+        )
+
+    @Slot(result=bool)
+    def pasteFiles(self) -> bool:  # noqa: N802
+        """Offer the copied files or image; ``False`` when the paste is text for the composer."""
+        if self._contact.session is None:
+            return False
+        match what_to_paste(QGuiApplication.clipboard().mimeData(), datetime.now().astimezone()):
+            case PastedFiles(paths=paths):
+                for path in paths:  # already local paths: not parsed again as URLs
+                    op = ops.send_file(self._contact.contact_id, path)
+                    self._request(op, "Could not offer the file")
+            case PastedImage(name=name, png=png):
+                op = ops.send_file_data(self._contact.contact_id, name, png)
+                self._request(op, "Could not offer the image")
+            case None:
+                return False
+        return True
 
     @Slot(str)
     def acceptFile(self, file_id: str) -> None:  # noqa: N802
@@ -382,6 +424,14 @@ class Conversation(ViewModel):
         """The profile sessions with this contact use."""
         op = ops.set_contact_profile(self._contact.contact_id, profile)
         self._request(op, "Could not change the profile")
+        if self._banner == "profile":
+            self._set_banner("", "")
+
+    @Slot()
+    def useOfferedProfile(self) -> None:  # noqa: N802
+        """Switch to the profile the contact asked for when we refused it."""
+        if self._banner == "profile" and self._offered:
+            self.setProfile(self._offered)
 
     @Slot(str)
     def setRetention(self, retention: str) -> None:  # noqa: N802

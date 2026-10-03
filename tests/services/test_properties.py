@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import cast
 
 import msgspec
-from hypothesis import HealthCheck, given, settings
+from hypothesis import HealthCheck, example, given, settings
 from hypothesis import strategies as st
 
 from qrp2p.cli import render
@@ -77,6 +77,7 @@ def test_sanitized_names_are_safe(name: str) -> None:
 
 
 @given(st.text())
+@example("0\xa0.")  # a dot hid the no-break space before it
 def test_sanitizing_is_idempotent(name: str) -> None:
     once = sanitize_name(name)
     assert sanitize_name(once) == once

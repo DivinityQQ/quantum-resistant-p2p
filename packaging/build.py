@@ -31,7 +31,12 @@ UNUSED_QML: Final = [
     "QtQuick/Controls/Imagine", "QtQuick/Controls/Material", "QtQuick/Controls/Universal",
     "QtQuick/VirtualKeyboard", "QtQuick/Scene2D", "QtQuick/Scene3D", "QtQuick/Particles",
     "QtQuick/Pdf", "QtQuick/Timeline", "QtQuick/LocalStorage", "QtQuick/VectorImage",
-    "QtQuick/tooling", "QtTest", "QtQuickEffectMaker", "Qt/labs",
+    "QtQuick/tooling", "QtTest", "QtQuickEffectMaker",
+    # Qt Labs, except folderlistmodel: Qt's own file and folder dialogs (used wherever the
+    # platform has no native one, as on KDE without its Qt plugin) are built on it.
+    "Qt/labs/animation", "Qt/labs/assetdownloader", "Qt/labs/platform", "Qt/labs/qmlmodels",
+    "Qt/labs/settings", "Qt/labs/sharedimage", "Qt/labs/StyleKit", "Qt/labs/synchronizer",
+    "Qt/labs/wavefrontmesh",
     # Shipped as QML plugins by PySide6-Essentials, but their libraries are in the Addons:
     # macOS builds fail to resolve them.
     "QtQml/StateMachine", "QtQml/XmlListModel",
@@ -41,7 +46,9 @@ UNUSED_QML: Final = [
 # Qt libraries pulled in only by those modules or by Qt's own tools (the smoke test proves the
 # rest suffice): Linux and Windows name them Qt6<Name>, macOS frameworks Qt<Name>.
 UNUSED_LIBRARIES: Final = [
-    "Labs", "EglFS", "EglFs", "QuickControls2FluentWinUI3", "QuickControls2Fusion",
+    "LabsAnimation", "LabsPlatform", "LabsQmlModels", "LabsSettings", "LabsSharedImage",
+    "LabsStyleKit", "LabsSynchronizer", "LabsWavefrontMesh", "EglFS", "EglFs",
+    "QuickControls2FluentWinUI3", "QuickControls2Fusion",
     "QuickControls2Imagine", "QuickControls2Material", "QuickControls2Universal",
     "QuickParticles", "QuickTimeline", "QuickTest", "Test", "Sql", "QmlLocalStorage",
     "QmlXmlListModel", "WaylandCompositor", "QuickVectorImage", "QuickShapesDesignHelpers",

@@ -23,6 +23,7 @@ from qrp2p.ui.snapshots import (
     MessageSnap,
     MismatchOpened,
     MismatchSnap,
+    ProfileRefused,
     PromptClosed,
     PromptOpened,
     PromptSnap,
@@ -396,6 +397,7 @@ def test_unread_counts(backend: FakeBackend, app: AppController) -> None:
     backend.updates(MessageChanged(BOB.contact_id, chat("psst"), added=True))
     assert {r.name: r.unread for r in ws.strip.rows()} == {"Bob": 1, "Carol": 0}  # type: ignore[attr-defined]
     assert attention == ["Bob"]
+    assert ws.property("unread") == app.property("unread") == 1  # the title and the app badge
     ws.setStripLimit(1)  # only Bob fits now (most recent)...
     ws.select(CAROL.contact_id)  # ...until Carol is selected: she must stay visible
     assert [r.name for r in ws.strip.rows()] == ["Carol"]  # type: ignore[attr-defined]
@@ -407,6 +409,18 @@ def test_unread_counts(backend: FakeBackend, app: AppController) -> None:
     assert ws.strip.rows()[0].unread == 1  # type: ignore[attr-defined]
     ws.setWindowActive(True)
     assert ws.strip.rows()[0].unread == 0  # type: ignore[attr-defined]
+    assert app.property("unread") == 0
+
+
+def test_the_unread_count_does_not_outlive_the_lock(
+    backend: FakeBackend, app: AppController
+) -> None:
+    ws = unlock(backend, app, online(BOB), online(CAROL))
+    other = next(c for c in (BOB, CAROL) if c.contact_id != ws.property("selectedId"))
+    backend.updates(MessageChanged(other.contact_id, chat("psst"), added=True))
+    assert app.property("unread") == 1
+    app.lock()
+    assert app.property("unread") == 0
 
 
 def test_a_deleted_contact_moves_the_selection(backend: FakeBackend, app: AppController) -> None:
@@ -683,3 +697,30 @@ def test_a_file_offer_is_answered_once(backend: FakeBackend, app: AppController)
     assert conversation.messages.rows()[0].file_busy
     backend.reply(backend.one("accept_file"))
     assert not conversation.messages.rows()[0].file_busy
+
+
+def test_a_refused_profile_offers_the_contacts_choice(
+    backend: FakeBackend, app: AppController
+) -> None:
+    ws = unlock(backend, app, BOB, CAROL)
+    conversation = selected(ws)
+    load(backend)
+    shown = conversation.property("contactId")
+    backend.updates(ProfileRefused(shown, "PQ-CNSA-1", "HYBRID-1"))
+    assert conversation.property("banner") == "profile"
+    assert "PQ-CNSA-1" in conversation.property("bannerText")
+    assert conversation.property("offeredProfile") == "PQ-CNSA-1"
+    conversation.useOfferedProfile()
+    assert backend.one("set_contact_profile").args["profile"] == "PQ-CNSA-1"
+    assert conversation.property("banner") == ""
+
+
+def test_a_refused_profile_elsewhere_is_announced(backend: FakeBackend, app: AppController) -> None:
+    ws = unlock(backend, app, BOB, CAROL)
+    load(backend)
+    other = next(c for c in (BOB, CAROL) if c.contact_id != ws.property("selectedId"))
+    notices: list[str] = []
+    ws.noticePosted.connect(notices.append)
+    backend.updates(ProfileRefused(other.contact_id, "PQ-CNSA-1", "HYBRID-1"))
+    assert len(notices) == 1
+    assert "PQ-CNSA-1" in notices[0]

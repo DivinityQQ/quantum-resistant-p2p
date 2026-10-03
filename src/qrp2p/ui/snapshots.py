@@ -275,6 +275,15 @@ class SessionEnded:
 
 
 @dataclass(frozen=True, slots=True)
+class ProfileRefused:
+    """We refused the contact's session: it asked for ``offered``, its profile here differs."""
+
+    contact_id: str
+    offered: str
+    configured: str
+
+
+@dataclass(frozen=True, slots=True)
 class NoticePosted:
     """Something the user should know that belongs to no request."""
 
@@ -291,6 +300,7 @@ type Update = (
     | MismatchOpened
     | ConnectStage
     | SessionEnded
+    | ProfileRefused
     | NoticePosted
 )
 

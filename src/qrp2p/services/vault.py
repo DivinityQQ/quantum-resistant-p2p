@@ -533,7 +533,11 @@ class Vault:
             return
         ensure_private_dir(self._dir)
         lock = FileLock(
-            self._dir / LOCK_FILE, timeout=0, thread_local=False, fallback_to_soft=False
+            self._dir / LOCK_FILE,
+            timeout=0,
+            mode=0o600,  # owner-only, as every file in the data directory (DESIGN §10.1)
+            thread_local=False,
+            fallback_to_soft=False,
         )
         try:
             lock.acquire()

@@ -314,7 +314,11 @@ Do not turn every clickable item into a raw Rectangle with only a MouseArea.
 Primary actions are content-sized and clearly named. Busy prevents duplicate submission but
 does not imply success. Disabled actions explain their prerequisite where it is not obvious.
 Hover, keyboard focus, pressed and selected are distinct states. Tooltips supplement visible
-content; they never contain the only explanation of exposure or a dangerous action.
+content; they never contain the only explanation of exposure or a dangerous action. A tooltip
+appears beside its control, never over it, so the control stays clickable. Buttons keep the
+platform's arrow pointer; a busy button alone shows the busy pointer. Scroll bars never cover
+content. Editable and selectable text has the platform's context menu (Undo, Redo, Cut, Copy,
+Paste, Select all; read-only text Copy and Select all); a masked password is never copied out.
 
 Select via click/tap or keyboard. Double-click is optional acceleration only. Popovers close
 with Escape and return focus to their invoker. A modal moves focus inside, contains keyboard
@@ -369,13 +373,20 @@ Render every peer-supplied name/message/file label as plain text. QML rich-text 
 must be explicitly disabled for those values. Preserve message content, wrap long text, and
 make sender/direction depend on the session rather than fields supplied by the peer.
 
+A message or file offer that arrives unseen asks for the window's attention (taskbar or dock)
+and counts in the window title, **QRP2P (3)**, and the app icon's badge where the platform has
+one. Counts only: no names or text, and nothing while locked.
+
 Use the service's Sending, Sent, Delivered and Failed states. Delivered requires the matching
 encrypted receipt; it does not mean read. Show failed unsent history after crash recovery and
 do not silently resend it. Enter sends, Shift+Enter adds a line; document this near the composer
-or in Help and respect IME composition. Do not retain drafts across lock through plaintext
+or in Help and respect IME composition. The composer grows with its lines up to six, then
+scrolls with the cursor. Do not retain drafts across lock through plaintext
 settings.
 
-File offers show sender, sanitized name and actual size, with Accept and Decline. Transfers
+Pasting into the composer offers copied files, or a copied image as a PNG; text is pasted as
+text, also when an office suite puts a picture beside it (only a lone address beside an image,
+as browsers copy it, yields the image). File offers show sender, sanitized name and actual size, with Accept and Decline. Transfers
 show measured progress; the sender reaches complete only after the final receiver confirmation.
 Keep Cancel accessible. An ended session makes the transfer failed; v2 does not offer Resume.
 Open is explicit after completion; received files never open themselves. Native file/folder
