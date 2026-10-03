@@ -42,6 +42,7 @@ def test_a_fresh_start_reaches_the_messenger_without_warnings(tmp_path: Path) ->
     image = QImage(str(shot))
     assert (image.width(), image.height()) == (1280, 800)
     assert QImage(str(tmp_path / "first-screen-messenger.png")).width() == 1280
+    assert QImage(str(tmp_path / "first-screen-inspector.png")).width() == 1280
     assert (tmp_path / "data" / "vault.json").exists()  # the throwaway vault
 
 

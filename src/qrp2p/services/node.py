@@ -48,6 +48,8 @@ from qrp2p.core.wire import (
     Receipt,
     profile_bitmask,
 )
+from qrp2p.lab.recording import LabRecording, Meta, Recording
+from qrp2p.lab.solo import LabRun, lab_profile
 from qrp2p.services import admission
 from qrp2p.services.admission import GlassBoxLimiter, PromptKind
 from qrp2p.services.discovery import Discovery, NearbyPeer, instance_name
@@ -92,6 +94,8 @@ from qrp2p.services.models import (
     TrustState,
 )
 from qrp2p.services.paths import default_downloads_dir
+from qrp2p.services.recordings import DIRECTORY as RECORDINGS_DIR
+from qrp2p.services.recordings import RecordingInfo, RecordingStore, session_recording
 from qrp2p.services.session import Session, SessionEnd, SessionNotOpenError, SessionRole
 from qrp2p.services.session_manager import SessionManager
 from qrp2p.services.trace_bus import TraceBus, TraceRecord
@@ -217,6 +221,7 @@ class Node:
         random_bytes: Callable[[int], bytes] = os.urandom,
     ) -> None:
         self._vault = Vault(data_dir, random_bytes=random_bytes, kdf=kdf)
+        self._recordings = RecordingStore(data_dir / RECORDINGS_DIR, self._vault)
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="qrp2p-vault")
         self._listen_host = listen_host
         self._port_override = port
@@ -750,6 +755,59 @@ class Node:
             updated = await self._db(self._vault.delete_conversation, contact)
             self._contacts[contact_id] = updated
             self._emit(ContactsChanged(contact_id))
+
+    # -- recordings (DESIGN §11.5): explicit saves only ---------------------------------------------
+
+    async def save_session_recording(self, session_id: int, title: str) -> RecordingInfo:
+        """Save what this side retained of a glass-box session, with its revealed values.
+
+        Raises:
+            RecordingError: Not retained, not glass-box, or beyond a bound.
+            VaultLockedError: Locked.
+        """
+        self.touch()
+        self._require_unlocked()
+        recording = session_recording(self.trace, session_id, title, self._wall())
+        return await self._db(self._recordings.save, recording)
+
+    async def save_lab_recording(self, title: str, run: LabRun) -> RecordingInfo:
+        """Save a solo-lab run, so it can be replayed and forked later.
+
+        Raises:
+            RecordingError: Beyond a bound.
+            VaultLockedError: Locked.
+        """
+        self.touch()
+        self._require_unlocked()
+        profile = lab_profile(run.profile).name
+        meta = Meta(title=title, created=self._wall(), profile=profile)
+        return await self._db(self._recordings.save, LabRecording(meta=meta, run=run))
+
+    async def recordings(self) -> list[RecordingInfo]:
+        """The saved recordings, newest first; one that does not open is listed as unreadable."""
+        self._require_unlocked()
+        return await self._db(self._recordings.list)
+
+    async def open_recording(self, file_id: str) -> Recording:
+        """A saved recording (untrusted input: bounded and strictly decoded).
+
+        Raises:
+            RecordingError: No such recording, or it does not decode.
+            VaultError: Locked, or it does not authenticate with this vault.
+        """
+        self.touch()
+        self._require_unlocked()
+        return await self._db(self._recordings.open, file_id)
+
+    async def delete_recording(self, file_id: str) -> None:
+        """Delete a saved recording.
+
+        Raises:
+            RecordingError: No such recording.
+        """
+        self.touch()
+        self._require_unlocked()
+        await self._db(self._recordings.delete, file_id)
 
     async def history(self, contact_id: bytes, limit: int | None = None) -> list[HistoryEntry]:
         """A conversation, oldest first."""
@@ -1340,6 +1398,7 @@ class Node:
             if outgoing is not None and contact.address != outgoing.address:
                 contact = await self._save_contact(replace(contact, address=outgoing.address))
         self._session_contact[session.id] = contact.contact_id
+        self.trace.describe(session.id, contact_saved=True)
         profile = session.profile
         self._emit(
             SessionOpened(

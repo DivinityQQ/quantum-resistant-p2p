@@ -332,6 +332,56 @@ def test_connecting_shows_each_stage(backend: FakeBackend, app: AppController) -
     assert conversation.property("presence") == "online"
 
 
+def test_a_glass_box_request_says_what_it_asks_and_how_it_ended(
+    backend: FakeBackend, app: AppController
+) -> None:
+    ws = unlock(backend, app, BOB)
+    conversation = selected(ws)
+    load(backend)
+    assert conversation.property("canRequestGlassBox")
+    conversation.connectGlassBox()
+    assert backend.one("connect_contact").args == {"contact_id": BOB.contact_id, "glass_box": True}
+    assert conversation.property("bannerText") == "Asking Bob for a glass-box session…"
+    assert not conversation.property("canRequestGlassBox")  # one request at a time
+    backend.updates(ConnectStage(BOB.contact_id, "10.0.0.2:47470", "waiting_for_admission"))
+    assert conversation.property("bannerText") == "Waiting for Bob to answer the glass-box request…"
+    backend.reply(backend.one("connect_contact"), error=ErrorInfo("node", "timed out"))
+    conversation.retryConnect()  # "Try again" repeats the request as it was
+    assert backend.one("connect_contact").args["glass_box"] is True
+    backend.updates(ContactChanged(online(BOB)))  # the peer declined: a normal session
+    assert conversation.property("banner") == "normal"
+    assert "declined the glass-box request" in conversation.property("bannerText")
+    backend.reply(backend.one("connect_contact"))
+    assert conversation.property("banner") == "normal"
+    backend.updates(ContactChanged(BOB))  # it ended; reconnecting is a plain connection again
+    conversation.connectSession()
+    assert backend.one("connect_contact").args["glass_box"] is False
+
+
+def test_an_accepted_glass_box_request_needs_no_banner(
+    backend: FakeBackend, app: AppController
+) -> None:
+    ws = unlock(backend, app, BOB)
+    conversation = selected(ws)
+    load(backend)
+    conversation.connectGlassBox()
+    backend.updates(ContactChanged(online(BOB, glass_box=True)))
+    assert conversation.property("banner") == ""
+    assert conversation.property("glassBox")  # the frame and tag say it from here
+
+
+def test_only_a_pinned_contact_can_be_asked_for_glass_box(
+    backend: FakeBackend, app: AppController
+) -> None:
+    blocked = replace(BOB, trust="blocked")
+    ws = unlock(backend, app, blocked)
+    conversation = selected(ws)
+    load(backend)
+    assert not conversation.property("canRequestGlassBox")
+    conversation.connectGlassBox()
+    assert backend.pending("connect_contact") == []
+
+
 def test_a_key_mismatch_replaces_the_connection_error(
     backend: FakeBackend, app: AppController
 ) -> None:

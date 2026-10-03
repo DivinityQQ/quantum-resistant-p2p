@@ -38,6 +38,7 @@ from qrp2p.core.wire import (
     RekeyOffer,
     RekeySwitch,
     decode_inner,
+    encode_inner,
 )
 from tests.core.harness import ESTABLISHED_AT as T0
 from tests.core.harness import Link, initiator, none_of, one, sent, session, traces
@@ -195,6 +196,19 @@ def test_valid_record_with_bad_schema_is_schema_error() -> None:
     plaintext = b"\x81\xa4kind\xa4nope"
     header = Frame(FrameType.RECORD, b"\x00" * (len(plaintext) + 16)).header
     body = aead.seal(profile.aead, keys, 0, header, plaintext)
+    assert one(r.receive(Frame(FrameType.RECORD, body), 11.0), Closed).reason is (
+        CloseReason.SCHEMA_ERROR
+    )
+
+
+def test_a_record_whose_text_is_not_utf8_is_a_schema_error() -> None:
+    """Authentic, well-formed MessagePack, but a string that is not UTF-8: a named close."""
+    i, r = session()
+    keys, profile = i._send.keys, i.profile
+    plaintext = bytearray(encode_inner(Chat(id=bytes(16), text="hello")))
+    plaintext[plaintext.index(b"hello")] = 0x80
+    header = Frame(FrameType.RECORD, b"\x00" * (len(plaintext) + 16)).header
+    body = aead.seal(profile.aead, keys, 0, header, bytes(plaintext))
     assert one(r.receive(Frame(FrameType.RECORD, body), 11.0), Closed).reason is (
         CloseReason.SCHEMA_ERROR
     )

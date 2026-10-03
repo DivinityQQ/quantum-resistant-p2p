@@ -2,7 +2,7 @@
 
 | | |
 | --- | --- |
-| Version | 1.7 |
+| Version | 1.8 |
 | Date | 2026-10-03 |
 | Status | Approved for implementation |
 | Scope | Complete rewrite of `quantum-resistant-p2p` (v1) |
@@ -652,7 +652,7 @@ The learning layer is built on a **trace bus** fed by the real protocol engine. 
 | --- | --- | --- | --- |
 | **Inspector** (always available) | Any session | Public data: decoded handshake fields with offsets and sizes, KEM public keys and ciphertexts, signatures, named transcript hashes, record headers, counters, sizes, timings, KeyUpdate and rekey events, fingerprints. Secret values appear as `••••` with their label and size | None needed |
 | **Glass-box session** | A real session with a pinned contact | Inspector plus the values in §11.4 | Requested by the initiator, granted by the responder's user at admission; bound into the transcript |
-| **Solo lab** | Simulated nodes (Alice, Bob, Mallory) inside the app over loopback | Everything, including lab identity private keys | None needed: only throwaway lab identities |
+| **Solo lab** | Simulated nodes (Alice, Bob, Mallory) inside the app's own process, linked in memory (no sockets) | Everything, including lab identity private keys | None needed: only throwaway lab identities |
 
 ### 11.2 Inspector
 
@@ -660,6 +660,22 @@ The learning layer is built on a **trace bus** fed by the real protocol engine. 
 - **Message dissector:** a Wireshark-style hex view with highlighted fields. Each field has a one-line explanation and a link to its specification.
 - **Key schedule explorer:** an interactive graph of §7.4 and §8.4. Labels and transcript hashes are always shown; values are shown only in glass-box sessions and the solo lab.
 - **"Why is this secure?" panel:** each property per session and what it rests on. Example: "Confidentiality holds if ML-KEM-768 *or* X25519 is unbroken, with SHA3-256 as the combiner."
+
+A session's descriptor records the pin comparison as it happened: `matched` once Reply
+authenticated the pinned responder, `mismatched` when it authenticated another bundle, and
+nothing for a first contact. Connecting to a pinned contact is not itself evidence of a match.
+That a first contact was saved as a contact is a separate fact, recorded once the session is
+bound to it. A glass-box recording keeps both facts; a contact's safety-number verification is
+not part of a recording.
+
+Retention is bounded at every step to the UI, in events and in captured bytes. Each session
+keeps a handshake head of at most 2,000 events and 4 MiB, plus a tail of at most 10,000 events
+and 4 MiB. The last 16 ended sessions stay selectable; an evicted one leaves the Inspector's
+picker. A tap holds at most 20,000 events and 8 MiB between batches. Deliveries wait for the Qt
+thread in a mailbox behind a single wake signal, where the trace streams may hold at most
+40,000 events and 16 MiB. An Inspector keeps at most 30,000 events and 8 MiB, paused or not.
+Beyond a bound, the trace events in between are dropped and the Inspector takes a fresh
+snapshot of what the bus retains; the missing ordinals stay visible as a gap.
 
 ### 11.3 Glass-box sessions
 
@@ -669,21 +685,48 @@ The learning layer is built on a **trace bus** fed by the real protocol engine. 
 4. The chat gets an amber frame and a GLASS-BOX tag on every message; saved recordings carry an EXPOSED stamp.
 5. A normal session can never become glass-box retroactively; that would expose secrets promised to stay secret.
 
-**Containment** is structural. Normal sessions use a crypto provider with **no** path from secret values to the trace bus; its events carry only labels, sizes and public bytes. Glass-box and lab sessions use a `RevealingProvider` wrapper, enabled only when Admit says `glass_box = 1`. Secrets produced before admission wait in a bounded per-session buffer that is emitted on glass-box admission and discarded otherwise. As a second line of defence, secret values are wrapped in a `Secret` type whose `repr` is redacted.
+**Containment** is structural. Normal sessions use a crypto provider with **no** path from secret values to the trace bus; its events carry only labels, sizes and public bytes. A session's provider is chosen when its connection opens, before anyone knows whether it will be glass-box:
+
+- An initiator that did not set `gb_request` gets the plain provider: it can never become glass-box.
+- Every other session gets a `RevealingProvider` whose sink is an **exposure gate**. Until admission the gate only buffers, at most 128 values; if it overflows, the handshake fails with `internal`. When Admit says `glass_box = 1` the gate publishes the buffer and every later value into the session's trace ring. Otherwise (no request in the Hello, a decline, a reject, a failure) the gate drops the buffer and its publisher for good.
+- Revealed values travel on the trace bus as their own record type, never as public trace events, and stay wrapped in a `Secret` type whose `repr` is redacted (the second line of defence).
 
 ### 11.4 Values exposed in glass-box sessions
 
-`ssM`, `ssX` and the combined `ss`; `hs`, `hs_R`, `hs_I`, `fk_R`, `fk_I`; `cs_n`; every `ap_*` secret with its key and IV; per-record nonces and plaintexts; `exporter_n`. **Identity private keys are never exposed**, not even in glass-box sessions.
+`ssM`, `ssX` and the combined `ss`; `hs`, `hs_R`, `hs_I`, `fk_R`, `fk_I`; `cs_n`; every `ap_*` secret with its key and IV; per-record nonces and plaintexts; `exporter_n`. Also the ephemeral KEM decapsulation keys and the derived rekey salts (`derived[n]`): both belong to this session alone and expose nothing the values above do not (a decapsulation key opens only this session's KEM ciphertext, whose `ss` is shown; a salt is derived from the shown `cs_n`). **Identity private keys are never exposed**, not even in glass-box sessions.
+
+Every secret has a name that is unique within its session, and the Inspector joins key-graph nodes, trace events and revealed values by it: the schedule's names above, `Keys(S)` as `S.key` and `S.iv`, a KeyUpdate's as `ap_I[n]+g`, and the KEM outputs of the rekey to epoch *n* as `dk[n]`, `ss[n]`, `ssM[n]`, `ssX[n]`. A record's nonce and plaintext are identified by the key's name and the sequence number.
+
+The solo lab also reveals the private key seeds of its two throwaway identities, as
+`identity.ed25519`, `identity.mldsa65` and `identity.mldsa87` (32 bytes each), when the
+handshake starts. The lab reveals them itself, from the identities it generated for the run;
+the user's identity is never in a lab, and no provider reveals identity keys.
 
 ### 11.5 Recordings (`.qrlab`)
 
 ```text
-file = "QRLAB\0" ‖ version:u8 ‖ nonce[12] ‖ AEAD(k_lab, msgpack{ meta, transcript, provider_log, secrets, records })
+file   = header ‖ nonce[12] ‖ ChaCha20-Poly1305(k_lab, nonce, body, aad = header)
+header = "QRLAB" ‖ 0x00 ‖ version:u8 (= 1)
+body   = msgpack, one of
+         lab       { meta, run }                           # a solo-lab run: replays and forks
+         glass_box { meta, exposed, session, events }      # our side of a glass-box session: view only
+meta   = { title, created, profile }
+run    = { profile, both lab identities' seeds, steps, provider-log marks per step, both provider logs }
+events = the retained trace events in order, with their ordinals and times, and the revealed values
 ```
 
-- `provider_log` stores every randomised crypto output in call order (§11.6).
-- `records` stores direction, sequence number, header, ciphertext and plaintext.
-- Imports are untrusted input: 256 MiB cap, strict schema, opened only in the lab engine.
+- A lab recording's provider logs hold every randomised crypto output in call order (§11.6), so it replays exactly and can be forked at any step.
+- A glass-box recording holds what this side retained of the session (frames, schedule, revealed keys, each record's nonce and plaintext) and the EXPOSED stamp. It cannot be replayed: the peer's randomness and keys were never ours. Only a glass-box session can be saved; a normal session's provider never had values to give.
+- Saving is an explicit action. Each recording is one file with a random name in `lab/`, so its title never shows on disk; `k_lab` never leaves the vault, which seals and opens bodies.
+- Opening is untrusted input: the file is capped at 256 MiB before it is read, the schema is strict (unknown fields, wrong types and a missing stamp are refused), every list has a bound, and a failure names its reason without quoting recorded bytes. A file that does not open (another vault's, altered, another version) is listed as unreadable rather than hidden.
+
+The schema is strict at every level, trace events included: they are read through bounded
+mirrors of the core's events, never decoded into them directly. Before anything is shown or
+replayed, what the views rely on is checked: times are finite (a creation time must be a date),
+the profile is known, each frame field lies inside its frame body and its parent, and a run's
+provider-log marks are valid (§11.6). A captured frame need not be a valid message: a malformed
+one is evidence too. What a replay is fed is checked where it is used, by the replaying
+provider. Saving decodes the body it is about to write, so a recording that is saved opens.
 
 ### 11.6 Step-through and replay
 
@@ -694,7 +737,13 @@ does not suspend protocol execution. Initially a lab step advances one protocol/
 transition. Pausing inside it requires an explicit execution mechanism and tests, rather than
 revealing the returned events one at a time.
 
-pyca's ML-KEM encapsulation and ML-DSA signing take no caller-supplied randomness, so their outputs cannot be regenerated. Replay therefore records **at the provider boundary**: generated keys, `(ss, ct)` from each encapsulation, each signature and each nonce. On replay these are fed back and re-checked: decapsulation must give the same `ss` and verification must pass. Everything downstream (hashes, HKDF, AEAD) recomputes exactly. **Fork at step N** replays up to N, then continues live with fresh randomness, so a learner can change one input and see what breaks.
+pyca's ML-KEM encapsulation and ML-DSA signing take no caller-supplied randomness, so their outputs cannot be regenerated. Replay therefore records **at the provider boundary**: every draw from the random source (handshake nonces, and the seeds ephemeral key pairs are derived from, so a key pair is recomputed on replay), `(ss, ct)` from each encapsulation together with the `ek` it used, and each signature with its role and transcript hash. On replay these are fed back and re-checked: each call must ask for what was recorded (same kind, size, `ek`, role and hash) and a recorded signature must still verify; any difference is a named *replay divergence*. Decapsulation, verification and everything downstream (hashes, HKDF, AEAD) recompute exactly. The lab clock is virtual and advances with the steps, so a replay also sees the same times. **Fork at step N** replays the first N steps against the provider logs as they stood after step N, then continues live with fresh randomness, so a learner can change one input and see what breaks.
+
+There is one pair of provider-log marks per step. Marks are nonnegative, monotonic and within
+their logs; the final pair accounts for every entry, including in an empty run. Restoring a
+prefix uses strict providers and verifies consumed log lengths after **each** step. Fresh
+randomness becomes available only after that entire prefix reproduces successfully. Unused
+suffix entries, insufficient logs and illegal restored transitions cannot silently become live.
 
 ### 11.7 Attack Lab
 
@@ -760,7 +809,7 @@ Lessons are Markdown files with step metadata: a goal, steps performed in the ap
 
 ### 11.11 Guardrails
 
-- Lab identities are separate from the real identity, and lab traffic stays on loopback.
+- Lab identities are separate from the real identity, and lab traffic never leaves the process: the lab's nodes are linked in memory, with no sockets.
 - `LAB-CLASSICAL` and weakened engines exist only in the solo lab.
 - Imported recordings are untrusted input.
 - Each tier has its own visual language (§14.2).
@@ -799,7 +848,7 @@ flowchart TB
 - **Sans-I/O core.** Bytes and events in, bytes and events out: no sockets, threads, clocks or Qt. Time and randomness are injected, which makes it deterministic to test, easy to fuzz, and trivially steppable.
 - **Separate asyncio thread.** Networking and storage run on their own event loop; the Qt UI talks to them only through the bridge, so neither can stall the other.
 - **The desktop bridge (M3).** Only the services thread holds the node and its objects. It hands the Qt side immutable snapshots of primitives (IDs as hex, display-safe text, numbers) and never a session, contact, bundle or exception object; a failed request crosses as a kind and a message. Every delivery carries a **lifecycle generation** that increases at each node state change, at the moment the services thread reports it; the unlocked snapshot is taken in that same step, so no event falls between snapshot and subscription. The Qt side accepts data only of the current unlocked generation and stops accepting the moment the user locks, so already queued deliveries cannot refill cleared views. View models of one unlocked period request through a scope pinned to its generation: a request from an earlier period is refused, because the node numbers prompts and mismatches afresh at every unlock and an old ID could name a new request. Updates are batched (at most 30 times a second) and flushed before any lifecycle change or reply, so a reply never overtakes the events before it. Front ends issue requests concurrently, so the node makes every read-modify-write of a stored record atomic and ordered per resource: contact changes (trust, profile, name, retention, re-pin, deletion, the address learned when a session opens) run one at a time in request order, each on the latest record, and so do settings changes; a request that waited across a lock finds the node locked. A file offer is reserved before any disk work, so it is answered exactly once.
-- **Trace bus.** Typed events with `session_id`, a monotonic timestamp, layer, kind and public fields. Each session has a ring buffer of 10,000 events; the UI receives batches at most 30 times a second.
+- **Trace bus.** Typed events with `session_id`, a session-scoped ordinal, a monotonic timestamp, layer, kind and public fields, plus the values a glass-box session's exposure gate lets through (§11.3). A session's handshake events are kept as long as its ring; later events go to a ring bounded by 10,000 events **and** 4 MiB of frame and revealed bytes, so a file transfer cannot make one session hold more than a few megabytes. Ordinals show exactly which events were evicted. The rings of the last 16 ended sessions are kept, each with a descriptor (role, address, profile, the authenticated peer, exposure, how it ended), so a failed handshake can be inspected too. The core also reports when it drops its references to secrets (`SecretsReleased`: used, replaced, handshake done, epoch done, closed); it is no claim of a memory wipe (§3.5). The UI receives batches at most 30 times a second.
 
 ### 12.1 Package layout
 

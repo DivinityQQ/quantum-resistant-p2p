@@ -13,7 +13,7 @@ import base64
 import dataclasses
 from collections.abc import Iterable
 
-from qrp2p.core.crypto.provider import PlainProvider, RevealingProvider
+from qrp2p.core.crypto.provider import AeadRevealed, PlainProvider, Revealed, RevealingProvider
 from qrp2p.core.crypto.secret import Secret
 from qrp2p.core.errors import ProtocolError
 from qrp2p.core.events import Trace
@@ -23,11 +23,16 @@ from tests.support import DeterministicRandom
 
 
 class Recorder:
+    """Every value a provider revealed, records' nonces and plaintexts included."""
+
     def __init__(self) -> None:
         self.secrets: list[Secret] = []
 
-    def __call__(self, secret: Secret) -> None:
-        self.secrets.append(secret)
+    def __call__(self, value: Revealed) -> None:
+        if isinstance(value, AeadRevealed):
+            self.secrets += [value.nonce, value.plaintext]
+        else:
+            self.secrets.append(value)
 
 
 def recording(label: str, recorder: Recorder) -> RevealingProvider:
@@ -123,7 +128,8 @@ def test_normal_session_leaks_no_secret() -> None:
     labels = {s.label for s in secrets}
     # The recorder saw the whole schedule, so the search below means something.
     assert {"hs", "hs_R", "fk_I", "cs_0", "cs_1", "ap_I[0]", "ap_R[1]", "exporter_1"} <= labels
-    assert {"ap_I[1]+1", "ssM", "ssX", "identity.mldsa65"} <= labels
+    assert {"ap_I[1]+1", "ssM", "ssX", "ss[1]", "dk", "dk[1]", "identity.mldsa65"} <= labels
+    assert {"plaintext", "ap_R[1].key.nonce"} <= labels
     assert leaks(secrets, binary, text) == []
 
 

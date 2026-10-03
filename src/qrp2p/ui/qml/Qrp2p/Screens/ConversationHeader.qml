@@ -13,6 +13,7 @@ Item {
     signal verify()
     signal details()
     signal confirm(string action)
+    signal requestGlassBox()
 
     // In a narrow pane the actions shrink to icons and badges to their shields.
     readonly property bool compact: width < 560
@@ -120,6 +121,14 @@ Item {
                     text: qsTr("Safety number…")
                     iconName: "fingerprint"
                     onTriggered: header.verify()
+                }
+                AppMenuItem {
+                    objectName: "connectGlassBoxItem"
+                    text: qsTr("Connect as glass-box…")
+                    iconName: "eye"
+                    visible: !header.conversation.online && header.conversation.trust !== "blocked"
+                    enabled: header.conversation.canRequestGlassBox
+                    onTriggered: header.requestGlassBox()
                 }
                 AppMenuItem {
                     text: qsTr("Rekey now")

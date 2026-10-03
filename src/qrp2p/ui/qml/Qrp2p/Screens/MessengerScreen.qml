@@ -2,9 +2,12 @@ import QtQuick
 import QtQuick.Layouts
 import Qrp2p.Theme
 import Qrp2p.Components
+import Qrp2p.Inspector
+import Qrp2p.Lab
 
-// The unlocked app: header, contact strip and the selected conversation (UI_DESIGN §3). With
-// the development preview, the Inspector layout can open beside or instead of the chat (§3.3).
+// The unlocked app: header, contact strip and the selected conversation (UI_DESIGN §3). The
+// Inspector opens beside the chat on wide windows, instead of it on narrow ones, and can be
+// expanded over it (§3.3); the conversation and its draft stay as they were meanwhile.
 Item {
     id: screen
 
@@ -14,8 +17,30 @@ Item {
     signal attention()
 
     property bool inspectorOpen: false
+    property bool inspectorExpanded: false
+    // chat | learn | lab: Learn and the lab replace the conversation workspace (UI_DESIGN §3.4);
+    // the conversation, its draft and the Inspector stay as they were meanwhile.
+    property string area: "chat"
+    property string lastArea: "chat"
     objectName: "messenger"
     readonly property bool split: width >= 1000
+
+    onAreaChanged: {
+        if (area === "lab")
+            workspace.lab.enter()
+        else if (lastArea === "lab")
+            workspace.lab.leave()
+        lastArea = area
+    }
+
+    onInspectorOpenChanged: {
+        workspace.inspector.setOpen(inspectorOpen)
+        if (!inspectorOpen) {
+            inspectorExpanded = false
+            if (conversationLoader.item && conversationLoader.item.focusComposer)
+                conversationLoader.item.focusComposer()
+        }
+    }
 
     opacity: 0
     Component.onCompleted: opacity = 1
@@ -23,6 +48,15 @@ Item {
         NumberAnimation { duration: Theme.motion }
     }
 
+    Connections {
+        target: screen.workspace.lab
+        function onFailed(message) { toasts.show(message) }
+        function onSaved(message) { toasts.show(message) }
+    }
+    Connections {
+        target: screen.workspace.inspector
+        function onRecordingSaved(message) { toasts.show(message) }
+    }
     Connections {
         target: screen.workspace
         function onNoticePosted(text) { toasts.show(text) }
@@ -38,8 +72,9 @@ Item {
             Layout.fillWidth: true
             app: screen.app
             workspace: screen.workspace
-            inspectorAvailable: screen.app.devPreview
             inspectorOpen: screen.inspectorOpen
+            inspectorAvailable: screen.area === "chat"
+            onOpenLearn: screen.area = "learn"
             onOpenChooser: chooser.openContacts()
             onOpenConnect: connectDialog.open()
             onOpenSettings: settingsDialog.open()
@@ -50,16 +85,40 @@ Item {
             id: strip
             Layout.fillWidth: true
             workspace: screen.workspace
-            visible: screen.workspace.contactCount > 0
+            visible: screen.workspace.contactCount > 0 && screen.area === "chat"
             onOpenChooser: chooser.openContacts()
             onOpenConnect: chooser.openNearby()
         }
         Divider {
             Layout.fillWidth: true
         }
+        Loader {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            active: screen.area === "learn"
+            visible: active
+            onLoaded: Qt.callLater(() => { if (item) item.focusFirst() })
+            sourceComponent: LearnScreen {
+                lab: screen.workspace.lab
+                onBackToChat: screen.area = "chat"
+                onOpenLab: screen.area = "lab"
+            }
+        }
+        Loader {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            active: screen.area === "lab"
+            visible: active
+            onLoaded: Qt.callLater(() => { if (item) item.focusFirst() })
+            sourceComponent: LabScreen {
+                lab: screen.workspace.lab
+                onBackToChat: screen.area = "chat"
+            }
+        }
         Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
+            visible: screen.area === "chat"
 
             Item {
                 id: chatPane
@@ -67,7 +126,7 @@ Item {
                 anchors.bottom: parent.bottom
                 anchors.left: parent.left
                 width: !screen.inspectorOpen ? parent.width
-                    : screen.split ? Math.max(320, Math.round(parent.width * 0.34)) : 0
+                    : screen.split && !screen.inspectorExpanded ? Math.max(320, Math.round(parent.width * 0.34)) : 0
                 visible: width > 0
                 clip: true
 
@@ -90,15 +149,24 @@ Item {
                 }
             }
             Loader {
+                id: inspectorLoader
                 anchors.top: parent.top
                 anchors.bottom: parent.bottom
                 anchors.right: parent.right
                 anchors.left: chatPane.right
                 active: screen.inspectorOpen
                 visible: active
-                sourceComponent: InspectorPreview {
+                clip: true  // while the split opens, the pane is narrower than its contents
+                // Opening moves focus to the active tab (UI_DESIGN §5).
+                onLoaded: Qt.callLater(() => { if (item) item.focusTabs() })
+                sourceComponent: InspectorPane {
+                    inspector: screen.workspace.inspector
+                    canSave: true
                     split: screen.split
+                    expanded: screen.inspectorExpanded
+                    canExpand: screen.split
                     onBackToChat: screen.inspectorOpen = false
+                    onToggleExpanded: screen.inspectorExpanded = !screen.inspectorExpanded
                 }
             }
         }
@@ -112,6 +180,10 @@ Item {
             onVerify: verifyDialog.open()
             onDetails: detailsDialog.open()
             onConfirm: action => confirmDialog.ask(action, conversationLoader.current)
+            onRequestGlassBox: {
+                glassBoxDialog.conversation = conversationLoader.current
+                glassBoxDialog.open()
+            }
             Component.onCompleted: focusComposer()
         }
     }
@@ -160,6 +232,10 @@ Item {
         id: confirmDialog
         objectName: "confirmDialog"
     }
+    GlassBoxRequestDialog {
+        id: glassBoxDialog
+        objectName: "glassBoxDialog"
+    }
     SettingsDialog {
         id: settingsDialog
         objectName: "settingsDialog"
@@ -173,7 +249,6 @@ Item {
     ShortcutsDialog {
         id: shortcutsDialog
         objectName: "shortcutsDialog"
-        devPreview: screen.app.devPreview
     }
 
     // Notices name contacts, so they live and die with the unlocked workspace: a lock takes
@@ -197,7 +272,7 @@ Item {
     }
     Shortcut {
         sequence: "Ctrl+I"
-        enabled: screen.app.devPreview
+        enabled: screen.area === "chat"
         onActivated: screen.inspectorOpen = !screen.inspectorOpen
     }
 }

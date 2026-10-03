@@ -11,8 +11,11 @@ qrp2p.core.crypto.provider.PlainProvider.kem_keygen :: seed = Secret(self.random
 qrp2p.core.crypto.provider.RevealingProvider.extract :: out = self._inner.extract(profile, salt, ikm, name=name) => out = self._inner.extract(profile, None, ikm, name=name)  # RFC 5869: a missing salt is Hlen zero bytes, which is what zero is
 qrp2p.core.crypto.xwing._expand :: expanded = hashlib.shake_256(sk.reveal()).digest(96) => expanded = hashlib.shake_256(sk.reveal()).digest(97)  # the X25519 key is the same 32 bytes either way
 qrp2p.core.crypto.xwing._expand :: sk_x = x25519.X25519PrivateKey.from_private_bytes(expanded[64:96]) => sk_x = x25519.X25519PrivateKey.from_private_bytes(expanded[64:97])  # the X25519 key is the same 32 bytes either way
+qrp2p.core.crypto.mlkem1024.encapsulate :: return (SharedSecret(Secret(ss, 'ss')), ct) => return (SharedSecret(Secret(ss, None)), ct)  # the provider renames every KEM output by epoch (DESIGN §11.6), so the KEM's own label is never seen
+qrp2p.core.crypto.mlkem1024.decapsulate :: return SharedSecret(Secret(_private_key(dk).decapsulate(ct), 'ss')) => return SharedSecret(Secret(_private_key(dk).decapsulate(ct), None))  # the provider renames every KEM output by epoch (DESIGN §11.6), so the KEM's own label is never seen
+qrp2p.core.crypto.xwing._combine :: return SharedSecret(ss=Secret(ss, 'ss'), components=(Secret(ss_m, 'ssM'), Secret(ss_x, 'ssX'))) => return SharedSecret(ss=Secret(ss, None), components=(Secret(ss_m, 'ssM'), Secret(ss_x, 'ssX')))  # the provider renames every KEM output by epoch (DESIGN §11.6), so the KEM's own label is never seen
+qrp2p.core.crypto.xwing.keygen :: sk = Secret(seed.reveal(), 'xwing.sk') => sk = Secret(seed.reveal(), None)  # the provider renames every KEM output by epoch (DESIGN §11.6), so the KEM's own label is never seen
 qrp2p.core.handshake._Machine.__init__ :: self._transcript: Transcript | None = None => self._transcript: Transcript | None = ''  # initial None is overwritten before any read
-qrp2p.core.handshake._Machine.__init__ :: self._secrets: HandshakeSecrets | None = None => self._secrets: HandshakeSecrets | None = ''  # initial None is overwritten before any read
 qrp2p.core.handshake._Machine._establish :: assert profile is not None and secrets is not None => assert profile is not None or secrets is not None  # internal invariant; every caller reaches it only in the asserted state
 qrp2p.core.handshake.Initiator.__init__ :: self._dk: Secret | None = None => self._dk: Secret | None = ''  # initial None is overwritten before any read
 qrp2p.core.handshake.Initiator.__init__ :: self._ek: bytes | None = None => self._ek: bytes | None = ''  # initial None is overwritten before any read
@@ -47,9 +50,6 @@ qrp2p.core.record.Channel._switch_recv :: self._recv = self._direction(rekey.rec
 qrp2p.core.record.Channel._finish_rekey_if_done :: assert rekey is not None and rekey.next is not None => assert rekey is not None or rekey.next is not None  # internal invariant; every caller reaches it only in the asserted state
 qrp2p.core.schedule.handshake_secrets :: zero = bytes(profile.hash_len) => zero = None  # RFC 5869: a missing salt is Hlen zero bytes, which is what zero is
 qrp2p.core.schedule.handshake_secrets :: hs = provider.extract(profile, zero, ss, name='hs') => hs = provider.extract(profile, None, ss, name='hs')  # RFC 5869: a missing salt is Hlen zero bytes, which is what zero is
-qrp2p.core.schedule._derived :: return provider.derive_secret(profile, secret, 'derived', empty_hash, name=f'derived[{epoch}]') => return provider.derive_secret(profile, secret, 'derived', empty_hash, name=None)  # changes only the traced label of the derived secret
-qrp2p.core.schedule.first_epoch :: salt = _derived(provider, profile, hs, 0) => salt = _derived(provider, profile, hs, None)  # changes only the traced label of the derived secret
-qrp2p.core.schedule.first_epoch :: salt = _derived(provider, profile, hs, 0) => salt = _derived(provider, profile, hs, 1)  # changes only the traced label of the derived secret
 qrp2p.core.wire.FrameReader.feed :: continue => break  # the loop only continues here when the input is exhausted
 qrp2p.core.wire.transcript_entry :: if len(value) > _MAX_U32: => if len(value) >= _MAX_U32:  # unreachable: the boundary is a 4 GiB transcript value
 qrp2p.core.wire.Chat.__post_init__ :: _check_utf8_len(self.text, MAX_TEXT_BYTES, 'text') => _check_utf8_len(self.text, MAX_TEXT_BYTES, None)  # the argument only names the field in the error message

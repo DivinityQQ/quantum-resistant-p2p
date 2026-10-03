@@ -1,0 +1,5 @@
+module Qrp2p.Lab
+LabNode 1.0 LabNode.qml
+LabScreen 1.0 LabScreen.qml
+LabSteps 1.0 LabSteps.qml
+LearnScreen 1.0 LearnScreen.qml

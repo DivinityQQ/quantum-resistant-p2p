@@ -453,7 +453,9 @@ Gaps can include scheduling, networking and user admission delay.
 
 Opening Inspector reads the retained ring and subscribes to updates in the services thread.
 Snapshot/subscription handoff must neither duplicate nor miss events. The current bus retains
-10,000 events per session and a bounded set of ended sessions. When older events are evicted,
+the bounded handshake head and tail defined in DESIGN §11.2, including byte budgets at the
+tap, delivery mailbox and display. The picker contains only retained sessions. When its selected
+session is evicted, clear its display and explain that another session can be chosen. When older events are evicted,
 show **Earlier events no longer retained**. Retained public traces are not durable recordings.
 
 **Pause following** freezes a bounded display snapshot, while networking continues. **Follow
@@ -497,6 +499,15 @@ secret, application keys/IVs and rekey epochs. Highlight a selected node's input
 dim unrelated edges while keeping labels readable. Show concise operation/label/context detail
 on selection, with a specification link. Support keyboard traversal and a dependency list.
 
+Long retained histories are paged: keep the first 64 schedule names visible and show 128
+history names per page, newest first, with **Older keys** and **Newer keys** controls and a
+page indicator. Graph and dependency list show the same page. An input that is not on the page
+(on another page, or no longer retained) is drawn as a leaf that says so; its own ancestry is
+not reconstructed. While the handshake is under way, the whole schedule still to come is drawn
+from the specification. Every observed transcript hash, including the ones signatures and
+Finished values cover, has a node with its public digest and the tagged entries it covers. The
+lab alone adds nodes for its throwaway identities' private seeds, clearly labeled.
+
 Distinguish **Specification relationship**, **Derived (observed)**, **Hidden in normal session**,
 **Value available in this glass-box/lab trace**, and **No longer retained / unavailable**.
 A lifecycle erasure indicator needs an emitted lifecycle fact, not a guess based on elapsed
@@ -518,6 +529,11 @@ out-of-band verification state, exposure tier, authenticated completion, key cha
 observed failures. Separate signature verification from a human verifying the safety number.
 Explain first-contact limitations plainly. A successful session does not demonstrate all
 adversarial properties or replace external review.
+
+Connecting to a pinned contact is not evidence of a match. Show a mismatch as a failure, and a
+successful comparison only when the services report it. Say a first contact is pinned only once
+it was saved. A recording shows the pin facts of its session; it does not show a contact's
+safety-number verification.
 
 A useful entry reads **Profile: HYBRID-1**, names its algorithms, explains the hybrid assumption,
 and links to profile/transcript evidence. A failure reads **Authentication failed** with the
@@ -660,30 +676,35 @@ Do not invent missing signature-check events, CPU timings or key lifecycle event
 Add public trace instrumentation in the relevant phase when needed, with tests and the same
 visibility rules. Public metadata may require careful review if it leaks message correlation.
 
-### 11.2 Organization (as built in M3)
+### 11.2 Organization (as built in M3 and M4)
 
 ```text
 ui/
   app.py                    # Qt startup, fonts, icon provider, the `qrp2p` entry point
   host.py                   # the services thread: owns the Node, generations, batching (no Qt)
   ops.py                    # the requests view models may make (each runs on the services thread)
+  tap.py                    # the Inspector's trace tap: snapshot + subscription in one loop step
+  labhost.py                # the solo lab on the services thread: runs, recordings, its own tap
   snapshots.py              # immutable values that cross the bridge, built on the services thread
   bridge.py                 # Qt side: queued deliveries, generation filter, per-period Scope
   text.py, icons.py         # display-safe peer text; Lucide icons tinted per theme
+  inspect/                  # pure evidence builders (no Qt): timeline, fields, key graph, facts
   viewmodels/
     application.py          # which screen shows, unlock/lock, appearance, password change
     workspace.py            # one unlocked period: contacts, strip, Nearby, selection, routing
     conversation.py         # history (race-free load), drafts, delivery, files, contact actions
     prompts.py              # contact/glass-box requests and key mismatches, with real outcomes
     settings.py, rows.py    # the Settings screen; pure row builders for every list
+    inspector.py, hexmodel.py  # the Inspector's shared selection; hex rows built on demand
+    lab.py                  # the solo lab and the recordings list (Learn)
     listmodel.py            # list models updated by minimal diffs
-  qml/Main.qml, qml/Qrp2p/{Theme,Components,Screens}/
+  qml/Main.qml, qml/Qrp2p/{Theme,Components,Screens,Inspector,Lab}/
   resources/                # Inter (OFL), Lucide (ISC), app icon
 ```
 
 Only `host.py` and `ops.py` touch the node, and only on the services thread; QML never reaches
-a live object. Read node state and subscribe to `Node.trace` on the services thread when the
-Inspector arrives (M4); never let QML call core machines or traverse mutable live engine state.
+a live object. The Inspector reads `Node.trace` through `tap.py` on the services thread; never let
+QML call core machines or traverse mutable live engine state.
 Copy safe event batches across the boundary through queued signals. Qt list/table models mutate
 on the Qt thread. A trace callback must be bounded and fast; it cannot synchronously render, hash,
 format huge hex strings or block the service loop.

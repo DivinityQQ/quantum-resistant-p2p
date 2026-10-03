@@ -331,6 +331,31 @@ def test_inner_garbage_gives_only_schema_error(data: bytes) -> None:
         assert e.reason is CloseReason.SCHEMA_ERROR
 
 
+@given(st.data())
+def test_a_damaged_inner_gives_only_schema_error(data: st.DataObject) -> None:
+    """Damage inside valid encodings reaches the string decoder too (invalid UTF-8)."""
+    message = data.draw(
+        st.sampled_from(
+            [Chat(id=ID, text="hello there"), Ping(), FileProgress(file_id=ID, received=7)]
+        )
+    )
+    encoded = bytearray(encode_inner(message))
+    at = data.draw(st.integers(0, len(encoded) - 1))
+    encoded[at] = data.draw(st.integers(0, 255))
+    try:
+        decode_inner(bytes(encoded))
+    except ProtocolError as e:
+        assert e.reason is CloseReason.SCHEMA_ERROR
+
+
+def test_text_that_is_not_utf8_is_a_schema_error() -> None:
+    encoded = bytearray(encode_inner(Chat(id=ID, text="hello")))
+    encoded[encoded.index(b"hello")] = 0x80
+    with pytest.raises(ProtocolError) as excinfo:
+        decode_inner(bytes(encoded))
+    assert reason(excinfo) is CloseReason.SCHEMA_ERROR
+
+
 # --- boundaries (mutation testing found these gaps) ----------------------------------------------
 
 

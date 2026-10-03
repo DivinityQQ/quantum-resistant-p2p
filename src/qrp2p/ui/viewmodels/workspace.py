@@ -34,8 +34,11 @@ from qrp2p.ui.snapshots import (
     Update,
     WorkspaceSnap,
 )
+from qrp2p.ui.tap import SessionDescribed, SessionRemoved, TraceAppended, TraceOverflow
 from qrp2p.ui.text import isolate
 from qrp2p.ui.viewmodels.conversation import Conversation
+from qrp2p.ui.viewmodels.inspector import Inspector
+from qrp2p.ui.viewmodels.lab import Lab
 from qrp2p.ui.viewmodels.listmodel import RowModel
 from qrp2p.ui.viewmodels.prompts import Prompts
 from qrp2p.ui.viewmodels.qt import ViewModel, constant, readonly
@@ -110,6 +113,8 @@ class Workspace(ViewModel):
     discovery = readonly(bool, "_discovery", networkChanged)
     settings = constant(QObject, "_settings")
     prompts = constant(QObject, "_prompts")
+    inspector = constant(QObject, "_inspector")
+    lab = constant(QObject, "_lab")
     strip = constant(QObject, "_strip")
     contacts = constant(QObject, "_contacts_model")
     nearby = constant(QObject, "_nearby_model")
@@ -143,6 +148,8 @@ class Workspace(ViewModel):
         )
         self._prompts.setParent(self)
         self._prompts.finished.connect(self._prompt_finished)
+        self._inspector = Inspector(scope, preferred=self._preferred_session, parent=self)
+        self._lab = Lab(scope, parent=self)
         self._strip: RowModel[ContactRow] = RowModel(ContactRow, lambda r: r.contact_id, self)
         self._contacts_model: RowModel[ContactRow] = RowModel(
             ContactRow, lambda r: r.contact_id, self
@@ -191,6 +198,16 @@ class Workspace(ViewModel):
         return self._prompts
 
     @property
+    def lab_model(self) -> Lab:
+        """The solo lab (Python side; QML reads ``lab``)."""
+        return self._lab
+
+    @property
+    def inspector_model(self) -> Inspector:
+        """The Inspector (Python side; QML reads ``inspector``)."""
+        return self._inspector
+
+    @property
     def conversation_model(self) -> Conversation | None:
         """The selected conversation (Python side; QML reads ``conversation``)."""
         return self._conversation
@@ -234,6 +251,8 @@ class Workspace(ViewModel):
                     self._profile_refused(contact_id, offered, update.configured)
                 case NoticePosted(text=text):
                     self.noticePosted.emit(text)
+                case TraceAppended() | TraceOverflow() | SessionDescribed() | SessionRemoved():
+                    pass  # the Inspector's own updates
         if rebuild:
             self._rebuild()
 
@@ -250,6 +269,7 @@ class Workspace(ViewModel):
         conversation = self._conversations.get(contact.contact_id)
         if conversation is not None:
             conversation.set_contact(contact)
+        self._inspector.refresh_contact(contact.contact_id, contact.name, contact.trust)
         return True
 
     def _contact_removed(self, contact_id: str) -> None:
@@ -424,6 +444,12 @@ class Workspace(ViewModel):
             conversation.actionFailed.connect(self.noticePosted)
             self._conversations[contact_id] = conversation
         return conversation
+
+    def _preferred_session(self) -> int:
+        """The session the Inspector opens first: the selected contact's, if connected."""
+        contact = self._contacts.get(self._selected)
+        session = contact.session if contact is not None else None
+        return session.session_id if session is not None else -1
 
     def _expect_new_contact(self) -> None:
         self._select_new_contact_until = time.monotonic() + 10.0

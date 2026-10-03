@@ -11,7 +11,7 @@ from dataclasses import dataclass, field, replace
 from PySide6.QtCore import QCoreApplication
 
 from qrp2p.ui.bridge import Bridge
-from qrp2p.ui.host import Op, Post
+from qrp2p.ui.host import LabOp, Op, Post, TapOp
 from qrp2p.ui.snapshots import (
     Batch,
     ContactSnap,
@@ -32,10 +32,11 @@ _ids = itertools.count(1)
 
 def describe(op: Op) -> tuple[str, dict[str, object]]:
     """An op's name (the ops function that built it) and the values it captured."""
-    name = op.__qualname__.split(".<locals>")[0]
-    cells = op.__closure__ or ()
+    fn = op.run if isinstance(op, TapOp | LabOp) else op
+    name = fn.__qualname__.split(".<locals>")[0]
+    cells = fn.__closure__ or ()
     values = {
-        var: cell.cell_contents for var, cell in zip(op.__code__.co_freevars, cells, strict=True)
+        var: cell.cell_contents for var, cell in zip(fn.__code__.co_freevars, cells, strict=True)
     }
     return name, values
 
@@ -47,6 +48,8 @@ class Request:
     name: str
     args: dict[str, object]
     scoped: bool
+    op: Op | None = None
+    """The op itself, for a test that runs it against a real lab host."""
 
 
 @dataclass
@@ -73,7 +76,7 @@ class FakeBackend:
 
     def submit(self, gen: int, request_id: int, op: Op, *, scoped: bool) -> None:
         name, args = describe(op)
-        self.requests.append(Request(gen, request_id, name, args, scoped))
+        self.requests.append(Request(gen, request_id, name, args, scoped, op))
 
     def stop(self, timeout: float = 0.0) -> bool:  # noqa: ARG002
         return True
@@ -139,7 +142,7 @@ def contact(
     created: float = 1000.0,
 ) -> ContactSnap:
     session = (
-        SessionSnap(profile="HYBRID-1", glass_box=glass_box, initiator=initiator)
+        SessionSnap(session_id=7, profile="HYBRID-1", glass_box=glass_box, initiator=initiator)
         if online
         else None
     )
@@ -161,7 +164,8 @@ def contact(
 
 def online(snap: ContactSnap, *, glass_box: bool = False) -> ContactSnap:
     return replace(
-        snap, session=SessionSnap(profile="HYBRID-1", glass_box=glass_box, initiator=True)
+        snap,
+        session=SessionSnap(session_id=7, profile="HYBRID-1", glass_box=glass_box, initiator=True),
     )
 
 

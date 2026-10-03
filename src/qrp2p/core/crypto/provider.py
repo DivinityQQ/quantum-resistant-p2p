@@ -7,14 +7,20 @@ The protocol engine performs every operation that creates or uses key material t
   secret values to anything outside the engine. Only :class:`RevealingProvider`, installed for
   glass-box and lab sessions, forwards secrets to a sink.
 - **Replay (DESIGN §11.6).** Randomised outputs (generated keys, encapsulations, signatures,
-  nonces) all pass this boundary, so a recording provider can log them and a replay provider can
-  feed them back. Both arrive with recordings in M4; their shape follows the ``.qrlab`` format.
+  nonces) all pass this boundary, so the lab's provider can log them and feed them back
+  (:mod:`qrp2p.lab.replay`).
+
+Every secret a provider returns has a label that is unique within its session: KDF outputs are
+named by the key schedule, and KEM outputs by the epoch they serve (``dk``, ``ss``, ``ssM`` and
+``ssX`` in the handshake; ``dk[n]``, ``ss[n]``… in the rekey to epoch *n*). The Inspector joins
+the key graph, trace events and glass-box values by these names.
 
 A provider serves only the profiles it was built with. ``LAB-CLASSICAL`` is therefore
 unreachable from a provider built with :data:`~qrp2p.core.crypto.profiles.REAL_PROFILES`.
 """
 
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from typing import Protocol, override
 
 from qrp2p.core.crypto import aead, kdf
@@ -29,8 +35,42 @@ from qrp2p.core.errors import CloseReason, ProtocolError
 type RandomSource = Callable[[int], bytes]
 """Injected randomness: returns ``n`` uniformly random bytes (``os.urandom`` in production)."""
 
-type SecretSink = Callable[[Secret], None]
-"""Where :class:`RevealingProvider` sends secrets (the glass-box buffer and trace bus in M4)."""
+
+@dataclass(frozen=True, slots=True)
+class AeadRevealed:
+    """One AEAD operation of a glass-box or lab session: its record nonce and plaintext.
+
+    ``key`` is the label of the key used (``hs_R.key``, ``ap_I[0]+1.key``…), which names the
+    traffic secret, direction and generation; with ``seq`` it identifies the record exactly.
+    """
+
+    key: str
+    seq: int
+    nonce: Secret
+    plaintext: Secret
+    opened: bool
+    """``True`` for a record received and opened, ``False`` for one sealed to send."""
+
+
+type Revealed = Secret | AeadRevealed
+type RevealSink = Callable[[Revealed], None]
+"""Where :class:`RevealingProvider` sends what it reveals (an exposure gate in the services)."""
+
+
+def epoch_name(name: str, epoch: int) -> str:
+    """A KEM output's label: ``name`` in the handshake (epoch 0), ``name[n]`` in rekey *n*."""
+    return name if epoch == 0 else f"{name}[{epoch}]"
+
+
+def _renamed(secret: Secret, name: str) -> Secret:
+    return Secret(secret.reveal(), name)
+
+
+def _named_shared(shared: SharedSecret, epoch: int) -> SharedSecret:
+    return SharedSecret(
+        ss=_renamed(shared.ss, epoch_name("ss", epoch)),
+        components=tuple(_renamed(c, epoch_name(c.label, epoch)) for c in shared.components),
+    )
 
 
 class CryptoProvider(Protocol):
@@ -40,15 +80,19 @@ class CryptoProvider(Protocol):
         """Return ``n`` random bytes for public values such as handshake nonces."""
         ...
 
-    def kem_keygen(self, profile: Profile) -> tuple[Secret, bytes]:
-        """Generate an ephemeral KEM key pair ``(dk, ek)``."""
+    def kem_keygen(self, profile: Profile, *, epoch: int = 0) -> tuple[Secret, bytes]:
+        """Generate an ephemeral KEM key pair ``(dk, ek)`` for ``epoch`` (0: the handshake)."""
         ...
 
-    def kem_encapsulate(self, profile: Profile, ek: bytes) -> tuple[SharedSecret, bytes]:
+    def kem_encapsulate(
+        self, profile: Profile, ek: bytes, *, epoch: int = 0
+    ) -> tuple[SharedSecret, bytes]:
         """Encapsulate to the peer's ``ek``; returns ``(shared secret, ct)``."""
         ...
 
-    def kem_decapsulate(self, profile: Profile, dk: Secret, ct: bytes) -> SharedSecret:
+    def kem_decapsulate(
+        self, profile: Profile, dk: Secret, ct: bytes, *, epoch: int = 0
+    ) -> SharedSecret:
         """Decapsulate ``ct`` with our ``dk``."""
         ...
 
@@ -136,21 +180,27 @@ class PlainProvider:
             raise ProtocolError(CloseReason.INTERNAL, "random source returned the wrong length")
         return data
 
-    def kem_keygen(self, profile: Profile) -> tuple[Secret, bytes]:
+    def kem_keygen(self, profile: Profile, *, epoch: int = 0) -> tuple[Secret, bytes]:
         """See :meth:`CryptoProvider.kem_keygen`."""
         self._check(profile)
         seed = Secret(self.random(profile.kem.seed_len), "kem.seed")
-        return profile.kem.keygen(seed)
+        dk, ek = profile.kem.keygen(seed)
+        return _renamed(dk, epoch_name("dk", epoch)), ek
 
-    def kem_encapsulate(self, profile: Profile, ek: bytes) -> tuple[SharedSecret, bytes]:
+    def kem_encapsulate(
+        self, profile: Profile, ek: bytes, *, epoch: int = 0
+    ) -> tuple[SharedSecret, bytes]:
         """See :meth:`CryptoProvider.kem_encapsulate`."""
         self._check(profile)
-        return profile.kem.encapsulate(ek)
+        shared, ct = profile.kem.encapsulate(ek)
+        return _named_shared(shared, epoch), ct
 
-    def kem_decapsulate(self, profile: Profile, dk: Secret, ct: bytes) -> SharedSecret:
+    def kem_decapsulate(
+        self, profile: Profile, dk: Secret, ct: bytes, *, epoch: int = 0
+    ) -> SharedSecret:
         """See :meth:`CryptoProvider.kem_decapsulate`."""
         self._check(profile)
-        return profile.kem.decapsulate(dk, ct)
+        return _named_shared(profile.kem.decapsulate(dk, ct), epoch)
 
     def sign(self, profile: Profile, keys: IdentityKeyPair, role: Role, th: bytes) -> bytes:
         """See :meth:`CryptoProvider.sign`."""
@@ -218,27 +268,33 @@ class PlainProvider:
 
 
 class RevealingProvider:
-    """Glass-box and lab sessions only: delegates to ``inner`` and sends every secret to ``sink``.
+    """Glass-box and lab sessions only: delegates to ``inner`` and sends what it reveals to ``sink``.
 
-    It reveals KEM secrets (including hybrid components), every derived secret and traffic keys
-    (DESIGN §11.4). Identity private keys never pass through a provider and so are never revealed.
-    Per-record nonces and plaintexts, and the bounded pre-admission buffer, arrive with the
-    Inspector in M4.
+    It reveals the ephemeral KEM keys, KEM secrets (including hybrid components), every derived
+    secret, traffic keys, and each record's nonce and plaintext (DESIGN §11.4). Identity private
+    keys never pass through a provider and so are never revealed. Whether anything reaches the
+    trace bus is the sink's decision: the services' exposure gate holds values until admission
+    and lets them through only for a glass-box session.
 
     Args:
         inner: The provider that does the work, normally a :class:`PlainProvider`.
-        sink: Receives each secret as it is produced.
+        sink: Receives each value as it is produced.
     """
 
     __slots__ = ("_inner", "_sink")
 
-    def __init__(self, inner: CryptoProvider, sink: SecretSink) -> None:
+    def __init__(self, inner: CryptoProvider, sink: RevealSink) -> None:
         self._inner = inner
         self._sink = sink
 
     def _emit(self, *secrets: Secret) -> None:
         for secret in secrets:
             self._sink(secret)
+
+    def _emit_aead(self, keys: TrafficKeys, seq: int, plaintext: bytes, *, opened: bool) -> None:
+        label = keys.key.label
+        nonce = Secret(aead.nonce(keys.iv.reveal(), seq), f"{label}.nonce")
+        self._sink(AeadRevealed(label, seq, nonce, Secret(plaintext, "plaintext"), opened))
 
     def _emit_shared(self, shared: SharedSecret) -> None:
         self._emit(*shared.components, shared.ss)
@@ -247,21 +303,25 @@ class RevealingProvider:
         """See :meth:`CryptoProvider.random`."""
         return self._inner.random(n)
 
-    def kem_keygen(self, profile: Profile) -> tuple[Secret, bytes]:
+    def kem_keygen(self, profile: Profile, *, epoch: int = 0) -> tuple[Secret, bytes]:
         """See :meth:`CryptoProvider.kem_keygen`."""
-        dk, ek = self._inner.kem_keygen(profile)
+        dk, ek = self._inner.kem_keygen(profile, epoch=epoch)
         self._emit(dk)
         return dk, ek
 
-    def kem_encapsulate(self, profile: Profile, ek: bytes) -> tuple[SharedSecret, bytes]:
+    def kem_encapsulate(
+        self, profile: Profile, ek: bytes, *, epoch: int = 0
+    ) -> tuple[SharedSecret, bytes]:
         """See :meth:`CryptoProvider.kem_encapsulate`."""
-        shared, ct = self._inner.kem_encapsulate(profile, ek)
+        shared, ct = self._inner.kem_encapsulate(profile, ek, epoch=epoch)
         self._emit_shared(shared)
         return shared, ct
 
-    def kem_decapsulate(self, profile: Profile, dk: Secret, ct: bytes) -> SharedSecret:
+    def kem_decapsulate(
+        self, profile: Profile, dk: Secret, ct: bytes, *, epoch: int = 0
+    ) -> SharedSecret:
         """See :meth:`CryptoProvider.kem_decapsulate`."""
-        shared = self._inner.kem_decapsulate(profile, dk, ct)
+        shared = self._inner.kem_decapsulate(profile, dk, ct, epoch=epoch)
         self._emit_shared(shared)
         return shared
 
@@ -320,13 +380,17 @@ class RevealingProvider:
         self, profile: Profile, keys: TrafficKeys, seq: int, aad: bytes, plaintext: bytes
     ) -> bytes:
         """See :meth:`CryptoProvider.seal`."""
-        return self._inner.seal(profile, keys, seq, aad, plaintext)
+        sealed = self._inner.seal(profile, keys, seq, aad, plaintext)
+        self._emit_aead(keys, seq, plaintext, opened=False)
+        return sealed
 
     def unseal(
         self, profile: Profile, keys: TrafficKeys, seq: int, aad: bytes, ciphertext: bytes
     ) -> bytes:
-        """See :meth:`CryptoProvider.unseal`."""
-        return self._inner.unseal(profile, keys, seq, aad, ciphertext)
+        """See :meth:`CryptoProvider.unseal`; only an authentic record reveals its plaintext."""
+        plaintext = self._inner.unseal(profile, keys, seq, aad, ciphertext)
+        self._emit_aead(keys, seq, plaintext, opened=True)
+        return plaintext
 
     @override
     def __repr__(self) -> str:

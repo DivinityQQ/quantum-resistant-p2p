@@ -20,6 +20,7 @@ from qrp2p.services.events import AdmissionPrompt, KeyMismatchDetected
 from qrp2p.services.models import ID_LEN, Contact, HistoryEntry, Settings
 from qrp2p.services.node import Node, NodeError, profile_by_id, profiles_in
 from qrp2p.services.session import SessionRole
+from qrp2p.ui.tap import SessionDescribed, SessionRemoved, TraceAppended, TraceOverflow
 from qrp2p.ui.text import display_name, display_text, fingerprint
 
 ID_HEX_LEN: Final = 2 * ID_LEN
@@ -74,6 +75,8 @@ class SettingsSnap:
 class SessionSnap:
     """The open session with a contact."""
 
+    session_id: int
+    """The session's trace ID, for the Inspector."""
     profile: str
     glass_box: bool
     initiator: bool
@@ -179,6 +182,20 @@ class SafetySnap:
     fingerprint: str
     short_id: str
     groups: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class RecordingSnap:
+    """A saved recording in the Learn list (DESIGN §11.5)."""
+
+    file_id: str
+    title: str
+    kind: str
+    """``lab``, ``glass_box`` (EXPOSED) or ``unreadable``."""
+    profile: str
+    created: float
+    size: int
+    problem: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -302,6 +319,10 @@ type Update = (
     | SessionEnded
     | ProfileRefused
     | NoticePosted
+    | TraceAppended
+    | TraceOverflow
+    | SessionDescribed
+    | SessionRemoved
 )
 
 
@@ -397,6 +418,7 @@ def contact_snap(node: Node, contact: Contact) -> ContactSnap:
     if session is not None:
         profile = session.profile
         session_snap = SessionSnap(
+            session_id=session.id,
             profile=profile.name if profile is not None else "",
             glass_box=session.glass_box,
             initiator=session.role is SessionRole.INITIATOR,

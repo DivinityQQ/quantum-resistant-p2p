@@ -1,7 +1,8 @@
 """The Qt side of the bridge: deliveries in, requests out, stale data dropped (UI_DESIGN §11.2).
 
-The services thread posts deliveries through a queued signal, so they arrive on the Qt thread in
-the order they were posted. The bridge then applies the generation rule (:mod:`qrp2p.ui.host`):
+The services thread posts deliveries into a :class:`~qrp2p.ui.mailbox.Mailbox` and wakes the Qt
+thread with a queued signal; the Qt thread takes them in the order they were posted (a busy Qt
+thread lets only a bounded trace stream pile up). The bridge then applies the generation rule (:mod:`qrp2p.ui.host`):
 
 - a :class:`~qrp2p.ui.snapshots.Lifecycle` always passes and sets the current generation;
 - a :class:`~qrp2p.ui.snapshots.Batch` passes only while unlocked, for the current generation;
@@ -29,6 +30,7 @@ from PySide6.QtCore import QObject, Qt, Signal, SignalInstance
 from qrp2p.services.events import NodeState
 from qrp2p.ui import ops
 from qrp2p.ui.host import Op, Post
+from qrp2p.ui.mailbox import Mailbox
 from qrp2p.ui.snapshots import Batch, Delivery, Lifecycle, Reply
 
 STARTING: Final = "starting"
@@ -98,11 +100,12 @@ class Bridge(QObject):
     """A :class:`Lifecycle` was accepted."""
     updates = Signal(object)
     """A tuple of updates of the current unlocked generation."""
-    _arrived = Signal(object)
+    _arrived = Signal()
 
     def __init__(self, make_host: Callable[[Post], Host], parent: QObject | None = None) -> None:
         super().__init__(parent)
-        self._arrived.connect(self._dispatch, Qt.ConnectionType.QueuedConnection)
+        self._arrived.connect(self._drain_mailbox, Qt.ConnectionType.QueuedConnection)
+        self._mailbox = Mailbox()
         self._gen = 0
         self._state = STARTING
         self._locking = False
@@ -164,6 +167,7 @@ class Bridge(QObject):
     def stop(self, timeout: float) -> bool:
         """Stop accepting anything, then close the node and end the services thread."""
         self._closed = True
+        self._mailbox.close()
         self._pending.clear()
         return self._host.stop(timeout)
 
@@ -171,8 +175,13 @@ class Bridge(QObject):
 
     def _post(self, delivery: Delivery) -> None:
         """Called on the services thread: queue the delivery for the Qt thread."""
-        if not self._closed:
-            self._arrived.emit(delivery)
+        if not self._closed and self._mailbox.put(delivery):
+            self._arrived.emit()
+
+    def _drain_mailbox(self) -> None:
+        """On the Qt thread: dispatch everything the mailbox holds, in order."""
+        for delivery in self._mailbox.take():
+            self._dispatch(delivery)
 
     def _dispatch(self, delivery: Delivery) -> None:
         if self._closed:

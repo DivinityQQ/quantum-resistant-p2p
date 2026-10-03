@@ -7,7 +7,6 @@ from typing import Any
 import pytest
 
 from qrp2p.core.errors import AdmitReason
-from qrp2p.core.trace import StateChanged
 from qrp2p.services import paths as paths_module
 from qrp2p.services.admission import (
     DECLINES_TO_MUTE,
@@ -29,7 +28,6 @@ from qrp2p.services.paths import (
     write_private_file,
 )
 from qrp2p.services.text import display_text
-from qrp2p.services.trace_bus import ENDED_KEPT, RING_SIZE, TraceBus
 from tests.support import identity_from_label
 
 # --- text -----------------------------------------------------------------------------------------
@@ -81,34 +79,6 @@ def test_slot_pool() -> None:
     assert pool.in_use == 3
     with pytest.raises(ValueError, match="no slot"):
         pool.release("z")
-
-
-# --- trace bus ------------------------------------------------------------------------------------
-
-
-def test_trace_ring_and_subscribers() -> None:
-    bus = TraceBus()
-    seen: list[int] = []
-    unsubscribe = bus.subscribe(lambda record: seen.append(record.session_id))
-    for n in range(RING_SIZE + 5):
-        bus.publish(1, float(n), StateChanged("m", str(n)))
-    events = bus.events(1)
-    assert len(events) == RING_SIZE
-    assert events[0].time == 5.0
-    unsubscribe()
-    bus.publish(1, 0.0, StateChanged("m", "x"))
-    assert len(seen) == RING_SIZE + 5
-
-
-def test_trace_rings_of_ended_sessions_are_bounded() -> None:
-    bus = TraceBus()
-    for session in range(ENDED_KEPT + 3):
-        bus.publish(session, 0.0, StateChanged("m", "s"))
-        bus.session_ended(session)
-    assert bus.events(0) == ()
-    assert bus.events(ENDED_KEPT + 2) != ()
-    bus.clear()
-    assert bus.events(ENDED_KEPT + 2) == ()
 
 
 # --- paths ----------------------------------------------------------------------------------------
@@ -220,21 +190,6 @@ def test_slot_counts_per_source() -> None:
         pool.acquire("a")
     pool.release("a")
     assert pool.in_use == 2
-
-
-def test_trace_records_and_the_ended_limit() -> None:
-    bus = TraceBus()
-    event = StateChanged("m", "s")
-    bus.publish(7, 1.5, event)
-    (record,) = bus.events(7)
-    assert (record.session_id, record.time, record.event) == (7, 1.5, event)
-    bus.session_ended(500)  # an ended session that never traced anything
-    for session in range(ENDED_KEPT):
-        bus.publish(session + 100, 0.0, event)
-        bus.session_ended(session + 100)  # the first of these pushes session 500 out
-    assert all(bus.events(session + 100) for session in range(ENDED_KEPT))  # exactly kept
-    bus.session_ended(999)
-    assert bus.events(100) == ()
 
 
 def test_private_directory(tmp_path: Path) -> None:

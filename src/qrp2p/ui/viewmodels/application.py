@@ -65,7 +65,6 @@ class AppController(ViewModel):
     Args:
         bridge: The bridge (already connected; started by the app).
         data_dir: The data directory, to name it in messages.
-        dev_preview: Show development previews (the Inspector layout, M4 work).
         parent: The Qt parent.
     """
 
@@ -90,7 +89,6 @@ class AppController(ViewModel):
     reducedMotion = readonly(bool, "_reduced_motion", appearanceChanged)  # noqa: N815
     textScale = readonly(int, "_text_scale", appearanceChanged)  # noqa: N815
     welcome = readonly(bool, "_welcome", welcomeChanged)
-    devPreview = constant(bool, "_dev_preview")  # noqa: N815
     dataDir = constant(str, "_data_dir")  # noqa: N815
     version = constant(str, "_version")
 
@@ -99,13 +97,11 @@ class AppController(ViewModel):
         bridge: Bridge,
         *,
         data_dir: str,
-        dev_preview: bool = False,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
         self._bridge = bridge
         self._data_dir = data_dir
-        self._dev_preview = dev_preview
         self._version = _version()
         self._phase = "starting"
         self._busy = False

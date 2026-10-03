@@ -20,11 +20,15 @@ one file transfer are coalesced: only the latest counts.
 
 import asyncio
 import contextlib
+import inspect
 import logging
 import threading
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Final
 
+from qrp2p.lab.recording import RecordingError
+from qrp2p.lab.solo import LabError
 from qrp2p.services.discovery import local_addresses
 from qrp2p.services.events import (
     AdmissionPrompt,
@@ -51,6 +55,7 @@ from qrp2p.services.vault import (
     VaultInUseError,
     WrongPasswordError,
 )
+from qrp2p.ui.labhost import LabHost
 from qrp2p.ui.snapshots import (
     Batch,
     ConnectStage,
@@ -79,6 +84,7 @@ from qrp2p.ui.snapshots import (
     settings_snap,
 )
 from qrp2p.ui.snapshots import SessionEnded as SessionEndedUpdate
+from qrp2p.ui.tap import TraceTap
 from qrp2p.ui.text import display_text
 
 BATCH_INTERVAL: Final = 1 / 30
@@ -94,8 +100,27 @@ CLOSED: Final = ErrorInfo("closed", "The app is shutting down.")
 
 _log = logging.getLogger(__name__)
 
-type Op = Callable[[Node], Awaitable[object]]
+type NodeOp = Callable[[Node], Awaitable[object]]
 """A request: runs on the services thread with the node; returns a snapshot or a primitive."""
+
+
+@dataclass(frozen=True, slots=True)
+class TapOp:
+    """A request to an Inspector's :class:`~qrp2p.ui.tap.TraceTap` (services thread)."""
+
+    run: Callable[[TraceTap], object]
+    source: str = "node"
+    """Which tap: the node's (``node``) or the solo lab's (``lab``)."""
+
+
+@dataclass(frozen=True, slots=True)
+class LabOp:
+    """A request to the solo lab (services thread): returns a snapshot of the lab."""
+
+    run: Callable[[LabHost], object]
+
+
+type Op = NodeOp | TapOp | LabOp
 type Post = Callable[[Delivery], None]
 
 
@@ -106,6 +131,17 @@ def network_snap(node: Node) -> NetworkSnap:
         addresses=tuple(display_text(a) for a in local_addresses()),
         discovery=node.discovery_active,
     )
+
+
+_NAMED: Final[tuple[tuple[type[Exception], str], ...]] = (
+    (NotConnectedError, "not_connected"),
+    (NodeError, "node"),
+    (LabError, "lab"),
+    (RecordingError, "recording"),
+    (VaultError, "vault"),
+    (ValueError, "value"),
+)
+"""Failures whose message is written for the user (and holds no secret), most specific first."""
 
 
 def error_info(error: Exception) -> ErrorInfo:  # noqa: PLR0911  # one outcome per kind
@@ -120,21 +156,17 @@ def error_info(error: Exception) -> ErrorInfo:  # noqa: PLR0911  # one outcome p
             )
         case VaultInUseError():
             return ErrorInfo(IN_USE, "Another QRP2P window is using this data folder.")
-        case NotConnectedError():
-            return ErrorInfo("not_connected", str(error))
-        case NodeError():
-            return ErrorInfo("node", str(error))
-        case VaultError():
-            return ErrorInfo("vault", str(error))
         case KeychainUnavailableError():
             return ErrorInfo("keychain", str(error) or "No OS keychain is available.")
         case OSError():
             return ErrorInfo("os", str(error.strerror or error))
-        case ValueError():
-            return ErrorInfo("value", str(error))
         case _:
-            _log.error("a request failed", exc_info=error)
-            return ErrorInfo("internal", "Something went wrong; details are in app.log.")
+            pass
+    for kind, code in _NAMED:
+        if isinstance(error, kind):
+            return ErrorInfo(code, str(error))
+    _log.error("a request failed", exc_info=error)
+    return ErrorInfo("internal", "Something went wrong; details are in app.log.")
 
 
 class ServiceHost:
@@ -168,6 +200,8 @@ class ServiceHost:
         self._progress_at: dict[tuple[str, str], int] = {}
         self._flush_handle: asyncio.TimerHandle | None = None
         self._requests: set[asyncio.Task[None]] = set()
+        self._tap: TraceTap | None = None
+        self._lab: LabHost | None = None
 
     # -- Qt thread -------------------------------------------------------------------------------
 
@@ -220,6 +254,8 @@ class ServiceHost:
             return
         self._node = node
         node.subscribe(self._on_event)
+        self._tap = TraceTap.of_node(node, wake=self._schedule_flush)
+        self._lab = LabHost(wake=self._schedule_flush, node=node)
         try:
             await node.open()
         except VaultInUseError:
@@ -256,11 +292,24 @@ class ServiceHost:
             self._reply(Reply(gen, request_id, error=STALE))
             return
         try:
-            value = await op(node)
+            if isinstance(op, TapOp):
+                value = op.run(self._tap_of(op.source))
+            elif isinstance(op, LabOp):
+                assert self._lab is not None  # noqa: S101  # created with the node
+                value = op.run(self._lab)
+                if inspect.isawaitable(value):  # recordings go through the vault's thread
+                    value = await value
+            else:
+                value = await op(node)
         except Exception as error:  # noqa: BLE001  # every failure becomes a reply
             self._reply(Reply(gen, request_id, error=error_info(error)))
             return
         self._reply(Reply(gen, request_id, value=value))
+
+    def _tap_of(self, source: str) -> TraceTap:
+        tap = self._lab.tap if source == "lab" and self._lab is not None else self._tap
+        assert tap is not None  # noqa: S101  # created with the node
+        return tap
 
     def _reply(self, reply: Reply) -> None:
         self._flush()
@@ -277,6 +326,10 @@ class ServiceHost:
 
     def _lifecycle(self, state: str, *, error: str = "") -> None:
         self._flush()
+        if self._tap is not None:
+            self._tap.close()  # a lock clears the bus; a new period inspects afresh
+        if self._lab is not None:
+            self._lab.close()  # the lab's run and values belong to the unlocked period
         self._gen += 1
         workspace = self._workspace() if state == NodeState.UNLOCKED else None
         self._post(Lifecycle(self._gen, state, workspace, error))
@@ -346,6 +399,9 @@ class ServiceHost:
             else:
                 self._progress_at.pop(key, None)
         self._outbox.append(update)
+        self._schedule_flush()
+
+    def _schedule_flush(self) -> None:
         if self._flush_handle is None:
             loop = asyncio.get_running_loop()
             self._flush_handle = loop.call_later(self._interval, self._flush)
@@ -354,6 +410,10 @@ class ServiceHost:
         if self._flush_handle is not None:
             self._flush_handle.cancel()
             self._flush_handle = None
+        if self._tap is not None:
+            self._outbox.extend(self._tap.drain())
+        if self._lab is not None:
+            self._outbox.extend(self._lab.tap.drain())
         if not self._outbox:
             return
         batch = Batch(self._gen, tuple(self._outbox))

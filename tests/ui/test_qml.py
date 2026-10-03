@@ -5,14 +5,11 @@ conftest.py), so they also guard every screen they open against regressions.
 """
 
 import re
-import time
-from collections.abc import Callable, Iterator
-from dataclasses import dataclass, replace
+from dataclasses import replace
 
 import pytest
 from PySide6.QtCore import (
     QCoreApplication,
-    QEvent,
     QMimeData,
     QObject,
     QPoint,
@@ -22,15 +19,14 @@ from PySide6.QtCore import (
     Qt,
     QUrl,
 )
-from PySide6.QtGui import QColor, QContextMenuEvent, QGuiApplication, QImage, QKeyEvent
+from PySide6.QtGui import QColor, QContextMenuEvent, QGuiApplication, QImage
 from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent, QQmlEngine, QQmlExpression
 from PySide6.QtQuick import QQuickItem, QQuickWindow
 from PySide6.QtTest import QTest
 
-from qrp2p.ui.app import QML, create_engine, monospace_family
+from qrp2p.ui.app import QML
 from qrp2p.ui.icons import IconProvider, render
 from qrp2p.ui.snapshots import (
-    ActivitySnap,
     ContactChanged,
     ErrorInfo,
     MessageChanged,
@@ -40,112 +36,10 @@ from qrp2p.ui.snapshots import (
     PromptOpened,
     PromptSnap,
 )
-from qrp2p.ui.viewmodels.application import AppController
-from tests.ui.fakes import SETTINGS, FakeBackend, chat, contact, online, settle, workspace
+from tests.ui.fakes import SETTINGS, chat, contact, online, settle
+from tests.ui.window import Ui, flush_deletes, items, named, of_type
 
 BOB = contact("Bob")
-
-
-@dataclass
-class Ui:
-    engine: QQmlApplicationEngine
-    window: QQuickWindow
-    app: AppController
-    backend: FakeBackend
-
-    def find(self, name: str) -> QQuickItem | None:
-        self.frame()
-        found = named(self.window, name)
-        return found[0] if found else None
-
-    def frame(self) -> None:
-        """Polish and render once: views create their delegates during a frame."""
-        settle()
-        self.window.grabWindow()
-        settle()
-
-    def until(self, condition: Callable[[], bool], timeout: float = 5.0) -> None:
-        """Process events until ``condition`` holds (deferred calls run a few passes later)."""
-        deadline = time.monotonic() + timeout
-        while not condition():
-            assert time.monotonic() < deadline, "condition not reached"
-            QTest.qWait(10)
-
-    def item(self, name: str) -> QQuickItem:
-        found = self.find(name)
-        assert found is not None, name
-        return found
-
-    def click(self, name: str) -> None:
-        self.click_item(self.item(name))
-
-    def click_item(self, target: QQuickItem) -> None:
-        self.frame()  # positions are final only after a frame (a menu lays out its entries)
-        assert target.isVisible(), target.objectName()
-        center = target.mapToScene(QPointF(target.width() / 2, target.height() / 2)).toPoint()
-        QTest.mouseClick(
-            self.window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, center
-        )
-        settle()
-
-    def type(self, text: str) -> None:
-        # QTest.keyClicks takes widgets only; a window gets the key events directly.
-        for char in text:
-            for kind in (QEvent.Type.KeyPress, QEvent.Type.KeyRelease):
-                event = QKeyEvent(kind, 0, Qt.KeyboardModifier.NoModifier, char)
-                QGuiApplication.sendEvent(self.window, event)
-        settle()
-
-    def key(
-        self, key: Qt.Key, modifiers: Qt.KeyboardModifier = Qt.KeyboardModifier.NoModifier
-    ) -> None:
-        QTest.keyClick(self.window, key, modifiers)
-        settle()
-
-    def unlock(self, *contacts: object, settings: object = SETTINGS) -> None:
-        self.backend.lifecycle("unlocked", workspace(*contacts, settings=settings))  # type: ignore[arg-type]
-        activity = ActivitySnap(tuple((c.contact_id, c.created) for c in contacts))  # type: ignore[attr-defined]
-        self.backend.reply(self.backend.one("recent_activity"), activity)
-        settle()
-
-
-def flush_deletes() -> None:
-    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
-    settle()
-
-
-@pytest.fixture
-def ui(qapp: QCoreApplication) -> Iterator[Ui]:  # noqa: ARG001
-    backend = FakeBackend()
-    controller = AppController(backend.bridge, data_dir="/data", dev_preview=True)
-    engine = create_engine(controller, monospace_family())
-    (root,) = engine.rootObjects()
-    assert isinstance(root, QQuickWindow)
-    root.resize(1100, 760)
-    root.requestActivate()
-    settle()
-    yield Ui(engine, root, controller, backend)
-    root.close()
-    engine.deleteLater()
-    controller.deleteLater()
-    flush_deletes()
-
-
-def items(window: QQuickWindow) -> list[QQuickItem]:
-    """Every item in the window, popups included (delegates have no QObject parent to search)."""
-    content = window.contentItem()
-    root = content.parentItem() or content
-    found: list[QQuickItem] = []
-    pending = [root]
-    while pending:
-        item = pending.pop()
-        found.append(item)
-        pending.extend(item.childItems())
-    return found
-
-
-def named(window: QQuickWindow, name: str) -> list[QQuickItem]:
-    return [item for item in items(window) if item.objectName() == name]
 
 
 def text_formats(engine: QQmlApplicationEngine, window: QQuickWindow) -> list[tuple[str, int]]:
@@ -167,16 +61,6 @@ def scene_rect(item: QQuickItem) -> QRectF:
         item.mapToScene(QPointF(0, 0)),
         QPointF(item.mapToScene(QPointF(item.width(), item.height()))),
     )
-
-
-def of_type(ui: Ui, prefix: str) -> list[QQuickItem]:
-    """Visible items whose QML type starts with ``prefix``."""
-    ui.frame()
-    return [
-        i
-        for i in items(ui.window)
-        if i.metaObject().className().startswith(prefix) and i.isVisible()
-    ]
 
 
 def hover(ui: Ui, item: QQuickItem) -> None:
@@ -406,6 +290,31 @@ def test_a_key_mismatch_defaults_to_cancel(ui: Ui) -> None:
     ui.click("startRepin")
     assert ui.backend.pending("resolve_mismatch") == []  # a re-pin needs its second step
     assert not ui.item("startRepin").isVisible()
+
+
+def test_glass_box_is_asked_for_from_the_conversation_menu(ui: Ui) -> None:
+    ui.unlock(BOB)
+    ui.backend.reply(ui.backend.one("history"), ())
+    more = next(
+        i for i in of_type(ui, "IconButton") if str(i.property("label")).startswith("More actions")
+    )
+    ui.click_item(more)
+    (menu,) = [
+        o for o in more.findChildren(QObject) if o.metaObject().className().startswith("AppMenu_")
+    ]
+    assert menu.property("visible")
+    entry = menu_entry(menu, "connectGlassBoxItem")
+    ui.click_item(entry)
+
+    def cancel_has_focus() -> bool:
+        focused = ui.window.activeFocusItem()
+        return focused is not None and focused.objectName() == "cancelGlassBox"
+
+    ui.until(cancel_has_focus)  # the safe choice is the default
+    assert ui.backend.pending("connect_contact") == []
+    ui.click("askGlassBox")
+    assert ui.backend.one("connect_contact").args["glass_box"] is True
+    assert not entry.property("enabled")  # one request at a time
 
 
 def test_a_busy_button_does_not_submit_twice_but_lets_focus_move(ui: Ui) -> None:

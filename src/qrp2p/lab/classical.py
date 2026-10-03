@@ -47,6 +47,8 @@ class X25519Kem:
     ek_len: int = X25519_LEN
     ct_len: int = X25519_LEN
     ss_len: int = 32
+    ek_parts: tuple[tuple[str, int], ...] = ()
+    ct_parts: tuple[tuple[str, int], ...] = ()
 
     def keygen(self, seed: Secret) -> tuple[Secret, bytes]:
         """Return ``(dk, ek)`` from a 32-byte seed."""
@@ -130,3 +132,8 @@ LAB_CLASSICAL: Final = Profile(
 
 LAB_PROFILES: Final[tuple[Profile, ...]] = (*REAL_PROFILES, LAB_CLASSICAL)
 """Every profile a solo-lab node may use."""
+
+
+def lab_profile_named(name: str) -> Profile | None:
+    """A solo-lab profile by name (the real ones and ``LAB-CLASSICAL``); ``None`` if unknown."""
+    return next((p for p in LAB_PROFILES if p.name == name), None)

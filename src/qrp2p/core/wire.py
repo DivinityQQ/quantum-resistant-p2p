@@ -606,5 +606,5 @@ def decode_inner(data: bytes) -> Inner:
         raise ProtocolError(_SCHEMA, "record plaintext exceeds the limit")
     try:
         return _DECODER.decode(data)
-    except msgspec.DecodeError:
+    except msgspec.DecodeError, UnicodeDecodeError:  # a string that is not UTF-8 is not a schema
         raise ProtocolError(_SCHEMA, "Inner message does not match the schema") from None

@@ -132,6 +132,28 @@ class RowModel[R](QAbstractListModel):
             self.endInsertRows()
             i = end
 
+    def append(self, rows: Sequence[R]) -> None:
+        """Add rows at the end (their keys must be new): no comparison with what is there."""
+        if rows:
+            self.beginInsertRows(QModelIndex(), len(self._rows), len(self._rows) + len(rows) - 1)
+            self._rows.extend(rows)
+            self.endInsertRows()
+
+    def update(self, row: R) -> None:
+        """Replace the row with ``row``'s key, if there is one (only its changed roles notify)."""
+        key = self._key(row)
+        i = next(
+            (j for j in range(len(self._rows) - 1, -1, -1) if self._key(self._rows[j]) == key), -1
+        )
+        if i >= 0:
+            self._replace(i, row)
+
+    def reset(self, rows: Sequence[R]) -> None:
+        """Show exactly ``rows``, rebuilding every delegate (for a new source, not an update)."""
+        self.beginResetModel()
+        self._rows = list(rows)
+        self.endResetModel()
+
     def clear(self) -> None:
         """Remove every row."""
         if self._rows:

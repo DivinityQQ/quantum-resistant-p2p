@@ -4,14 +4,14 @@ This is the working plan for building [DESIGN.md](DESIGN.md). It is written for 
 work up next, human or a Claude Code session on a local machine. Start with the repository's
 `CLAUDE.md`, then this file.
 
-**Status (2026-10-02):** M0, M1 and M2 are complete and on `main`; their gates are met (see the
+**Status (2026-10-03):** M0, M1 and M2 are complete and on `main`; their gates are met (see the
 status notes under each). M2 (services and headless CLI) merged in PR #9 after two LAN rounds,
 Linux–Linux and Windows–Linux (see the M2 status notes). v1 is tagged
 `v1-final`. CI runs lint, types, layers, audit, the tests on three OSes, liboqs on three OSes, the
 ProVerif models and mutation testing, each job only when its inputs changed; the `main` ruleset
 requires the gate job "CI result". Local hooks run the fast suite (`tools/check.py`) before every
-push. **M3 (desktop app) is merged** (PR #12); its gate, daily use on three OSes, is under way: the
-first round of findings is fixed on `claude/v2-m3-usage-fixes` (see the M3 status notes). `qrp2p` 2.0.0.dev0 is on PyPI, published by
+push. **M3 (desktop app) is merged** (PRs #12, #13). **M4 (learning layer I) is built** on
+`claude/v2-m4-learning-layer` (PR #14), its gate green (see the M4 status notes). `qrp2p` 2.0.0.dev0 is on PyPI, published by
 `.github/workflows/release.yml` (trusted publishing). Steps that need the owner's accounts (the v1
 Pages site, the liboqs bug report) are in [OWNER_TODO.md](OWNER_TODO.md).
 
@@ -384,11 +384,112 @@ timeline/field/byte/key selection; handle ring eviction, local clock origin and 
 following explicitly. Live display pause must not pause networking.
 
 Inspector (timeline, dissector, key-schedule explorer, security panel); solo lab nodes;
-step-through; `RecordingProvider`, `ReplayProvider` and fork; `RevealingProvider` with the
+step-through; recording, replay and fork (`LabProvider`); `RevealingProvider` with the
 pre-admission buffer; glass-box prompts, visuals and rate limits; `.qrlab` save, load and
 fuzzing.
 
 **Gate:** canary leak test green end to end, including view-model strings and saved files.
+
+**M4 decisions (2026-10-03, before code).** Taken against the code as M3 left it; each says why.
+
+1. **Unique secret names.** The key graph and the glass-box values are joined by a secret's
+   label, so every label is unique within a session: the KEM outputs of a rekey to epoch *n*
+   are `dk[n]`, `ss[n]`, `ssM[n]`, `ssX[n]` (the handshake's stay `dk`, `ss`, `ssM`, `ssX`). The
+   provider names KEM outputs like it already names KDF outputs. Nothing on the wire changes.
+2. **Lifecycle facts.** The core emits a public `SecretsReleased(labels, cause)` when it drops
+   its references (end of handshake, KeyUpdate, rekey switch and completion, close), so the key
+   graph can say "released by the engine" from an event instead of guessing. It never claims
+   zeroization (DESIGN §3.5).
+3. **Dissector.** Field ranges split each AEAD part into ciphertext and its 16-byte tag, KEM
+   values into their components where the profile has them (X-Wing `ek` = `pkM ‖ pkX`, `ct` =
+   `ctM ‖ ctX`, sizes from the KEM), and name the 5-byte frame header. Offsets stay
+   body-relative; the UI labels them.
+4. **Trace bus retention.** Each event gets a session-scoped ordinal. A session's handshake
+   events (until it is established or closed) are kept for the session's life; later events go
+   to a ring bounded by 10,000 events **and** 4 MiB of frame and revealed bytes (a file transfer
+   made the count bound alone worth up to 160 MB per session). The bus also keeps a descriptor
+   per session (role, address, profile, authenticated peer, exposure, end), so failed handshakes
+   and ended sessions can be inspected. Rings of 16 ended sessions are kept, as before.
+5. **Inspector data path.** The Inspector inspects one session at a time. Opening it asks the
+   services thread for the retained events and subscribes in the same loop step (no gap, no
+   duplicate; ordinals let the Qt side check). Updates ride the existing 30 Hz batches. *Pause
+   following* drops the live subscription; *Follow live* asks for events after the last ordinal
+   seen and shows a gap if the ring evicted some, so a paused display never queues anything.
+   The bridge's generation rule applies unchanged: a lock ends the inspection.
+6. **Pure evidence builders.** Timeline rows, field explanations, the key graph and the security
+   facts are pure functions of trace snapshots in `ui/inspect/` (no Qt), tested on their own and
+   shared by live sessions, the solo lab and recordings.
+7. **Glass-box containment.** A session that can never be glass-box (an initiator that did not
+   ask) gets a `PlainProvider`. Others get a `RevealingProvider` whose sink is an exposure gate:
+   it buffers at most 128 values until admission, publishes them (and everything after) only
+   when Admit says `glass_box = 1`, and otherwise drops the buffer and its sink for good. A
+   responder whose Hello did not ask closes its gate at admission. Revealed values travel as
+   their own bus record type, still wrapped in `Secret`, never as public trace events.
+   The values revealed are DESIGN §11.4's, plus the ephemeral KEM decapsulation keys and the
+   derived rekey salts: both are session-scoped and add no exposure beyond what the listed
+   values give (DESIGN 1.8 says so). Per-record nonces and plaintexts come from the provider's
+   AEAD calls, identified by key label and sequence number, never by timing.
+8. **Glass-box requests from the app.** A pinned contact's conversation offers *Connect as
+   glass-box…* with an explanation; the responder's prompt exists since M3.
+9. **Solo lab in-process.** Alice and Bob are two lab nodes in the app's own process, linked
+   in memory: no sockets at all, which is stricter than DESIGN's "over loopback" (DESIGN 1.8).
+   Throwaway identities per lab, every profile including `LAB-CLASSICAL`, everything revealed
+   including the lab identities' private keys. The controller runs on the services thread.
+10. **Execution boundary.** A lab *step* is one input transition of one node (start, deliver one
+    frame, an admission decision, a chat, a KeyUpdate, a rekey, a close, a timer tick) plus the
+    sealing of what that transition queued. Browsing events never executes anything. Fork is
+    allowed at any step boundary.
+11. **Recording and replay.** One `LabProvider` logs each randomised output at the provider
+    boundary (random draws, from which key pairs are recomputed; encapsulations with the key they
+    used; signatures with the hash they sign). Given a recorded prefix it returns those in order
+    and checks each input (same size, same `ek`, same hash, signature valid); any difference is a
+    named replay divergence. Once the prefix is used up it continues live, or, for a strict
+    replay, fails. One class, because recording, replay and fork (replay *N* steps, then live)
+    are the same log with a cursor. The lab clock is virtual, so times replay too.
+12. **Recordings.** `.qrlab` as DESIGN §11.5, sealed with the vault's `k_lab` (the key never
+    leaves the vault), saved only by an explicit action, into `lab/`. A lab recording holds the
+    steps, both provider logs and the lab identities, so it replays and forks. A glass-box
+    recording holds the retained trace of our side with an EXPOSED stamp and can be viewed, not
+    replayed (the peer's randomness and keys are not ours). Loading is bounded (256 MiB, strict
+    schema, named errors) and fuzzed.
+13. **Navigation.** The Inspector is no longer a development preview: Ctrl+I opens it beside or
+    instead of the chat. *Learn* opens a hub with the solo lab and saved recordings; it lists
+    nothing that has not landed.
+
+**M4 status notes (2026-10-03)** — built on `claude/v2-m4-learning-layer` (PR #14), against the
+decisions above; DESIGN 1.8 and UI_DESIGN §11.2 describe the result.
+
+- **Core:** unique secret names (KEM outputs per epoch), `SecretsReleased` lifecycle facts, a
+  finer dissector (AEAD tags, X-Wing components), and the two derivations the key graph found
+  untraced (the first epoch's salt, the rekey transcript hash). A fuzz test of the new recording
+  format found that text which is not UTF-8 closed a session with `internal` instead of
+  `schema_error`; fixed in `decode_inner`, with tests that fail without the fix.
+- **Services:** exposure gates (DESIGN §11.3) and a trace bus with ordinals, a kept handshake
+  head and a tail bounded by count and bytes; per-session descriptors, so failed and ended
+  sessions can be inspected. Recordings (`services/recordings.py`): one sealed file per
+  recording under a random name; only a glass-box session can be saved; files that do not open
+  are listed, not hidden.
+- **Inspector:** pure evidence builders (`ui/inspect/`), a services-thread trace tap per source
+  (node, lab), a view model with one shared selection, and the QML views (Timeline sequence
+  diagram, Messages with fields and a virtualised hex view, Keys as a graph or a dependency
+  list, Security facts). Ctrl+I opens it; `--dev-preview` is gone. Reviewing screenshots found
+  and fixed: shapes not clipped by the software renderer (the graph now draws through a layer),
+  frame times all reading +0.000 s, a header that overflowed at 720 px with 150 % text, and a
+  duplicated section heading from ListView sections built out of order.
+- **Glass-box from the app:** *Connect as glass-box…* for a pinned contact, with an explicit
+  request dialog; a banner says so when the peer opened a normal session instead.
+- **Solo lab** (`lab/solo.py`, `lab/replay.py`, `ui/labhost.py`, `qml/Qrp2p/Lab/`): Alice and Bob
+  in this process, linked in memory; a step is one transition plus the sealing it queued; a
+  virtual clock; one `LabProvider` records, replays and forks at the provider boundary. Learn
+  lists the solo lab and saved recordings; a lab run replays and forks, a glass-box recording is
+  shown view only with its EXPOSED stamp.
+- **Gate:** the canary leak test runs end to end through the app (`tests/ui/test_canary_e2e.py`):
+  every Inspector view-model string and clipboard copy, every message shown, every log record and
+  every file (vault, database, WAL, a sealed recording) after a normal session with a rekey holds
+  no secret in any form; the same walk over a glass-box session finds them. The suite has 1,161
+  tests; mutation testing of `core/` leaves 0 unexplained survivors.
+- **Not in M4:** resizable Inspector panes remembered as preferences (UI_DESIGN §3.3; the split
+  is fixed, with Expand/Restore), and lessons (M5).
 
 ## M5 — Learning layer II
 

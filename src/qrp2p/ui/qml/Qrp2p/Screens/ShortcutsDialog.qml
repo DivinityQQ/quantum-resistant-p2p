@@ -6,7 +6,6 @@ import Qrp2p.Components
 AppDialog {
     id: dialog
 
-    property bool devPreview: false
     readonly property string mod: Qt.platform.os === "osx" ? "⌘" : "Ctrl+"
 
     titleText: qsTr("Keyboard shortcuts")
@@ -25,8 +24,9 @@ AppDialog {
                 [qsTr("All contacts"), dialog.mod + "K"],
                 [qsTr("Connect to someone"), dialog.mod + "N"],
                 [qsTr("Settings"), dialog.mod + ","],
+                [qsTr("Session Inspector"), dialog.mod + "I"],
                 [qsTr("Lock"), dialog.mod + "L"]
-            ].concat(dialog.devPreview ? [[qsTr("Inspector preview"), dialog.mod + "I"]] : [])
+            ]
 
             delegate: Item {
                 required property var modelData

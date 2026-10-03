@@ -13,9 +13,18 @@ from typing import Final
 
 from qrp2p.services.models import TEXT_SCALES, Appearance, Retention, TrustState
 from qrp2p.services.node import Node, NodeError, profile_by_name
-from qrp2p.ui.host import Op, network_snap
-from qrp2p.ui.snapshots import ID_HEX_LEN, ActivitySnap, SafetySnap, message_snap, settings_snap
-from qrp2p.ui.text import fingerprint
+from qrp2p.services.recordings import RecordingInfo
+from qrp2p.ui.host import LabOp, Op, TapOp, network_snap
+from qrp2p.ui.labhost import LabHost
+from qrp2p.ui.snapshots import (
+    ID_HEX_LEN,
+    ActivitySnap,
+    RecordingSnap,
+    SafetySnap,
+    message_snap,
+    settings_snap,
+)
+from qrp2p.ui.text import display_text, fingerprint
 
 HISTORY_PAGE: Final = 300
 """History entries a conversation loads at first; more on request."""
@@ -480,5 +489,134 @@ def change_password(old: str, new: str) -> Op:
 
     async def op(node: Node) -> None:
         await node.change_password(old, new)
+
+    return op
+
+
+# -- the Inspector (the services thread's trace tap) ------------------------------------------------
+
+
+def inspect_sessions(source: str = "node") -> Op:
+    """Every retained session of ``source``; their descriptor changes follow as updates."""
+    return TapOp(lambda tap: tap.sessions(), source)
+
+
+def inspect(session_id: int, after: int = -1, source: str = "node") -> Op:
+    """A session's retained events after ``after``; its new events follow as updates."""
+    if session_id < 0 or after < -1:
+        msg = "unknown session"
+        raise ValueError(msg)
+    return TapOp(lambda tap: tap.inspect(session_id, after), source)
+
+
+def inspect_pause(source: str = "node") -> Op:
+    """Stop forwarding the inspected session's events."""
+    return TapOp(lambda tap: tap.pause(), source)
+
+
+def inspect_close(source: str = "node") -> Op:
+    """The Inspector closed: forward nothing more."""
+    return TapOp(lambda tap: tap.close(), source)
+
+
+# -- the solo lab (each returns a LabSnap) -------------------------------------------------------
+
+
+def lab_state() -> Op:
+    """Where the lab is."""
+    return LabOp(lambda lab: lab.snapshot())
+
+
+def lab_new(profile: str) -> Op:
+    """A fresh lab run with new identities (also Reset)."""
+    return LabOp(lambda lab: lab.new(profile))
+
+
+def lab_step() -> Op:
+    """The default step: deliver the oldest frame in flight, admit, or start."""
+    return LabOp(lambda lab: lab.step())
+
+
+def lab_run() -> Op:
+    """Default steps until nothing is in flight or waiting for a decision."""
+    return LabOp(lambda lab: lab.run())
+
+
+def lab_take(kind: str, side: str, text: str = "") -> Op:
+    """A chosen step: a chat, a KeyUpdate, a rekey, a close, a wait, an admission decision."""
+    return LabOp(lambda lab: lab.take(kind, side, text))
+
+
+def lab_fork(upto: int) -> Op:
+    """Replace the run with a fork after step ``upto`` (replayed to there, then live)."""
+    return LabOp(lambda lab: lab.fork(upto))
+
+
+def lab_close() -> Op:
+    """Leave the lab: its run and values are dropped."""
+    return LabOp(lambda lab: lab.close())
+
+
+def lab_save(title: str) -> Op:
+    """Save the lab's current run as a recording."""
+
+    async def save(lab: LabHost) -> RecordingSnap:
+        return recording_snap(await lab.save(_title(title)))
+
+    return LabOp(save)
+
+
+def lab_open(file_id: str) -> Op:
+    """Open a saved recording in the lab (a lab run replays; a glass-box one is shown)."""
+    return LabOp(lambda lab: lab.open(file_id))
+
+
+# -- recordings ----------------------------------------------------------------------------------------
+
+
+def recording_snap(info: RecordingInfo) -> RecordingSnap:
+    """A saved recording as the Learn list shows it."""
+    return RecordingSnap(
+        info.file_id,
+        display_text(info.title),
+        info.kind,
+        info.profile,
+        info.created,
+        info.size,
+        info.problem,
+    )
+
+
+def _title(title: str) -> str:
+    cleaned = " ".join(title.split())
+    if not cleaned:
+        msg = "a recording needs a title"
+        raise ValueError(msg)
+    return cleaned
+
+
+def recordings() -> Op:
+    """The saved recordings, newest first."""
+
+    async def op(node: Node) -> tuple[RecordingSnap, ...]:
+        return tuple(recording_snap(r) for r in await node.recordings())
+
+    return op
+
+
+def save_session_recording(session_id: int, title: str) -> Op:
+    """Save what this side retained of a glass-box session (refused for a normal one)."""
+
+    async def op(node: Node) -> RecordingSnap:
+        return recording_snap(await node.save_session_recording(session_id, _title(title)))
+
+    return op
+
+
+def delete_recording(file_id: str) -> Op:
+    """Delete a saved recording."""
+
+    async def op(node: Node) -> None:
+        await node.delete_recording(file_id)
 
     return op

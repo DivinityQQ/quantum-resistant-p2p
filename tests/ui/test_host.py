@@ -11,6 +11,7 @@ from qrp2p.services.events import AdmissionPrompt, SessionOpened
 from qrp2p.services.node import Node, NodeError
 from qrp2p.ui import ops
 from qrp2p.ui.host import CLOSED, IN_USE, STALE, ServiceHost
+from qrp2p.ui.labhost import INACTIVE, LabSnap
 from qrp2p.ui.snapshots import (
     Batch,
     ConnectStage,
@@ -27,6 +28,7 @@ from qrp2p.ui.snapshots import (
     SessionEnded,
     SettingsSnap,
 )
+from qrp2p.ui.tap import TraceAppended
 from tests.services.support import LOOPBACK, NodeHarness, until
 from tests.ui.support import HostHarness
 
@@ -422,3 +424,25 @@ async def test_settings_refuse_invalid_values(alice: HostHarness, name: str, val
     reply = await alice.call(ops.update_setting(name, value))
     assert reply.error is not None
     assert reply.error.kind in {"value", "node"}
+
+
+async def test_the_solo_lab_runs_on_the_services_thread_and_ends_with_the_lock(
+    alice: HostHarness,
+) -> None:
+    await unlocked(alice)
+    snap = await alice.ok(ops.lab_new("HYBRID-1"))
+    assert isinstance(snap, LabSnap)
+    assert snap.phase == "ready"
+    await alice.ok(ops.inspect_sessions("lab"))
+    await alice.ok(ops.inspect(snap.alice_session, source="lab"))
+    snap = await alice.ok(ops.lab_run())
+    assert isinstance(snap, LabSnap)
+    assert snap.alice_open
+    update = await alice.update(TraceAppended, lambda u: u.source == "lab")
+    assert update.session_id == snap.alice_session
+    refused = await alice.call(ops.lab_take("chat", "alice", ""))
+    assert refused.error is not None
+    assert refused.error.kind == "lab"
+    await alice.ok(ops.lock(), scoped=False)
+    await alice.lifecycle("locked")
+    assert await alice.ok(ops.lab_state(), scoped=False) == INACTIVE  # its run went with the lock
