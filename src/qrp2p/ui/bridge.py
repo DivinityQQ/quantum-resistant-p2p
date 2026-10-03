@@ -1,7 +1,8 @@
 """The Qt side of the bridge: deliveries in, requests out, stale data dropped (UI_DESIGN §11.2).
 
-The services thread posts deliveries through a queued signal, so they arrive on the Qt thread in
-the order they were posted. The bridge then applies the generation rule (:mod:`qrp2p.ui.host`):
+The services thread posts deliveries into a :class:`~qrp2p.ui.mailbox.Mailbox` and wakes the Qt
+thread with a queued signal; the Qt thread takes them in the order they were posted (a busy Qt
+thread lets only a bounded trace stream pile up). The bridge then applies the generation rule (:mod:`qrp2p.ui.host`):
 
 - a :class:`~qrp2p.ui.snapshots.Lifecycle` always passes and sets the current generation;
 - a :class:`~qrp2p.ui.snapshots.Batch` passes only while unlocked, for the current generation;
@@ -160,7 +161,6 @@ class Bridge(QObject):
     def lock(self, done: Done | None = None) -> None:
         """Lock: stop accepting data now, then lock the node."""
         self._locking = True
-        self._mailbox.clear_scoped({i for i, p in self._pending.items() if p.scoped}, gen=self._gen)
         self._drop_scoped()
         self.request(ops.lock(), done, scoped=False)
 
@@ -179,6 +179,7 @@ class Bridge(QObject):
             self._arrived.emit()
 
     def _drain_mailbox(self) -> None:
+        """On the Qt thread: dispatch everything the mailbox holds, in order."""
         for delivery in self._mailbox.take():
             self._dispatch(delivery)
 
@@ -193,10 +194,6 @@ class Bridge(QObject):
                 self._gen = delivery.gen
                 self._state = delivery.state
                 self._locking = False
-                if delivery.state != NodeState.UNLOCKED:
-                    self._mailbox.clear_scoped(
-                        {i for i, p in self._pending.items() if p.scoped}, gen=delivery.gen
-                    )
                 self._drop_scoped()
                 self.lifecycle.emit(delivery)
             case Batch():

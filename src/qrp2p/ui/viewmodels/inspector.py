@@ -61,6 +61,8 @@ from qrp2p.ui.viewmodels.qt import ViewModel, constant, items, readonly
 
 ITEM_CAP: Final = 30_000
 """Events kept on the Qt side; beyond it, a fresh snapshot of what the bus retains."""
+ITEM_BYTES: Final = BUFFER_BYTES
+"""Captured bytes kept on the Qt side, paused or not: what the bus retains of a session."""
 
 VIEWS: Final = ("timeline", "messages", "keys", "security")
 
@@ -571,16 +573,7 @@ class Inspector(ViewModel):
                 case SessionDescribed(facts=facts):
                     self._described(facts)
                 case SessionRemoved(session_id=session_id):
-                    self._known.pop(session_id, None)
-                    if session_id == self._session_id:
-                        retained = self._known.copy()
-                        self._clear_session()
-                        self._known = retained
-                        self._error = (
-                            "The selected session is no longer retained. Choose another session."
-                        )
-                        self.sessionChanged.emit()
-                    self._sync_sessions()
+                    self._removed(session_id)
                 case TraceAppended(session_id=session_id, items=new):
                     if session_id == self._session_id and self._following and not self._loading:
                         self._ingest(new)
@@ -636,9 +629,6 @@ class Inspector(ViewModel):
             if session_id != self._session_id or not self._open:
                 return
             self._loading = False
-            if reply.error is not None and reply.error.kind == "trace_overflow":
-                self._inspect(session_id, reset=True)
-                return
             if reply.error is not None or not isinstance(reply.value, InspectSnap):
                 self._error = reply.error.message if reply.error else "Not available."
                 self.sessionChanged.emit()
@@ -677,11 +667,21 @@ class Inspector(ViewModel):
         self.sessionChanged.emit()
         self._refresh_derived()
 
+    def _removed(self, session_id: int) -> None:
+        """The bus no longer retains a session: it leaves the picker, and the display."""
+        self._known.pop(session_id, None)
+        self._sync_sessions()
+        if session_id == self._session_id:
+            self._clear_shown(error="That session is no longer retained. Choose another one.")
+
     def _clear_session(self) -> None:
-        self._session_id = -1
-        self._facts_now = None
         self._known.clear()
         self._sessions.clear()
+        self._clear_shown()
+
+    def _clear_shown(self, *, error: str = "") -> None:
+        self._session_id = -1
+        self._facts_now = None
         self._reset_trace()
         self._expanded.clear()
         self._timeline_model.clear()
@@ -690,7 +690,8 @@ class Inspector(ViewModel):
         self._edges.clear()
         self._facts.clear()
         self._clear_selection()
-        self._title = self._subtitle = self._exposure = self._error = ""
+        self._title = self._subtitle = self._exposure = ""
+        self._error = error
         self._local_name = self._peer_name = ""
         self._loading = False
         self._following = True
@@ -710,17 +711,17 @@ class Inspector(ViewModel):
         self.selectionChanged.emit()
 
     def _ingest(self, new: tuple[TraceItem, ...], *, snapshot: bool = False) -> None:
-        """Add events; live ones beyond :data:`ITEM_CAP` trigger a fresh snapshot instead.
+        """Add events; beyond :data:`ITEM_CAP` events or :data:`ITEM_BYTES`, a fresh snapshot.
 
-        A snapshot is what the bus retains, which is bounded: it is always taken whole.
+        A fresh snapshot is what the bus retains, which is bounded: it is always taken whole.
         """
         fresh = [i for i in new if i.ordinal > self._last]
         if not fresh:
             return
         cost = sum(item_bytes(i) for i in fresh)
-        if (
-            (not snapshot or self._items) and len(self._items) + len(fresh) > ITEM_CAP
-        ) or self._item_bytes + cost > BUFFER_BYTES:
+        whole = snapshot and not self._items
+        full = len(self._items) + len(fresh) > ITEM_CAP or self._item_bytes + cost > ITEM_BYTES
+        if full and not whole:
             self._inspect(self._session_id, reset=True)  # what the bus retains, afresh
             return
         self._item_bytes += cost

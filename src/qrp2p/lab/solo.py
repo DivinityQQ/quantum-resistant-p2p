@@ -64,6 +64,10 @@ SEED_LEN: Final = 32
 CHAT_LIMIT: Final = 4_000
 """Characters a lab chat may have (the protocol allows 16,000 bytes; the lab needs fewer)."""
 RUN_FORMAT: Final = 1
+MAX_STEPS: Final = 10_000
+"""Steps a run may have to be saved (a recording's bound, DESIGN §11.5)."""
+MAX_LOG: Final = 100_000
+"""Entries each node's provider log may have to be saved."""
 
 
 class Side(StrEnum):
@@ -131,11 +135,11 @@ class LabRun(Struct, frozen=True, forbid_unknown_fields=True):
     profile: int
     alice: IdentitySeeds
     bob: IdentitySeeds
-    steps: Annotated[list[Step], Meta(max_length=10_000)]
-    marks: Annotated[list[tuple[int, int]], Meta(max_length=10_000)]
+    steps: Annotated[list[Step], Meta(max_length=MAX_STEPS)]
+    marks: Annotated[list[tuple[int, int]], Meta(max_length=MAX_STEPS)]
     """Each node's provider-log length after each step."""
-    alice_log: Annotated[list[Entry], Meta(max_length=100_000)]
-    bob_log: Annotated[list[Entry], Meta(max_length=100_000)]
+    alice_log: Annotated[list[Entry], Meta(max_length=MAX_LOG)]
+    bob_log: Annotated[list[Entry], Meta(max_length=MAX_LOG)]
 
 
 class LabError(Exception):
@@ -190,17 +194,6 @@ class _Node:
     ended: bool = False
     received: list[str] = field(default_factory=list[str])
     """Chat text delivered to this node."""
-
-
-class _LabRevealingProvider(RevealingProvider):
-    """The lab alone can expose the seeds of identities it generated for this run."""
-
-    def reveal_identity(self, seeds: tuple[bytes, bytes, bytes]) -> None:
-        """Emit throwaway private seeds, never a user's identity key pair."""
-        for label, seed in zip(
-            ("identity.ed25519", "identity.mldsa65", "identity.mldsa87"), seeds, strict=True
-        ):
-            self._emit(Secret(seed, label))
 
 
 def lab_profile(profile_id: int) -> Profile:
@@ -273,7 +266,6 @@ class SoloLab:
                     address="in memory (lab)",
                     started=0.0,
                     profile=self._profile.name,
-                    pinned=node.side is Side.ALICE,  # Alice knows Bob's identity in advance
                 )
             )
 
@@ -324,23 +316,21 @@ class SoloLab:
             random_source=None,
             logs=(run.alice_log[:a_mark], run.bob_log[:b_mark]),
         )
-        for index, step in enumerate(run.steps[:count]):
+        for number, step in enumerate(run.steps[:count], start=1):
             try:
                 lab.take(step)
-            except LabError:
-                lab._divergence = f"replay diverged at step {index}: illegal transition"
+            except LabError as refused:  # the replayed run does not allow the recorded step
+                lab._diverge(f"replay diverged at step {number}: {refused}")
+                break
             if lab.phase is Phase.DIVERGED:
                 break
-            if lab._marks[-1] != run.marks[index]:
-                lab._divergence = f"replay diverged at step {index}: provider-log mark differs"
+            if lab._marks[-1] != run.marks[number - 1]:
+                lab._diverge(f"replay diverged at step {number}: it used other provider entries")
+                lab._notes[-1] = lab._note
                 break
-        if lab.phase is not Phase.DIVERGED:
+        else:  # the whole prefix reproduced: only now may fresh randomness follow
             for node in lab._nodes.values():
                 node.provider.continue_live(random_source)
-        else:
-            lab._note = lab._divergence
-            if lab._notes:
-                lab._notes[-1] = lab._divergence
         return lab
 
     # -- state --------------------------------------------------------------------------------
@@ -527,11 +517,13 @@ class SoloLab:
             for each in self._nodes.values():
                 self._drain(each)
         except ReplayDivergence as divergence:
-            self._divergence = str(divergence)
-            self._note = self._divergence
+            self._diverge(str(divergence))
         self._notes.append(self._note)
         alice, bob = self._nodes[Side.ALICE], self._nodes[Side.BOB]
         self._marks.append((len(alice.provider.log), len(bob.provider.log)))
+
+    def _diverge(self, reason: str) -> None:
+        self._divergence = self._note = reason
 
     def _execute(self, step: Step, node: _Node) -> str:
         """Run the step's transition; return what it did, in a sentence."""
@@ -550,8 +542,10 @@ class SoloLab:
 
     def _start(self, _: Step, node: _Node) -> str:
         self._started = True
-        for lab_node in self._nodes.values():
-            self._revealing(lab_node).reveal_identity(lab_node.seeds)
+        for each in self._nodes.values():  # the lab's own throwaway identities (DESIGN §11.4)
+            reveal = self._revealer(each)
+            for seed in each.identity.seeds:
+                reveal(seed)
         bob = self._nodes[Side.BOB]
         machine = Initiator(
             provider=self._revealing(node),
@@ -633,8 +627,8 @@ class SoloLab:
 
     # -- what the core asks for ---------------------------------------------------------------
 
-    def _revealing(self, node: _Node) -> _LabRevealingProvider:
-        return _LabRevealingProvider(node.provider, self._revealer(node))
+    def _revealing(self, node: _Node) -> RevealingProvider:
+        return RevealingProvider(node.provider, self._revealer(node))
 
     def _revealer(self, node: _Node) -> Callable[[Revealed], None]:
         def reveal(value: Revealed) -> None:
@@ -682,11 +676,7 @@ class SoloLab:
                 case Established():
                     node.channel, node.machine = event.channel, None
                     self._bus.handshake_done(node.session_id)
-                    self._bus.describe(
-                        node.session_id,
-                        established=True,
-                        pin_result="matched" if node.side is Side.ALICE else "",
-                    )
+                    self._bus.describe(node.session_id, established=True)
                 case KeyMismatch() | ProfileRejected():
                     pass  # the lab pins the true identity and serves its own profile
                 case _:

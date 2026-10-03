@@ -94,8 +94,6 @@ class SessionFacts:
     contact_id: str
     trust: str
     """The contact's trust state now (``pinned``, ``verified``…); empty if not a contact."""
-    pinned_before: bool
-    """An expected responder bundle was supplied; ``pin_result`` records its comparison."""
     glass_box_requested: bool
     glass_box: bool
     exposed: bool
@@ -106,6 +104,10 @@ class SessionFacts:
     end_reason: str
     admit_reason: str
     by_peer: bool
-    pin_result: str = ""
-    contact_saved: bool = False
-    recorded: bool = False
+    pin_result: str
+    """An initiator's comparison of Reply with the pinned contact: ``matched``, ``mismatched``,
+    or empty (a first contact, or Reply not yet authenticated)."""
+    contact_saved: bool
+    """The authenticated peer is a saved contact, and the session was bound to it."""
+    recorded: bool
+    """The session is shown from a saved recording."""

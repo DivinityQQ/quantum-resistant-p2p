@@ -271,7 +271,7 @@ def test_a_fork_checks_each_step_before_enabling_fresh_randomness() -> None:
         replace(run, marks=marks), TraceBus(), (3, 4), random_source=fresh_random
     )
     assert rebuilt.phase is Phase.DIVERGED
-    assert "step 0" in rebuilt.divergence
+    assert "step 1" in rebuilt.divergence
     assert not calls
     assert len(rebuilt.steps) == 1
 

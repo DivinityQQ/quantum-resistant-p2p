@@ -501,11 +501,12 @@ on selection, with a specification link. Support keyboard traversal and a depend
 
 Long retained histories are paged: keep the first 64 schedule names visible and show 128
 history names per page, newest first, with **Older keys** and **Newer keys** controls and a
-page indicator. Graph and dependency list show the same page. Layout is iterative and bounded;
-an immediate input outside the page or retention is a boundary leaf, with an explanation,
-without recursively inventing its entire ancestry. Every observed named transcript hash,
-including signature and Finished prefixes, has a public digest node and its exact contributing
-tagged entries. The lab alone adds clearly labeled throwaway private identity seed nodes.
+page indicator. Graph and dependency list show the same page. An input that is not on the page
+(on another page, or no longer retained) is drawn as a leaf that says so; its own ancestry is
+not reconstructed. While the handshake is under way, the whole schedule still to come is drawn
+from the specification. Every observed transcript hash, including the ones signatures and
+Finished values cover, has a node with its public digest and the tagged entries it covers. The
+lab alone adds nodes for its throwaway identities' private seeds, clearly labeled.
 
 Distinguish **Specification relationship**, **Derived (observed)**, **Hidden in normal session**,
 **Value available in this glass-box/lab trace**, and **No longer retained / unavailable**.
@@ -529,10 +530,10 @@ observed failures. Separate signature verification from a human verifying the sa
 Explain first-contact limitations plainly. A successful session does not demonstrate all
 adversarial properties or replace external review.
 
-A supplied pin is not evidence of a match. Show an actual mismatch as a failure; show a
-successful comparison only when the service reports it. A first contact is saved as a pin only
-after persistence succeeds. Saved recordings describe historical authentication and contact-save
-facts, and explicitly leave absent pin or safety-number verification evidence unavailable.
+Connecting to a pinned contact is not evidence of a match. Show a mismatch as a failure, and a
+successful comparison only when the services report it. Say a first contact is pinned only once
+it was saved. A recording shows the pin facts of its session; it does not show a contact's
+safety-number verification.
 
 A useful entry reads **Profile: HYBRID-1**, names its algorithms, explains the hybrid assumption,
 and links to profile/transcript evidence. A failure reads **Authentication failed** with the

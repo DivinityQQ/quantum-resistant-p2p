@@ -381,6 +381,16 @@ def test_a_handshake_in_progress_shows_what_comes_next_from_the_spec() -> None:
     assert found["hs"].state == "observed"
 
 
+def test_before_reply_the_whole_schedule_to_come_is_drawn() -> None:
+    items = scripted().i.items
+    hello = next(n for n, i in enumerate(items) if isinstance(i.event, FrameTraced))
+    graph = keygraph.build(items[: hello + 1], session_facts(established=False))
+    found = nodes(graph)
+    assert found["hs"].state == "spec"  # what comes next, not something lost
+    assert found["ss"].state == "spec"
+    assert {"ss>hs", "hs>derived[0]", "derived[0]>cs_0"} <= {e.key for e in graph.edges}
+
+
 def test_layout_puts_inputs_left_of_what_they_feed() -> None:
     graph = keygraph.build(scripted().i.items, session_facts())
     found = nodes(graph)
@@ -456,7 +466,7 @@ def test_a_pinned_initiator_session_states_its_facts_and_their_evidence() -> Non
 
 def test_first_contact_and_verified_contacts_differ() -> None:
     items = scripted().i.items
-    first = facts_by_key(items, pinned_before=False)
+    first = facts_by_key(items, pin_result="")
     assert first["identity"].status == "warn"
     assert "First contact" in first["identity"].value
     verified = facts_by_key(items, trust="verified")
@@ -501,13 +511,13 @@ def test_a_pin_mismatch_cannot_become_success_from_the_presence_of_a_pin() -> No
 
 
 def test_an_authenticated_first_contact_is_only_pinned_after_persistence() -> None:
-    found = facts_by_key(scripted().i.items, pinned_before=False, contact_saved=False, trust="")
-    assert "saved as a pin" not in found["identity"].value
-    saved = facts_by_key(scripted().i.items, pinned_before=False, contact_saved=True)
-    assert "saved as a pin" in saved["identity"].value
-    legacy = facts_by_key(scripted().i.items, pinned_before=False, pin_result="unavailable")
-    assert "evidence unavailable" in legacy["identity"].value
-    assert legacy["identity"].status == "warn"
+    found = facts_by_key(scripted().i.items, pin_result="", contact_saved=False, trust="")
+    assert found["identity"].value == "First contact: Bob (BOBB-BOBB)"
+    assert found["identity"].status == "warn"
+    saved = facts_by_key(scripted().i.items, pin_result="", contact_saved=True)
+    assert saved["identity"].value == "First contact: Bob (BOBB-BOBB) is pinned now"
+    recorded = facts_by_key(scripted().i.items, recorded=True, trust="verified")
+    assert recorded["verification"].value == "Not part of a recording"
 
 
 def test_every_observed_named_public_hash_has_a_graph_node_and_its_exact_value() -> None:
@@ -519,9 +529,9 @@ def test_every_observed_named_public_hash_has_a_graph_node_and_its_exact_value()
     for hashed in hashes:
         assert nodes[hashed.name].value == hashed.digest.hex()
         assert nodes[hashed.name].kind == "hash"
-    assert "ID_R" in nodes["th_sig_R"].operation
-    assert "SigR" not in nodes["th_sig_R"].operation
-    assert "FinA" in nodes["th_final"].operation
+    assert "T(0x21, IdR)" in nodes["th_sig_R"].operation  # the entries it covers
+    assert "0x22" not in nodes["th_sig_R"].operation
+    assert "T(0x42, FinA)" in nodes["th_final"].operation
 
 
 def test_a_large_generation_is_one_missing_boundary_instead_of_invented_ancestry() -> None:

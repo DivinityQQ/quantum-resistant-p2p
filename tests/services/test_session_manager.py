@@ -201,7 +201,6 @@ async def test_pin_mismatch_closes_before_confirm(pair: tuple[Peer, Peer]) -> No
         assert not bob.record.admissions  # alice never revealed herself
         info = alice.trace.info(session.id)
         assert info is not None
-        assert info.pinned
         assert info.pin_result == "mismatched"
         assert info.peer_id == bob.identity.bundle.peer_id
     finally:

@@ -15,38 +15,28 @@ A glass-box recording holds the trace this side retained, revealed values includ
 EXPOSED stamp; it cannot be replayed, because the peer's randomness and keys were never ours.
 
 A recording is untrusted input when it is opened (it may have been copied in from elsewhere):
-the file is capped before it is read, the schema is strict (unknown fields and wrong types are
-refused), every list has a bound, and a failure is a :class:`RecordingError` with a named reason
-that never contains recorded bytes.
+the file is capped before it is read, the schema is strict at every level (unknown fields and
+wrong types are refused; trace events are read through :mod:`qrp2p.lab.trace_schema`), every
+list and value has a bound, what the views rely on is checked (finite times, known profiles,
+field ranges inside their frames, provider-log marks), and a failure is a
+:class:`RecordingError` with a named reason that never contains recorded bytes. What a replay
+is fed is checked again where it is used, by the replaying provider (DESIGN §11.6).
 """
 
-import re
-from itertools import chain, pairwise
+from itertools import pairwise
 from math import isfinite
 from typing import Annotated, Final
 
 import msgspec
 from msgspec import Struct
 
-from qrp2p.core.crypto.hybrid_sig import Role
 from qrp2p.core.crypto.profiles import Profile
-from qrp2p.core.crypto.provider import epoch_name
-from qrp2p.core.trace import (
-    Field,
-    FrameTraced,
-    KeysSwitched,
-    RecordTraced,
-    RekeyStep,
-    SecretDerived,
-    SecretsReleased,
-    SessionClosed,
-    StateChanged,
-    TranscriptHashed,
-)
+from qrp2p.core.trace import TraceEvent
 from qrp2p.lab import trace_schema
 from qrp2p.lab.classical import lab_profile_named
-from qrp2p.lab.replay import Draw, Encapsulation, Entry, Signature
-from qrp2p.lab.solo import CHAT_LIMIT, RUN_FORMAT, SEED_LEN, Kind, LabError, LabRun, validate_marks
+from qrp2p.lab.solo import RUN_FORMAT, LabError, LabRun, validate_marks
+from qrp2p.lab.trace_schema import Counter, Name, Payload
+from qrp2p.services.trace_bus import PinResult
 
 MAGIC: Final = b"QRLAB\0"
 VERSION: Final = 1
@@ -56,15 +46,11 @@ TAG_LEN: Final = 16
 MAX_FILE: Final = 256 * 1024 * 1024
 """Bytes a recording may have; a larger file is refused before it is read."""
 MAX_TITLE: Final = 200
-MAX_STEPS: Final = 10_000
-MAX_LOG: Final = 100_000
 MAX_EVENTS: Final = 20_000
 """Events a glass-box recording may hold (a retained trace keeps at most about 12,000)."""
+MAX_CREATED: Final = 253_402_214_400.0
+"""The start of the year 10000: a creation time beyond it cannot be shown as a date."""
 SUFFIX: Final = ".qrlab"
-MAX_CREATED: Final = 253_402_214_400
-MAX_COUNTER: Final = 2**64 - 1
-MAX_LABEL: Final = 160
-_LABEL: Final = re.compile(r"[A-Za-z][A-Za-z_0-9]*(?:\[[0-9]+\])?(?:\+[0-9]+)?(?:\.(?:key|iv))?")
 
 
 class RecordingError(Exception):
@@ -77,7 +63,7 @@ class Meta(Struct, frozen=True, forbid_unknown_fields=True):
     title: Annotated[str, msgspec.Meta(min_length=1, max_length=MAX_TITLE)]
     created: float
     """Wall-clock seconds since the epoch."""
-    profile: trace_schema.Label
+    profile: Name
 
 
 class LabRecording(Struct, frozen=True, tag="lab", forbid_unknown_fields=True):
@@ -91,94 +77,34 @@ class LabRecording(Struct, frozen=True, tag="lab", forbid_unknown_fields=True):
 
 
 class _Event(Struct, frozen=True, forbid_unknown_fields=True):
-    ordinal: trace_schema.Counter
+    ordinal: Counter
     time: float
 
 
-class Frame(_Event, frozen=True, tag="frame"):
-    """A captured frame."""
+class Traced(_Event, frozen=True, tag="trace"):
+    """A public trace event, in its file form (:func:`traced` makes one)."""
 
-    event: FrameTraced
-
-
-class State(_Event, frozen=True, tag="state"):
-    """A state machine transition."""
-
-    event: StateChanged
-
-
-class Derived(_Event, frozen=True, tag="derived"):
-    """A derivation the engine reported (name and size)."""
-
-    event: SecretDerived
-
-
-class Released(_Event, frozen=True, tag="released"):
-    """References the engine dropped."""
-
-    event: SecretsReleased
-
-
-class Hashed(_Event, frozen=True, tag="hashed"):
-    """A transcript hash."""
-
-    event: TranscriptHashed
-
-
-class Record(_Event, frozen=True, tag="record"):
-    """A record's counters."""
-
-    event: RecordTraced
-
-
-class Switched(_Event, frozen=True, tag="switched"):
-    """A key switch."""
-
-    event: KeysSwitched
-
-
-class Rekey(_Event, frozen=True, tag="rekey"):
-    """A PQ rekey step."""
-
-    event: RekeyStep
-
-
-class Closed(_Event, frozen=True, tag="closed"):
-    """The session's end."""
-
-    event: SessionClosed
+    event: trace_schema.Traced
 
 
 class Value(_Event, frozen=True, tag="value"):
     """A revealed secret, under its schedule name."""
 
-    label: trace_schema.Label
-    value: trace_schema.Payload
+    label: Name
+    value: Payload
 
 
 class Opened(_Event, frozen=True, tag="opened"):
     """A record's revealed nonce and plaintext."""
 
-    key: trace_schema.Label
-    seq: trace_schema.Counter
+    key: Name
+    seq: Counter
     nonce: Annotated[bytes, msgspec.Meta(min_length=12, max_length=12)]
-    plaintext: trace_schema.Payload
+    plaintext: Payload
     opened: bool
 
 
-type Event = (
-    Frame
-    | State
-    | Derived
-    | Released
-    | Hashed
-    | Record
-    | Switched
-    | Rekey
-    | Closed
-    | Value
-    | Opened
-)
+type Event = Traced | Value | Opened
 
 
 class Session(Struct, frozen=True, forbid_unknown_fields=True):
@@ -186,16 +112,15 @@ class Session(Struct, frozen=True, forbid_unknown_fields=True):
 
     initiator: bool
     started: float
-    profile: trace_schema.Label
-    peer_short_id: Annotated[str, msgspec.Meta(max_length=MAX_LABEL)]
+    profile: Name
+    peer_short_id: Annotated[str, msgspec.Meta(max_length=trace_schema.MAX_NAME)]
     established: bool
     ended: bool
-    end_reason: Annotated[str, msgspec.Meta(max_length=MAX_LABEL)]
-    admit_reason: Annotated[str, msgspec.Meta(max_length=MAX_LABEL)]
+    end_reason: Annotated[str, msgspec.Meta(max_length=trace_schema.MAX_NAME)]
+    admit_reason: Annotated[str, msgspec.Meta(max_length=trace_schema.MAX_NAME)]
     by_peer: bool
-    pinned_before: bool = False
-    pin_result: str = "unavailable"
-    contact_saved: bool = False
+    pin_result: PinResult
+    contact_saved: bool
 
 
 class GlassBoxRecording(Struct, frozen=True, tag="glass_box", forbid_unknown_fields=True):
@@ -210,164 +135,53 @@ class GlassBoxRecording(Struct, frozen=True, tag="glass_box", forbid_unknown_fie
 
 type Recording = LabRecording | GlassBoxRecording
 
-
-class _WireFrame(_Event, frozen=True, tag="frame"):
-    event: trace_schema.FrameTraced
-
-
-class _WireState(_Event, frozen=True, tag="state"):
-    event: trace_schema.StateChanged
-
-
-class _WireDerived(_Event, frozen=True, tag="derived"):
-    event: trace_schema.SecretDerived
-
-
-class _WireReleased(_Event, frozen=True, tag="released"):
-    event: trace_schema.SecretsReleased
-
-
-class _WireHashed(_Event, frozen=True, tag="hashed"):
-    event: trace_schema.TranscriptHashed
-
-
-class _WireRecord(_Event, frozen=True, tag="record"):
-    event: trace_schema.RecordTraced
-
-
-class _WireSwitched(_Event, frozen=True, tag="switched"):
-    event: trace_schema.KeysSwitched
-
-
-class _WireRekey(_Event, frozen=True, tag="rekey"):
-    event: trace_schema.RekeyStep
-
-
-class _WireClosed(_Event, frozen=True, tag="closed"):
-    event: trace_schema.SessionClosed
-
-
-type _WireEvent = (
-    _WireFrame
-    | _WireState
-    | _WireDerived
-    | _WireReleased
-    | _WireHashed
-    | _WireRecord
-    | _WireSwitched
-    | _WireRekey
-    | _WireClosed
-    | Value
-    | Opened
-)
-
-
-class _WireGlassBox(Struct, frozen=True, tag="glass_box", forbid_unknown_fields=True):
-    meta: Meta
-    exposed: bool
-    session: Session
-    events: Annotated[list[_WireEvent], msgspec.Meta(max_length=MAX_EVENTS)]
-
-
 _ENCODER: Final = msgspec.msgpack.Encoder()
-_DECODER: Final = msgspec.msgpack.Decoder(LabRecording | _WireGlassBox)
+_DECODER: Final = msgspec.msgpack.Decoder(Recording)
+
+
+def traced(ordinal: int, time: float, event: TraceEvent) -> Traced:
+    """A core trace event as a recording's event.
+
+    Raises:
+        RecordingError: It is beyond a bound of the file schema.
+    """
+    try:
+        return Traced(ordinal, time, trace_schema.to_file(event))
+    except msgspec.ValidationError as error:
+        msg = f"a trace event does not fit the recording schema ({_where(error)})"
+        raise RecordingError(msg) from None
 
 
 def encode(recording: Recording) -> bytes:
-    """The recording's body, to be sealed.
+    """A recording's body: checked by decoding it, so that what is saved will open again.
 
     Raises:
-        RecordingError: It exceeds a bound (it could not be opened again).
+        RecordingError: It breaks the schema or a bound.
     """
-    _check(recording)
     body = _ENCODER.encode(recording)
-    _body_size(body)
-    decode(body)  # enforce the same nested schema on writes as on reads
+    decode(body)
     return body
 
 
 def decode(body: bytes) -> Recording:
-    """A recording from its opened body.
+    """A recording from its body.
 
     Raises:
         RecordingError: Not a recording of this version, or beyond a bound.
     """
-    _body_size(body)
+    if len(body) > MAX_FILE - len(HEADER) - NONCE_LEN - TAG_LEN:
+        msg = "the recording is larger than 256 MiB"
+        raise RecordingError(msg)
     try:
-        wire = _DECODER.decode(body)
+        recording = _DECODER.decode(body)
     except msgspec.ValidationError as error:
         msg = f"the recording does not match its schema ({_where(error)})"
         raise RecordingError(msg) from None
     except msgspec.DecodeError, UnicodeDecodeError:  # a string that is not UTF-8 included
         msg = "the recording is not valid MessagePack"
         raise RecordingError(msg) from None
-    recording: Recording = (
-        wire
-        if isinstance(wire, LabRecording)
-        else GlassBoxRecording(
-            wire.meta, wire.exposed, wire.session, [_runtime(e) for e in wire.events]
-        )
-    )
     _check(recording)
     return recording
-
-
-def _body_size(body: bytes) -> None:
-    if len(body) > MAX_FILE - len(HEADER) - NONCE_LEN - TAG_LEN:
-        msg = "the recording is larger than 256 MiB"
-        raise RecordingError(msg)
-
-
-def _runtime(event: _WireEvent) -> Event:  # noqa: PLR0911  # typed schema variants
-    """Construct core events only after the strict nested file schema passed."""
-    ordinal, time = event.ordinal, event.time
-    match event:
-        case _WireFrame():
-            return Frame(
-                ordinal, time, msgspec.convert(event.event, type=FrameTraced, from_attributes=True)
-            )
-        case _WireState():
-            return State(
-                ordinal, time, msgspec.convert(event.event, type=StateChanged, from_attributes=True)
-            )
-        case _WireDerived():
-            return Derived(
-                ordinal,
-                time,
-                msgspec.convert(event.event, type=SecretDerived, from_attributes=True),
-            )
-        case _WireReleased():
-            return Released(
-                ordinal,
-                time,
-                msgspec.convert(event.event, type=SecretsReleased, from_attributes=True),
-            )
-        case _WireHashed():
-            return Hashed(
-                ordinal,
-                time,
-                msgspec.convert(event.event, type=TranscriptHashed, from_attributes=True),
-            )
-        case _WireRecord():
-            return Record(
-                ordinal, time, msgspec.convert(event.event, type=RecordTraced, from_attributes=True)
-            )
-        case _WireSwitched():
-            return Switched(
-                ordinal, time, msgspec.convert(event.event, type=KeysSwitched, from_attributes=True)
-            )
-        case _WireRekey():
-            return Rekey(
-                ordinal, time, msgspec.convert(event.event, type=RekeyStep, from_attributes=True)
-            )
-        case _WireClosed():
-            return Closed(
-                ordinal,
-                time,
-                msgspec.convert(event.event, type=SessionClosed, from_attributes=True),
-            )
-        case _:
-            return event
 
 
 def pack(sealed: bytes) -> bytes:
@@ -403,7 +217,7 @@ def _where(error: msgspec.ValidationError) -> str:
     return text[at + len(" - at `") : -1] if at >= 0 else "unexpected structure"
 
 
-def _require(condition: bool, reason: str) -> None:  # noqa: FBT001  # validation predicate
+def _require(condition: bool, reason: str) -> None:  # noqa: FBT001  # a check and its reason
     if not condition:
         raise RecordingError(reason)
 
@@ -411,11 +225,8 @@ def _require(condition: bool, reason: str) -> None:  # noqa: FBT001  # validatio
 def _check(recording: Recording) -> None:
     meta = recording.meta
     _require(
-        0 < len(meta.title) <= MAX_TITLE, f"a recording's title has 1 to {MAX_TITLE} characters"
-    )
-    _require(
-        isfinite(meta.created) and 0 <= meta.created <= MAX_CREATED,
-        "the recording's creation time is outside the displayable range",
+        isfinite(meta.created) and 0 <= meta.created < MAX_CREATED,
+        "the recording's creation time is not a date",
     )
     profile = lab_profile_named(meta.profile)
     if profile is None:
@@ -423,46 +234,9 @@ def _check(recording: Recording) -> None:
         raise RecordingError(msg)
     match recording:
         case LabRecording(run=run):
-            logs = len(run.alice_log) + len(run.bob_log)
-            _require(
-                len(run.steps) <= MAX_STEPS and len(run.marks) <= MAX_STEPS and logs <= MAX_LOG,
-                "the lab run is longer than a recording may be",
-            )
             _check_run(run, profile)
         case GlassBoxRecording():
-            _check_glass(recording, profile)
-
-
-def _check_glass(recording: GlassBoxRecording, profile: Profile) -> None:
-    _require(recording.exposed, "a glass-box recording without its EXPOSED stamp")
-    _require(
-        len(recording.events) <= MAX_EVENTS,
-        "the recording holds more events than a session retains",
-    )
-    session = recording.session
-    _require(
-        session.profile == recording.meta.profile and not profile.lab_only,
-        "the session's profile does not match the recording",
-    )
-    _require(
-        isfinite(session.started) and session.started >= 0, "the session's start time is invalid"
-    )
-    _require(
-        session.pin_result in {"", "matched", "mismatched", "unavailable"},
-        "the session's pin comparison result is invalid",
-    )
-    _require(
-        session.pin_result in {"", "unavailable"} or (session.initiator and session.pinned_before),
-        "the session's pin comparison has no earlier pin",
-    )
-    ordinals = [e.ordinal for e in recording.events]
-    _require(
-        not any(b <= a for a, b in pairwise(ordinals)) and (not ordinals or ordinals[0] >= 0),
-        "the recording's events are out of order",
-    )
-    for event in recording.events:
-        _require(isfinite(event.time) and event.time >= 0, "a trace event's time is invalid")
-        _check_event(event, profile.hash_len)
+            _check_glass_box(recording, profile)
 
 
 def _check_run(run: LabRun, profile: Profile) -> None:
@@ -470,119 +244,47 @@ def _check_run(run: LabRun, profile: Profile) -> None:
         run.format == RUN_FORMAT and run.profile == profile.id,
         "the lab run's format or profile does not match the recording",
     )
-    _require(
-        all(len(seed) == SEED_LEN for seed in (*run.alice, *run.bob)),
-        "the lab run's identity seeds have the wrong size",
-    )
     try:
         validate_marks(run)
     except LabError as error:
         raise RecordingError(str(error)) from None
-    for step in run.steps:
-        valid = 0 < len(step.text) <= CHAT_LIMIT if step.kind is Kind.CHAT else not step.text
-        _require(valid, "the lab run's step text is invalid")
-    for entry in chain(run.alice_log, run.bob_log):
-        _check_entry(entry, profile)
 
 
-def _check_entry(entry: Entry, profile: Profile) -> None:
-    match entry:
-        case Draw(data=data):
-            _require(
-                len(data) in {SEED_LEN, profile.kem.seed_len}, "a provider draw has the wrong size"
-            )
-        case Signature():
-            _require(
-                entry.profile == profile.id
-                and entry.role in {r.value for r in Role}
-                and len(entry.th) == profile.hash_len
-                and len(entry.sig) == profile.sig_len,
-                "a provider signature has an invalid profile, role or size",
-            )
-        case Encapsulation():
-            _require(
-                entry.profile == profile.id
-                and 0 <= entry.epoch <= MAX_COUNTER
-                and len(entry.ek) == profile.ek_len
-                and len(entry.ct) == profile.ct_len,
-                "a provider encapsulation has an invalid profile, epoch or size",
-            )
-            bases = (
-                ("ssM", "ssX", "ss")
-                if profile.kem.ct_parts
-                else (("ssX", "ss") if profile.lab_only else ("ss",))
-            )
-            names = [epoch_name(n, entry.epoch) for n in bases]
-            _require(
-                [n for n, _ in entry.secrets] == names
-                and all(len(v) == profile.kem.ss_len for _, v in entry.secrets),
-                "a provider encapsulation's named secrets are invalid",
-            )
-
-
-def _check_label(label: str) -> None:
+def _check_glass_box(recording: GlassBoxRecording, profile: Profile) -> None:
+    _require(recording.exposed, "a glass-box recording without its EXPOSED stamp")
+    session = recording.session
     _require(
-        len(label) <= MAX_LABEL
-        and bool(_LABEL.fullmatch(label))
-        and all(int(n) <= MAX_COUNTER for n in re.findall(r"\d+", label)),
-        "a schedule label is invalid or outside the counter range",
+        session.profile == recording.meta.profile and not profile.lab_only,
+        "the session's profile does not match the recording",
     )
+    _require(isfinite(session.started), "the session's start time is not a number")
+    ordinals = [e.ordinal for e in recording.events]
+    _require(all(a < b for a, b in pairwise(ordinals)), "the recording's events are out of order")
+    for event in recording.events:
+        _require(isfinite(event.time), "a trace event's time is not a number")
+        match event:
+            case Traced(event=trace_schema.FrameTraced() as frame):
+                _check_fields(frame)
+            case Traced(event=trace_schema.TranscriptHashed(digest=digest)):
+                _require(len(digest) == profile.hash_len, "a transcript hash has the wrong size")
+            case _:
+                pass
 
 
-def _check_event(event: Event, hash_len: int) -> None:  # noqa: C901  # typed event variants
-    _require(0 <= event.ordinal <= MAX_COUNTER, "a trace ordinal is outside the counter range")
-    match event:
-        case Frame(event=traced):
-            _check_fields(traced)
-        case Hashed(event=hashed):
-            _check_label(hashed.name)
-            _require(
-                len(hashed.digest) == hash_len, "a transcript digest has the wrong profile size"
-            )
-        case Derived(event=derived):
-            _check_label(derived.label)
-        case Released(event=released):
-            for label in released.labels:
-                _check_label(label)
-        case Value(label=label):
-            _check_label(label)  # excludes identity seeds, which exist only in LabRun
-        case Opened(key=key):
-            _check_label(key)
-            _require(
-                0 <= event.seq <= MAX_COUNTER, "a record sequence is outside the counter range"
-            )
-        case Record(event=record):
-            _require(
-                all(0 <= n <= MAX_COUNTER for n in (record.epoch, record.generation, record.seq)),
-                "a record counter is outside its range",
-            )
-        case Switched(event=switched):
-            _require(
-                all(0 <= n <= MAX_COUNTER for n in (switched.epoch, switched.generation)),
-                "a key-switch counter is outside its range",
-            )
-        case Rekey(event=rekey):
-            _require(0 <= rekey.epoch <= MAX_COUNTER, "a rekey counter is outside its range")
-        case _:
-            pass
-
-
-def _check_fields(traced: FrameTraced) -> None:
-    parents: dict[str, Field] = {}
+def _check_fields(traced: trace_schema.FrameTraced) -> None:
+    """Each field lies inside the body and inside its parent, which comes before it."""
+    seen: dict[str, trace_schema.Field] = {}
     for field in traced.fields:
-        _require(field.name not in parents, "a frame's field names are duplicated")
+        _require(field.name not in seen, "a frame's field names are duplicated")
         _require(
-            field.offset >= 0
-            and field.length >= 0
-            and field.offset + field.length <= len(traced.frame.body),
-            "a frame's field lies outside its captured body",
+            field.offset + field.length <= len(traced.frame.body),
+            "a frame's field lies outside its body",
         )
-        if field.parent:
-            parent = parents.get(field.parent)
-            _require(
-                parent is not None
-                and parent.offset <= field.offset
-                and field.offset + field.length <= parent.offset + parent.length,
-                "a frame's field has an invalid parent range or order",
-            )
-        parents[field.name] = field
+        parent = seen.get(field.parent) if field.parent else field
+        _require(
+            parent is not None
+            and parent.offset <= field.offset
+            and field.offset + field.length <= parent.offset + parent.length,
+            "a frame's field lies outside its parent",
+        )
+        seen[field.name] = field

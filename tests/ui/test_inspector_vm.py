@@ -410,7 +410,7 @@ def test_bytes_trigger_resnapshot_and_pause_keeps_a_bounded_frozen_view(
     backend: FakeBackend, app: AppController, monkeypatch: pytest.MonkeyPatch
 ) -> None:
 
-    monkeypatch.setattr("qrp2p.ui.viewmodels.inspector.BUFFER_BYTES", 64_000)
+    monkeypatch.setattr("qrp2p.ui.viewmodels.inspector.ITEM_BYTES", 64_000)
     original = scripted().i.items[:1]
     inspector = opened(backend, app, original)
     frame = FrameTraced(Direction.OUT, Frame(FrameType.RECORD, bytes(16_000)), ())
@@ -441,17 +441,3 @@ def test_session_eviction_removes_picker_entries_and_invalidates_an_inflight_sel
     assert inspector.property("sessionId") == -1
     assert "no longer retained" in inspector.property("error")
     assert not inspector.trace_items
-
-
-def test_a_dropped_snapshot_reply_requests_a_fresh_bounded_snapshot(
-    backend: FakeBackend, app: AppController
-) -> None:
-    inspector = opened(backend, app, scripted().i.items[:20])
-    backend.updates(TraceOverflow(7))
-    request = backend.one("inspect")
-    backend.reply(request, error=ErrorInfo("trace_overflow", "The trace display is catching up."))
-    retry = backend.one("inspect")
-    assert retry.args == {"session_id": 7, "after": -1}
-    backend.reply(retry, InspectSnap(facts(), tuple(scripted().i.items), missing=False))
-    assert not inspector.property("loading")
-    assert inspector.trace_items

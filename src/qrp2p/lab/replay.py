@@ -11,9 +11,11 @@ boundary**, every output that randomness went into:
 
 Everything else (decapsulation, verification, hashes, HKDF, AEAD) is deterministic and is
 recomputed. Given a recorded prefix, the provider first **replays** it: each call must ask for
-what was recorded (same kind, same size, same ``ek``, same role and hash) and a recorded
-signature must still verify; any difference is a :class:`ReplayDivergence` naming the entry. When
-the prefix runs out it continues **live** with fresh randomness, or, for a strict replay, fails.
+what was recorded (same kind, same size, same ``ek``, same role and hash), a recorded
+encapsulation must have the profile's sizes and a recorded signature must still verify; any
+difference is a :class:`ReplayDivergence` naming the entry. A strict replay fails when the
+prefix runs out; :meth:`LabProvider.continue_live` then lets it go on **live** with fresh
+randomness, once the whole prefix was used.
 Its :attr:`LabProvider.log` always holds the whole run, prefix included, so a forked run can be
 saved and replayed in turn.
 
@@ -33,7 +35,7 @@ from qrp2p.core.crypto.profiles import Profile
 from qrp2p.core.crypto.provider import PlainProvider, RandomSource
 from qrp2p.core.crypto.secret import Secret
 from qrp2p.core.errors import ProtocolError
-from qrp2p.lab.trace_schema import Counter, Label
+from qrp2p.lab.trace_schema import Counter, Name
 
 
 class Draw(Struct, frozen=True, tag="draw", forbid_unknown_fields=True):
@@ -50,7 +52,7 @@ class Encapsulation(Struct, frozen=True, tag="encapsulation", forbid_unknown_fie
     ek: Annotated[bytes, Meta(max_length=1568)]
     ct: Annotated[bytes, Meta(max_length=1568)]
     secrets: Annotated[
-        list[tuple[Label, Annotated[bytes, Meta(max_length=32)]]], Meta(min_length=1, max_length=3)
+        list[tuple[Name, Annotated[bytes, Meta(max_length=32)]]], Meta(min_length=1, max_length=3)
     ]
 
 
@@ -156,8 +158,10 @@ class LabProvider(PlainProvider):
             raise ReplayDivergence(index, "an encapsulation for another profile or epoch")
         if entry.ek != ek:
             raise ReplayDivergence(index, "an encapsulation to a different ek")
-        if not entry.secrets:
-            raise ReplayDivergence(index, "an encapsulation without its shared secret")
+        if len(entry.ct) != profile.ct_len or any(
+            len(v) != profile.kem.ss_len for _, v in entry.secrets
+        ):
+            raise ReplayDivergence(index, "an encapsulation with outputs of the wrong size")
         *components, (label, ss) = entry.secrets
         self.log.append(entry)
         shared = SharedSecret(Secret(ss, label), tuple(Secret(v, n) for n, v in components))

@@ -23,7 +23,7 @@ Front ends subscribe; the desktop app batches what it receives (at most 30 times
 from collections import OrderedDict, deque
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
-from typing import Final
+from typing import Final, Literal
 
 from qrp2p.core.trace import FrameTraced, RecordTraced, TraceEvent
 from qrp2p.core.wire import FRAME_HEADER_LEN, FrameType
@@ -40,6 +40,7 @@ ENDED_KEPT: Final = 16
 
 
 type BusEvent = TraceEvent | Exposure
+type PinResult = Literal["", "matched", "mismatched"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,8 +66,6 @@ class SessionInfo:
     address: str
     started: float
     profile: str = ""
-    pinned: bool = False
-    """We initiated to a contact: the responder had to prove its pinned identity first."""
     peer_id: bytes = b""
     """The authenticated peer; empty before authentication (and for a failed handshake)."""
     peer_short_id: str = ""
@@ -80,10 +79,10 @@ class SessionInfo:
     admit_reason: str = ""
     """A refusal's admission reason (``declined``, ``busy``…); empty otherwise."""
     by_peer: bool = False
-    pin_result: str = ""
-    """Empty if not compared, otherwise ``matched`` or ``mismatched``."""
+    pin_result: PinResult = ""
+    """The comparison with the pin, once Reply authenticated the responder; empty before."""
     contact_saved: bool = False
-    """An authenticated contact was successfully persisted for this session."""
+    """The authenticated peer is a saved contact, and the session was bound to it."""
 
 
 def event_bytes(event: BusEvent) -> int:

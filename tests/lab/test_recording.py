@@ -20,8 +20,7 @@ from qrp2p.core.wire import FrameType
 from qrp2p.lab import recording
 from qrp2p.lab.recording import (
     HEADER,
-    Derived,
-    Frame,
+    MAX_EVENTS,
     GlassBoxRecording,
     LabRecording,
     Meta,
@@ -31,9 +30,10 @@ from qrp2p.lab.recording import (
     decode,
     encode,
     pack,
+    traced,
     unpack,
 )
-from qrp2p.lab.solo import SoloLab
+from qrp2p.lab.solo import MAX_STEPS, SoloLab
 from qrp2p.services.trace_bus import TraceBus
 from tests.support import DeterministicRandom
 
@@ -48,6 +48,8 @@ SESSION = Session(
     end_reason="",
     admit_reason="",
     by_peer=False,
+    pin_result="matched",
+    contact_saved=True,
 )
 SECRET = b"\x5a" * 32
 
@@ -61,8 +63,8 @@ def lab_recording() -> LabRecording:
 def glass_box(**changes: object) -> GlassBoxRecording:
     frame = WireFrame(FrameType.HELLO, b"\1" * 40)
     events = [
-        Frame(0, 1.0, event=FrameTraced(Direction.OUT, frame, (Field("nonce_I", 0, 32),))),
-        Derived(1, 1.5, event=SecretDerived("hs", 32)),
+        traced(0, 1.0, FrameTraced(Direction.OUT, frame, (Field("nonce_I", 0, 32),))),
+        traced(1, 1.5, SecretDerived("hs", 32)),
         Value(2, 1.5, label="hs", value=SECRET),
     ]
     values: dict[str, object] = {
@@ -119,7 +121,7 @@ def test_the_schema_is_strict_and_its_errors_hold_no_values() -> None:
         decode(b"\xc1")
 
 
-def test_semantic_rules_are_checked(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_semantic_rules_are_checked() -> None:
     with pytest.raises(RecordingError, match="EXPOSED stamp"):
         decode(msgspec.msgpack.encode(glass_box(exposed=False)))
     events = glass_box().events
@@ -129,12 +131,17 @@ def test_semantic_rules_are_checked(monkeypatch: pytest.MonkeyPatch) -> None:
         encode(glass_box(meta=msgspec.structs.replace(META, title="")))
     with pytest.raises(RecordingError, match="title"):
         encode(glass_box(meta=msgspec.structs.replace(META, title="x" * 201)))
-    monkeypatch.setattr(recording, "MAX_EVENTS", 2)
-    with pytest.raises(RecordingError, match="more events"):
-        decode(msgspec.msgpack.encode(glass_box()))
-    monkeypatch.setattr(recording, "MAX_STEPS", 2)
-    with pytest.raises(RecordingError, match="longer than a recording"):
-        decode(msgspec.msgpack.encode(lab_recording()))
+
+
+def test_every_list_has_a_bound() -> None:
+    body = msgspec.msgpack.decode(encode(glass_box()))
+    body["events"] = body["events"][:1] * (MAX_EVENTS + 1)
+    with pytest.raises(RecordingError, match=r"\$\.events"):
+        decode(msgspec.msgpack.encode(body))
+    body = msgspec.msgpack.decode(encode(lab_recording()))
+    body["run"]["steps"] = body["run"]["steps"][:1] * (MAX_STEPS + 1)
+    with pytest.raises(RecordingError, match=r"\$\.run\.steps"):
+        decode(msgspec.msgpack.encode(body))
 
 
 @settings(max_examples=300, suppress_health_check=[HealthCheck.too_slow])
@@ -185,33 +192,18 @@ def test_unknown_fields_are_rejected_inside_trace_dataclasses(location: str) -> 
     assert "schema" in str(raised.value)
 
 
-def test_an_encapsulation_without_named_secrets_never_reaches_replay() -> None:
-    body = msgspec.msgpack.decode(encode(lab_recording()))
-    encapsulation = next(e for e in body["run"]["bob_log"] if e["type"] == "encapsulation")
-    encapsulation["secrets"] = []
-    with pytest.raises(RecordingError):
-        decode(msgspec.msgpack.encode(body))
-
-
-@pytest.mark.parametrize(
-    "damage", ["secret_size", "secret_label", "signature_size", "seed", "profile", "marks"]
-)
-def test_structured_provider_and_run_damage_is_refused_by_name(damage: str) -> None:
+@pytest.mark.parametrize("damage", ["seed", "profile", "marks", "empty_secrets"])
+def test_a_damaged_run_is_refused_by_name(damage: str) -> None:
     body = msgspec.msgpack.decode(encode(lab_recording()))
     run = body["run"]
-    encapsulation = next(e for e in run["bob_log"] if e["type"] == "encapsulation")
-    if damage == "secret_size":
-        encapsulation["secrets"][0][1] = b"small"
-    elif damage == "secret_label":
-        encapsulation["secrets"][0][0] = "wrong"
-    elif damage == "signature_size":
-        next(e for e in run["alice_log"] if e["type"] == "signature")["sig"] = b"short"
-    elif damage == "seed":
+    if damage == "seed":
         run["alice"][0] = bytes(31)
     elif damage == "profile":
         run["profile"] = 127
-    else:
+    elif damage == "marks":
         run["marks"][0][0] = -1
+    else:
+        next(e for e in run["bob_log"] if e["type"] == "encapsulation")["secrets"] = []
     with pytest.raises(RecordingError):
         decode(msgspec.msgpack.encode(body))
 
@@ -246,17 +238,14 @@ def test_writes_cannot_make_a_file_larger_than_reads_allow(monkeypatch: pytest.M
         encode(glass_box())
 
 
-def test_new_pin_facts_round_trip_and_legacy_recordings_keep_missing_evidence() -> None:
-    session = msgspec.structs.replace(
-        SESSION, pinned_before=True, pin_result="matched", contact_saved=True
-    )
-    restored = decode(encode(glass_box(session=session)))
+def test_the_pin_facts_are_part_of_the_session() -> None:
+    restored = decode(encode(glass_box()))
     assert isinstance(restored, GlassBoxRecording)
-    assert restored.session == session
-    body = msgspec.msgpack.decode(encode(glass_box(session=session)))
-    for key in ("pinned_before", "pin_result", "contact_saved"):
-        del body["session"][key]
-    legacy = decode(msgspec.msgpack.encode(body))
-    assert isinstance(legacy, GlassBoxRecording)
-    assert legacy.session.pin_result == "unavailable"
-    assert not legacy.session.contact_saved
+    assert (restored.session.pin_result, restored.session.contact_saved) == ("matched", True)
+    body = msgspec.msgpack.decode(encode(glass_box()))
+    body["session"]["pin_result"] = "probably"
+    with pytest.raises(RecordingError, match="schema"):
+        decode(msgspec.msgpack.encode(body))
+    del body["session"]["pin_result"]
+    with pytest.raises(RecordingError, match="schema"):
+        decode(msgspec.msgpack.encode(body))

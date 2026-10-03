@@ -298,7 +298,6 @@ class LabHost:
             peer_short_id=info.peer_short_id,
             contact_id="",
             trust="",
-            pinned_before=info.pinned,
             glass_box_requested=False,
             glass_box=False,
             exposed=True,
@@ -309,7 +308,8 @@ class LabHost:
             admit_reason=info.admit_reason,
             by_peer=info.by_peer,
             pin_result=info.pin_result,
-            contact_saved=info.contact_saved,
+            contact_saved=False,
+            recorded=False,
         )
 
 
@@ -325,7 +325,6 @@ def _recorded(info: SessionInfo) -> SessionFacts:
         peer_short_id=info.peer_short_id,
         contact_id="",
         trust="",
-        pinned_before=info.pinned,
         glass_box_requested=info.glass_box_requested,
         glass_box=True,
         exposed=True,

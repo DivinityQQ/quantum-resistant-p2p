@@ -117,7 +117,6 @@ def session_facts(node: Node, info: SessionInfo) -> SessionFacts:
         peer_short_id=info.peer_short_id,
         contact_id=contact.contact_id.hex() if contact is not None else "",
         trust=contact.trust.value if contact is not None else "",
-        pinned_before=info.pinned,
         glass_box_requested=info.glass_box_requested,
         glass_box=info.glass_box,
         exposed=info.glass_box,
@@ -129,6 +128,7 @@ def session_facts(node: Node, info: SessionInfo) -> SessionFacts:
         by_peer=info.by_peer,
         pin_result=info.pin_result,
         contact_saved=info.contact_saved,
+        recorded=False,
     )
 
 

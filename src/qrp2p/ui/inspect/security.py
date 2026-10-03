@@ -178,32 +178,20 @@ def _identity(facts: SessionFacts, established: int) -> Fact:
             -1,
             "7.5",
         )
-    if facts.initiator and facts.pin_result == "matched":
+    if facts.pin_result == "matched":
         value = f"{name} ({facts.peer_short_id}) proved the pinned identity"
         evidence = (
-            "Reply's signature and Finished verified against the pinned bundle before this side "
-            "revealed its own identity in Confirm."
-        )
-    elif facts.initiator and facts.pin_result == "unavailable":
-        value = f"{name} ({facts.peer_short_id}): earlier pin evidence unavailable"
-        evidence = (
-            "This recording predates pin-result capture; it cannot establish a pin comparison."
+            "Reply's signature and Finished verified, and Reply's bundle equals the pinned one, "
+            "before this side revealed its own identity in Confirm."
         )
     elif facts.initiator:
-        saved = (
-            "was saved as a pin" if facts.contact_saved else "authenticated without an earlier pin"
-        )
-        value = f"First contact: {name} ({facts.peer_short_id}) {saved}"
-        if facts.pinned_before:
-            value = f"{name} ({facts.peer_short_id}): pin comparison not recorded"
+        value = f"First contact: {name} ({facts.peer_short_id})"
+        if facts.contact_saved:
+            value += " is pinned now"
         evidence = (
             "Reply's signature verified, but there was no earlier pin to compare with: a "
             "machine in the middle would have been accepted just the same."
         )
-        if facts.pinned_before:
-            evidence = (
-                "An identity was authenticated, but no successful pin comparison was recorded."
-            )
     else:
         value = f"{name} ({facts.peer_short_id}) proved its identity in Confirm"
         evidence = "Confirm's signature and Finished verified; then admission decided."
@@ -226,8 +214,8 @@ def _verification(facts: SessionFacts) -> Fact:
         value, status = "Lab identities: nothing to verify", "info"
         evidence = "Both identities were generated for this lab and exist only here."
     elif facts.recorded:
-        value, status = "Safety-number verification not recorded", "info"
-        evidence = "The recording has session authentication evidence, without a contact's verification status."
+        value, status = "Not part of a recording", "info"
+        evidence = "A recording keeps the session's evidence, not the contact's trust state."
     elif facts.trust == "verified":
         value, status = "Safety number compared", "ok"
         evidence = "You marked this contact verified after comparing the 60-digit safety number."

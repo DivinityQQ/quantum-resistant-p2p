@@ -272,7 +272,6 @@ class SessionManager:
                 address=address,
                 started=self._clock(),
                 profile=profile.name,
-                pinned=pinned is not None,
                 glass_box_requested=glass_box,
             )
         )
@@ -362,12 +361,16 @@ class SessionManager:
 
     def trace(self, session: Session, event: TraceEvent) -> None:
         """See :class:`~qrp2p.services.session.SessionHooks`."""
-        if session.peer is not None:
+        peer = session.peer
+        if peer is not None and session.role is SessionRole.INITIATOR:
+            # Reply authenticated the responder, and a pinned one also matched its pin: a
+            # mismatch raises before the machine knows its peer (DESIGN §7.5).
+            matched = session.expected_peer is not None
             self._trace.describe(
                 session.id,
-                pin_result="matched" if session.expected_peer is not None else "",
-                peer_id=session.peer.peer_id,
-                peer_short_id=session.peer.short_id,
+                peer_id=peer.peer_id,
+                peer_short_id=peer.short_id,
+                pin_result="matched" if matched else "",
             )
         self._trace.publish(session.id, self._clock(), event)
 
@@ -489,9 +492,6 @@ class SessionManager:
         """Forget the session; tell the node whether it merely lost a simultaneous open."""
         self._release_slot(session)
         self._close_gate(session)
-        if session.peer is not None:  # an initiator knows the responder from Reply on
-            peer = session.peer
-            self._trace.describe(session.id, peer_id=peer.peer_id, peer_short_id=peer.short_id)
         self._trace.describe(
             session.id,
             end_reason=end.reason.label if end.reason is not None else "",

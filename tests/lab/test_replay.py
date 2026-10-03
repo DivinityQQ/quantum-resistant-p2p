@@ -97,6 +97,12 @@ def test_every_recorded_input_is_checked() -> None:
         replaying(encapsulation).kem_encapsulate(HYBRID_1, b"\0" * HYBRID_1.ek_len)
     with pytest.raises(ReplayDivergence, match="another profile or epoch"):
         replaying(encapsulation).kem_encapsulate(HYBRID_1, encapsulation.ek, epoch=1)
+    for damaged in (
+        replace(encapsulation, ct=encapsulation.ct[:-1]),
+        replace(encapsulation, secrets=[(n, v[:16]) for n, v in encapsulation.secrets]),
+    ):
+        with pytest.raises(ReplayDivergence, match="outputs of the wrong size"):
+            replaying(damaged).kem_encapsulate(HYBRID_1, encapsulation.ek)
     with pytest.raises(ReplayDivergence, match="over a different hash"):
         replaying(signature).sign(HYBRID_1, keys, Role.RESPONDER, b"\1" * 32)
     forged = replace(signature, sig=bytes(len(signature.sig)))

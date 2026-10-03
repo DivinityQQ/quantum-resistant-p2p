@@ -16,42 +16,25 @@ from pathlib import Path
 from typing import Final
 
 from qrp2p.core.crypto.secret import Secret
-from qrp2p.core.trace import (
-    FrameTraced,
-    KeysSwitched,
-    RecordTraced,
-    RekeyStep,
-    SecretDerived,
-    SecretsReleased,
-    SessionClosed,
-    StateChanged,
-    TranscriptHashed,
-)
+from qrp2p.lab import trace_schema
 from qrp2p.lab.recording import (
     HEADER,
     MAX_FILE,
     SUFFIX,
-    Closed,
-    Derived,
     Event,
-    Frame,
     GlassBoxRecording,
-    Hashed,
     LabRecording,
     Meta,
     Opened,
-    Record,
     Recording,
     RecordingError,
-    Rekey,
-    Released,
     Session,
-    State,
-    Switched,
+    Traced,
     Value,
     decode,
     encode,
     pack,
+    traced,
     unpack,
 )
 from qrp2p.services.exposure import RecordRevealed, ValueRevealed
@@ -196,7 +179,6 @@ def session_recording(bus: TraceBus, session_id: int, title: str, now: float) ->
         end_reason=info.end_reason,
         admit_reason=info.admit_reason,
         by_peer=info.by_peer,
-        pinned_before=info.pinned,
         pin_result=info.pin_result,
         contact_saved=info.contact_saved,
     )
@@ -205,7 +187,7 @@ def session_recording(bus: TraceBus, session_id: int, title: str, now: float) ->
     return GlassBoxRecording(meta=meta, exposed=True, session=session, events=events)
 
 
-def _event(record: TraceRecord) -> Event:  # noqa: C901, PLR0911  # one case per event type
+def _event(record: TraceRecord) -> Event:
     ordinal, time = record.ordinal, record.time
     match record.event:
         case ValueRevealed(secret=secret):
@@ -220,24 +202,8 @@ def _event(record: TraceRecord) -> Event:  # noqa: C901, PLR0911  # one case per
                 plaintext=revealed.plaintext.reveal(),
                 opened=revealed.opened,
             )
-        case FrameTraced() as event:
-            return Frame(ordinal, time, event=event)
-        case StateChanged() as event:
-            return State(ordinal, time, event=event)
-        case SecretDerived() as event:
-            return Derived(ordinal, time, event=event)
-        case SecretsReleased() as event:
-            return Released(ordinal, time, event=event)
-        case TranscriptHashed() as event:
-            return Hashed(ordinal, time, event=event)
-        case RecordTraced() as event:
-            return Record(ordinal, time, event=event)
-        case KeysSwitched() as event:
-            return Switched(ordinal, time, event=event)
-        case RekeyStep() as event:
-            return Rekey(ordinal, time, event=event)
-        case SessionClosed() as event:
-            return Closed(ordinal, time, event=event)
+        case event:
+            return traced(ordinal, time, event)
 
 
 def restored(
@@ -259,7 +225,6 @@ def restored(
         end_reason=session.end_reason,
         admit_reason=session.admit_reason,
         by_peer=session.by_peer,
-        pinned=session.pinned_before,
         pin_result=session.pin_result,
         contact_saved=session.contact_saved,
     )
@@ -280,5 +245,5 @@ def _bus_event(event: Event) -> BusEvent:
                 Secret(event.plaintext, "plaintext"),
                 event.opened,
             )
-        case _:
-            return event.event
+        case Traced(event=public):
+            return trace_schema.to_core(public)

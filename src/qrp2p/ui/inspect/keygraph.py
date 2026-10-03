@@ -30,8 +30,12 @@ _INDEXED: Final = re.compile(r"^(?P<base>[A-Za-z_]+?)(?:\[(?P<epoch>\d+)\])?$")
 
 PENDING_HANDSHAKE: Final = ("derived[0]", "cs_0", "ap_I[0]", "ap_R[0]", "exporter_0", "derived[1]")
 """What a handshake still in progress derives at its end (DESIGN §7.4)."""
-PAGE_SIZE: Final = 128
+LAB_IDENTITY_SEEDS: Final = frozenset({"identity.ed25519", "identity.mldsa65", "identity.mldsa87"})
+"""The private seeds the solo lab reveals for its own identities (DESIGN §11.4)."""
 HEAD_SIZE: Final = 64
+"""Names always on the graph: the handshake's, which the bus always retains."""
+PAGE_SIZE: Final = 128
+"""Later names (key updates, rekeys) per page."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,7 +45,8 @@ class KeyNode:
     key: str
     """The secret's name (unique within the session)."""
     kind: str
-    """``kem`` (KEM output or key), ``secret``, ``key`` (AEAD key or IV) or ``hash``."""
+    """``kem`` (KEM output or key), ``secret``, ``key`` (AEAD key or IV), ``hash``, or
+    ``identity`` (a lab identity's private seed)."""
     epoch: int
     column: int
     row: int
@@ -80,7 +85,6 @@ class KeyGraph:
     rows: int
     pages: int = 1
     page: int = 0
-    omitted: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,32 +146,21 @@ _HANDSHAKE: Final[dict[str, Spec]] = {
     "fk_R": Spec("secret", 0, 'Expand-Label(hs_R, "finished", "", Hlen)', ("hs_R",), "7.4"),
     "fk_I": Spec("secret", 0, 'Expand-Label(hs_I, "finished", "", Hlen)', ("hs_I",), "7.4"),
     "th_hello": Spec("hash", 0, "H(T(0x10, Hello) ‖ T(0x11, nonce_R ‖ ct))", (), "7.3"),
-    "th_final": Spec("hash", 0, "H(the transcript through FinA)", (), "7.3"),
+    "th_sig_R": Spec("hash", 0, "H(TR through T(0x21, IdR)): what SigR signs", (), "7.3"),
+    "th_fin_R": Spec("hash", 0, "H(TR through T(0x22, SigR)): what FinR authenticates", (), "7.3"),
+    "th_sig_I": Spec(
+        "hash", 0, "H(TR through T(0x23, FinR) ‖ T(0x31, IdI)): what SigI signs", (), "7.3"
+    ),
+    "th_fin_I": Spec("hash", 0, "H(TR through T(0x32, SigI)): what FinI authenticates", (), "7.3"),
+    "th_fin_A": Spec(
+        "hash",
+        0,
+        "H(TR through T(0x33, FinI) ‖ T(0x41, AdmitBody)): what FinA authenticates",
+        (),
+        "7.3",
+    ),
+    "th_final": Spec("hash", 0, "H(TR through T(0x42, FinA)): the whole handshake", (), "7.3"),
 }
-
-_TRANSCRIPT_PREFIX: Final = (
-    "Hello",
-    "nonce_R ‖ ct",
-    "ID_R",
-    "SigR",
-    "FinR",
-    "ID_I",
-    "SigI",
-    "FinI",
-    "AdmitBody",
-    "FinA",
-)
-for _name, _length in (
-    ("th_sig_R", 3),
-    ("th_fin_R", 4),
-    ("th_sig_I", 6),
-    ("th_fin_I", 7),
-    ("th_fin_A", 9),
-    ("th_final", 10),
-):
-    _HANDSHAKE[_name] = Spec(
-        "hash", 0, "H(TR): tagged entries " + " → ".join(_TRANSCRIPT_PREFIX[:_length]), (), "7.3"
-    )
 
 
 def _spec_kem(base: str, epoch: int, facts: SessionFacts) -> Spec:
@@ -206,14 +199,9 @@ def _spec_kem(base: str, epoch: int, facts: SessionFacts) -> Spec:
 
 def spec_of(name: str, facts: SessionFacts) -> Spec | None:  # noqa: C901, PLR0911  # the grammar
     """What the specification says about a name; ``None`` if it is not a schedule name."""
-    if facts.lab and name in {"identity.ed25519", "identity.mldsa65", "identity.mldsa87"}:
-        return Spec(
-            "identity",
-            0,
-            "Throwaway lab identity's 32-byte private seed; retained by the lab",
-            (),
-            "11.1",
-        )
+    if facts.lab and name in LAB_IDENTITY_SEEDS:
+        operation = "A private key's seed of this lab's throwaway identity; it exists only here"
+        return Spec("identity", 0, operation, (), "5.1")
     if name.endswith((".key", ".iv")):
         return _spec_keys(name)
     if (traffic := _TRAFFIC.match(name)) is not None:
@@ -304,7 +292,7 @@ def _node(name: str, spec: Spec, seen: _Seen, facts: SessionFacts, *, pending: b
         state, shown, size = "revealed", value.hex(), len(value)
     elif name in seen.derived:
         state = "observed"
-    elif pending and name in PENDING_HANDSHAKE:
+    elif pending:  # nothing is evicted during a handshake: what is missing comes next
         state = "spec"
     else:
         state = "unavailable"
@@ -326,7 +314,11 @@ def _node(name: str, spec: Spec, seen: _Seen, facts: SessionFacts, *, pending: b
 
 
 def build(items: Iterable[TraceItem], facts: SessionFacts, *, page: int = 0) -> KeyGraph:
-    """The key graph of a session's retained trace."""
+    """One page of the key graph of a session's retained trace.
+
+    The first :data:`HEAD_SIZE` names (the handshake's) are always on it; the later ones (key
+    updates and rekeys, which a long session has thousands of) are paged, newest first.
+    """
     seen = _collect(items)
     pending = facts.profile is not None and not facts.established and not facts.ended
     names = list(dict.fromkeys(seen.order))
@@ -334,25 +326,27 @@ def build(items: Iterable[TraceItem], facts: SessionFacts, *, page: int = 0) -> 
         names += [n for n in PENDING_HANDSHAKE if n not in seen.derived]
     names = [n for n in names if spec_of(n, facts) is not None]
     head, history = names[:HEAD_SIZE], names[HEAD_SIZE:]
-    pages = max(1, (len(history) + PAGE_SIZE - 1) // PAGE_SIZE)
+    pages = max(1, -(-len(history) // PAGE_SIZE))
     page = min(max(0, page), pages - 1)
-    end = max(0, len(history) - page * PAGE_SIZE)
+    end = len(history) - page * PAGE_SIZE
     shown = head + history[max(0, end - PAGE_SIZE) : end]
     specs = {name: spec for name in shown if (spec := spec_of(name, facts)) is not None}
-    # Inputs that are not themselves present (transcript hashes, evicted secrets), and theirs.
+    # Inputs not shown themselves. While the handshake is under way they are what it derives
+    # next, and its whole (small) schedule is drawn. Otherwise each is a leaf: its own inputs
+    # are on another page or no longer retained, and are not reconstructed one by one.
     missing = [s for spec in specs.values() for s in spec.inputs]
-    for source in missing:
-        if source not in specs and (found := spec_of(source, facts)) is not None:
-            # A boundary leaf names the actual immediate dependency. Its earlier ancestry
-            # is not reconstructed: it may be evicted or on another retained page.
-            specs[source] = replace(
-                found,
-                inputs=(),
-                operation=found.operation
-                + "; earlier dependencies are outside this page or no longer retained",
-            )
+    while missing:
+        source = missing.pop()
+        if source in specs or (found := spec_of(source, facts)) is None:
+            continue
+        if pending:
+            missing.extend(found.inputs)
+        elif found.inputs:
+            note = "; its inputs are not drawn here (another page, or no longer retained)"
+            found = replace(found, operation=found.operation + note, inputs=())
+        specs[source] = found
     nodes = {name: _node(name, spec, seen, facts, pending=pending) for name, spec in specs.items()}
-    return replace(_layout(nodes), pages=pages, page=page, omitted=len(names) - len(shown))
+    return replace(_layout(nodes), pages=pages, page=page)
 
 
 # -- layout --------------------------------------------------------------------------------------

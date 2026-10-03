@@ -1,4 +1,4 @@
-"""Trace backpressure bounds captured bytes before Qt processes its first wake."""
+"""The mailbox between the threads: one wake signal, order kept, a bounded trace stream."""
 
 import pytest
 
@@ -47,46 +47,19 @@ def test_a_non_overflowing_delivery_keeps_its_captured_bytes() -> None:
     assert sum(item_bytes(i) for i in update.items) == 16_005
 
 
-def test_lock_discards_payloads_and_scoped_snapshots_immediately() -> None:
+def test_replies_are_never_dropped(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("qrp2p.ui.mailbox.MAILBOX_BYTES", 20_000)
+    mailbox = Mailbox()
+    snapshot = Reply(1, 5, InspectSnap(session_facts(), appended(0).items, missing=False))
+    mailbox.put(snapshot)
+    mailbox.put(Batch(1, (appended(1),)))
+    mailbox.put(Batch(1, (appended(2),)))  # beyond the budget: the stream overflows
+    assert mailbox.take() == [snapshot, Batch(1, (TraceOverflow(7),))]
+
+
+def test_a_closed_mailbox_drops_everything() -> None:
     mailbox = Mailbox()
     mailbox.put(Batch(1, (appended(0),)))
-    mailbox.put(Reply(1, 5, b"captured session secret"))
-    mailbox.put(Reply(1, 6, "lock result"))
-    mailbox.put(Lifecycle(2, "locked"))
-    mailbox.clear_scoped({5}, gen=1)
-    assert mailbox.take() == [Reply(1, 6, "lock result"), Lifecycle(2, "locked")]
-
-
-def test_snapshot_replies_are_bounded_and_keep_a_named_retry_result(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-
-    monkeypatch.setattr("qrp2p.ui.mailbox.MAILBOX_BYTES", 20_000)
-    mailbox = Mailbox()
-    snapshot = InspectSnap(session_facts(), appended(0).items, missing=False)
-    mailbox.put(Reply(1, 5, snapshot))
-    mailbox.put(Reply(1, 6, snapshot))
-    queued = mailbox.take()
-    assert len(queued) == 2
-    for delivery in queued:
-        assert isinstance(delivery, Reply)
-        assert delivery.value is None
-        assert delivery.error is not None
-        assert delivery.error.kind == "trace_overflow"
-
-
-def test_lock_refuses_late_old_payloads_and_preserves_future_generation_budgets(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr("qrp2p.ui.mailbox.MAILBOX_BYTES", 20_000)
-    mailbox = Mailbox()
-    mailbox.put(Batch(1, (NoticePosted("old generation"),)))
-    mailbox.put(Batch(3, (appended(1),)))
-    mailbox.clear_scoped(set(), gen=1)
-    assert not mailbox.put(Batch(1, (appended(2),)))
-    assert not mailbox.put(Reply(1, 5, InspectSnap(session_facts(), appended(2).items, False)))
-    mailbox.put(Batch(3, (appended(3),)))
-    assert mailbox.take() == [Batch(3, (TraceOverflow(7),))]
     mailbox.close()
-    assert not mailbox.put(Batch(4, (appended(4),)))
-    assert not mailbox.take()
+    assert not mailbox.put(Batch(1, (appended(1),)))
+    assert mailbox.take() == []

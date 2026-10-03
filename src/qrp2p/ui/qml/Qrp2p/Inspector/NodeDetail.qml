@@ -194,7 +194,8 @@ Flickable {
             kem: qsTr("KEM key or shared secret"),
             secret: qsTr("Secret"),
             key: qsTr("AEAD key or IV"),
-            hash: qsTr("Transcript hash")
+            hash: qsTr("Transcript hash"),
+            identity: qsTr("Identity private key seed")
         }
         const parts = [kinds[node.kind] || node.kind, qsTr("epoch %1").arg(node.epoch)]
         if (node.size > 0)
