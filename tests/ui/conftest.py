@@ -26,6 +26,7 @@ from PySide6.QtCore import QMessageLogContext, QtMsgType, qInstallMessageHandler
 from PySide6.QtGui import QGuiApplication
 
 from qrp2p.ui.app import load_fonts
+from tests.ui.window import Ui, open_window
 
 _FAILING = {QtMsgType.QtWarningMsg, QtMsgType.QtCriticalMsg, QtMsgType.QtFatalMsg}
 
@@ -57,3 +58,10 @@ def qt_warnings_fail() -> Iterator[None]:
     qInstallMessageHandler(previous)
     if messages:
         pytest.fail("Qt warned during the test:\n" + "\n".join(messages), pytrace=False)
+
+
+@pytest.fixture
+def ui(qapp: QGuiApplication) -> Iterator[Ui]:  # noqa: ARG001  # the application must exist
+    """The app's window, offscreen, on a fake services side (tests/ui/window.py)."""
+    with open_window() as window:
+        yield window

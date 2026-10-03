@@ -4,15 +4,14 @@ import QtQuick.Templates as T
 import Qrp2p.Theme
 import Qrp2p.Components
 
-// The top bar: product label, this device's network facts, Inspector (development preview only)
-// and the application menu (Connect, Contacts, Settings, Lock).
+// The top bar: product label, this device's network facts, the Inspector and the application
+// menu (Connect, Contacts, Settings, Lock).
 Item {
     id: bar
 
     required property var app
     required property var workspace
     property bool inspectorOpen: false
-    property bool inspectorAvailable: false
 
     signal openChooser()
     signal openConnect()
@@ -57,15 +56,14 @@ Item {
         Divider {
             vertical: true
             Layout.preferredHeight: 20
-            visible: bar.inspectorAvailable
         }
         AppButton {
-            visible: bar.inspectorAvailable
+            objectName: "inspectorButton"
             kind: "quiet"
             compact: true
             iconName: bar.inspectorOpen ? "minimize-2" : "panel-right"
             text: bar.inspectorOpen ? qsTr("Close Inspector") : qsTr("Inspector")
-            toolTipText: qsTr("Inspector layout preview (Ctrl+I)")
+            toolTipText: qsTr("Session Inspector: the protocol behind this conversation (Ctrl+I)")
             onClicked: bar.toggleInspector()
         }
         IconButton {

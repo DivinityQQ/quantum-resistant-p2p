@@ -12,9 +12,11 @@ from dataclasses import replace
 import pytest
 from PySide6.QtCore import QCoreApplication
 
+from qrp2p.core.crypto.provider import Revealed as RevealedValue
 from qrp2p.core.trace import FrameTraced
 from qrp2p.core.wire import FrameType
 from qrp2p.ui.inspect.model import Revealed, SessionFacts, TraceItem
+from qrp2p.ui.inspect.spec import SPEC_URL
 from qrp2p.ui.inspect.timeline import Timeline
 from qrp2p.ui.snapshots import ContactChanged, ErrorInfo
 from qrp2p.ui.tap import InspectSnap, SessionDescribed, TraceAppended, TraceOverflow
@@ -22,7 +24,7 @@ from qrp2p.ui.viewmodels.application import AppController
 from qrp2p.ui.viewmodels.inspector import ITEM_CAP, Inspector
 from qrp2p.ui.viewmodels.workspace import Workspace
 from tests.ui.fakes import FakeBackend, contact, online, settle
-from tests.ui.inspect_support import scripted, session_facts
+from tests.ui.inspect_support import scripted, secret_hexes, session_facts
 from tests.ui.test_viewmodels import unlock
 
 BOB = contact("Bob", created=1000.0)
@@ -283,23 +285,27 @@ def test_view_model_strings_of_a_normal_session_hold_no_secret(
     backend: FakeBackend, app: AppController
 ) -> None:
     """The canary for the Inspector's own strings; the exposed run proves the search finds them."""
-    normal = scripted()
-    exposed = scripted(exposed=True)
-    secrets = [i.event.value for i in exposed.i.items if isinstance(i.event, Revealed)]
+    handled: list[RevealedValue] = []
+    normal = scripted(secrets=handled)  # the values this very session derived, kept aside
+    secrets = secret_hexes(handled)
+    assert len(secrets) > 40
     inspector = opened(backend, app, normal.i.items)
     for view in ("timeline", "keys", "security"):
         inspector.setView(view)
     for row in inspector._timeline_model.rows():
         inspector.selectRow(row.key)
+        for field in inspector._fields.rows():
+            inspector.selectField(field.key)
     text = strings_of(inspector).lower()
-    # Both runs are deterministic: the normal one derived exactly these values.
-    assert not [s for s in secrets if s.hex() in text]
-    # The search works: the exposed session's views do show them.
+    assert not [s for s in secrets if s in text]
+    # The search works: an exposed session's views do show its values.
+    exposed = scripted(exposed=True)
+    revealed = {i.event.value.hex() for i in exposed.i.items if isinstance(i.event, Revealed)}
     opened_again(backend, inspector, exposed.i.items)
     inspector.setView("keys")
     shown = strings_of(inspector).lower()
-    found = [s for s in secrets if s.hex() in shown]
-    assert len(found) == len(set(secrets))
+    assert revealed
+    assert all(v in shown for v in revealed)
 
 
 def opened_again(backend: FakeBackend, inspector: Inspector, items: list[TraceItem]) -> Inspector:
@@ -316,3 +322,85 @@ def test_the_workspace_owns_one_inspector(backend: FakeBackend, app: AppControll
     ws = unlock(backend, app, online(BOB))
     assert isinstance(ws, Workspace)
     assert isinstance(ws.property("inspector"), Inspector)
+
+
+def test_the_lanes_name_both_sides_by_role(backend: FakeBackend, app: AppController) -> None:
+    inspector = opened(backend, app, scripted().i.items)
+    assert (inspector.property("localName"), inspector.property("peerName")) == ("You", "Bob")
+    assert inspector.property("initiator")
+    backend.updates(SessionDescribed(facts(initiator=False, peer_name="")))
+    assert not inspector.property("initiator")
+    assert inspector.property("peerName") == "10.0.0.2:47470"  # before authentication
+
+
+def test_only_the_specifications_own_sections_open(
+    backend: FakeBackend, app: AppController, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    opened_urls: list[str] = []
+    monkeypatch.setattr(
+        "qrp2p.ui.viewmodels.inspector.QDesktopServices.openUrl",
+        lambda url: opened_urls.append(url.toString()),
+    )
+    inspector = opened(backend, app, scripted().i.items)
+    inspector.openSpec("7.4")
+    inspector.openSpec("https://example.org/")
+    inspector.openSpec("")
+    assert opened_urls == [SPEC_URL + "#74-key-schedule"]
+    assert inspector.cite("Appendix B") == "DESIGN Appendix B"
+    assert inspector.cite("8.4") == "DESIGN §8.4"
+    assert inspector.cite("99") == ""
+
+
+def test_frames_carry_their_time_and_record_kind(backend: FakeBackend, app: AppController) -> None:
+    items = scripted().i.items
+    record = next(
+        n
+        for n, i in enumerate(items)
+        if isinstance(i.event, FrameTraced) and i.event.frame.type is FrameType.RECORD
+    )
+    inspector = opened(backend, app, items[: record + 1])  # its counters arrive in the next batch
+    assert inspector._frames.rows()[-1].name == "Record"
+    backend.updates(TraceAppended(7, tuple(items[record + 1 :])))
+    frames = inspector._frames.rows()
+    origin = items[0].time
+    assert frames[0].time == f"+{items[frames[0].ordinal].time - origin:.3f} s"
+    assert len({f.time for f in frames}) > len(frames) // 2  # each at its own time, not all +0
+    assert frames[[f.ordinal for f in frames].index(items[record].ordinal)].name == "Record · chat"
+    assert {f.name for f in frames} >= {"Hello", "Reply", "Record · key_update", "Record · close"}
+
+
+def test_the_detail_follows_changes_to_the_selected_row(
+    backend: FakeBackend, app: AppController
+) -> None:
+    inspector = opened(backend, app, scripted().i.items)
+    announced: list[None] = []
+    inspector.selectionChanged.connect(lambda: announced.append(None))
+    group = next(r for r in inspector._timeline_model.rows() if r.kind == "group")
+    inspector.selectRow(group.key)
+    announced.clear()
+    inspector.toggleGroup(group.key)  # the selected row now reads "expanded"
+    assert announced
+    member = next(r for r in inspector._timeline_model.rows() if r.member)
+    inspector.selectRow(member.key)
+    inspector.toggleGroup(group.key)  # folding hides the selected record: its group is selected
+    assert inspector.property("selectedRow") == group.key
+
+
+def test_a_rebuilt_key_node_announces_itself(backend: FakeBackend, app: AppController) -> None:
+    items = scripted().i.items
+    reply = next(
+        n
+        for n, i in enumerate(items)
+        if isinstance(i.event, FrameTraced) and i.event.frame.type is FrameType.REPLY
+    )
+    inspector = opened(backend, app, items[:reply])
+    inspector.setView("keys")
+    inspector.selectNode("dk")  # the initiator's key pair: nothing uses it yet
+    assert next(n for n in inspector._nodes.rows() if n.key == "dk").outputs == ""
+    announced: list[None] = []
+    inspector.selectionChanged.connect(lambda: announced.append(None))
+    backend.updates(TraceAppended(7, tuple(items[reply:])))
+    assert announced  # the detail shown for dk is refreshed
+    dk = next(n for n in inspector._nodes.rows() if n.key == "dk")
+    assert "ssM" in dk.outputs
+    assert dk.released == "used"

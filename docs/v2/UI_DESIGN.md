@@ -660,30 +660,33 @@ Do not invent missing signature-check events, CPU timings or key lifecycle event
 Add public trace instrumentation in the relevant phase when needed, with tests and the same
 visibility rules. Public metadata may require careful review if it leaks message correlation.
 
-### 11.2 Organization (as built in M3)
+### 11.2 Organization (as built in M3 and M4)
 
 ```text
 ui/
   app.py                    # Qt startup, fonts, icon provider, the `qrp2p` entry point
   host.py                   # the services thread: owns the Node, generations, batching (no Qt)
   ops.py                    # the requests view models may make (each runs on the services thread)
+  tap.py                    # the Inspector's trace tap: snapshot + subscription in one loop step
   snapshots.py              # immutable values that cross the bridge, built on the services thread
   bridge.py                 # Qt side: queued deliveries, generation filter, per-period Scope
   text.py, icons.py         # display-safe peer text; Lucide icons tinted per theme
+  inspect/                  # pure evidence builders (no Qt): timeline, fields, key graph, facts
   viewmodels/
     application.py          # which screen shows, unlock/lock, appearance, password change
     workspace.py            # one unlocked period: contacts, strip, Nearby, selection, routing
     conversation.py         # history (race-free load), drafts, delivery, files, contact actions
     prompts.py              # contact/glass-box requests and key mismatches, with real outcomes
     settings.py, rows.py    # the Settings screen; pure row builders for every list
+    inspector.py, hexmodel.py  # the Inspector's shared selection; hex rows built on demand
     listmodel.py            # list models updated by minimal diffs
-  qml/Main.qml, qml/Qrp2p/{Theme,Components,Screens}/
+  qml/Main.qml, qml/Qrp2p/{Theme,Components,Screens,Inspector}/
   resources/                # Inter (OFL), Lucide (ISC), app icon
 ```
 
 Only `host.py` and `ops.py` touch the node, and only on the services thread; QML never reaches
-a live object. Read node state and subscribe to `Node.trace` on the services thread when the
-Inspector arrives (M4); never let QML call core machines or traverse mutable live engine state.
+a live object. The Inspector reads `Node.trace` through `tap.py` on the services thread; never let
+QML call core machines or traverse mutable live engine state.
 Copy safe event batches across the boundary through queued signals. Qt list/table models mutate
 on the Qt thread. A trace callback must be bounded and fast; it cannot synchronously render, hash,
 format huge hex strings or block the service loop.

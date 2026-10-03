@@ -95,13 +95,28 @@ class Scripted:
     link: Link
 
 
-def scripted(*, exposed: bool = False, rekey: bool = True, close: bool = True) -> Scripted:
-    """Handshake, chats both ways, a KeyUpdate each way, a PQ rekey and a close."""
+def scripted(
+    *,
+    exposed: bool = False,
+    rekey: bool = True,
+    close: bool = True,
+    secrets: list[Revealed] | None = None,
+) -> Scripted:
+    """Handshake, chats both ways, a KeyUpdate each way, a PQ rekey and a close.
+
+    ``secrets`` collects every value the initiator's provider handled, beside the trace: for a
+    normal session they are what a canary must not find (the KEMs draw their own randomness, so
+    another run of the script derives other values).
+    """
     i_side, r_side = Side(), Side()
 
     def provider(label: str, side: Side) -> PlainProvider | RevealingProvider:
         plain = PlainProvider(DeterministicRandom(label))
-        return RevealingProvider(plain, side.revealed.append) if exposed else plain
+        if exposed:
+            return RevealingProvider(plain, side.revealed.append)
+        if secrets is not None and label == "i":
+            return RevealingProvider(plain, secrets.append)  # never reaches the trace
+        return plain
 
     run = handshake(
         initiator(gb=exposed, prov=provider("i", i_side)),
@@ -141,3 +156,14 @@ def scripted(*, exposed: bool = False, rekey: bool = True, close: bool = True) -
         net.run()
         flush()
     return Scripted(i_side, r_side, net)
+
+
+def secret_hexes(values: list[Revealed], *, minimum: int = 8) -> set[str]:
+    """Every value as lowercase hex: secrets, record nonces and plaintexts of ``minimum`` bytes+."""
+    found: set[bytes] = set()
+    for value in values:
+        if isinstance(value, AeadRevealed):
+            found |= {value.nonce.reveal(), value.plaintext.reveal()}
+        else:
+            found.add(value.reveal())
+    return {v.hex() for v in found if len(v) >= minimum}

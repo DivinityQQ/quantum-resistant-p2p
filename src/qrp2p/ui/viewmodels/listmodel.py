@@ -139,6 +139,15 @@ class RowModel[R](QAbstractListModel):
             self._rows.extend(rows)
             self.endInsertRows()
 
+    def update(self, row: R) -> None:
+        """Replace the row with ``row``'s key, if there is one (only its changed roles notify)."""
+        key = self._key(row)
+        i = next(
+            (j for j in range(len(self._rows) - 1, -1, -1) if self._key(self._rows[j]) == key), -1
+        )
+        if i >= 0:
+            self._replace(i, row)
+
     def reset(self, rows: Sequence[R]) -> None:
         """Show exactly ``rows``, rebuilding every delegate (for a new source, not an update)."""
         self.beginResetModel()

@@ -1,0 +1,15 @@
+module Qrp2p.Inspector
+EventDetail 1.0 EventDetail.qml
+FieldTable 1.0 FieldTable.qml
+FrameDetail 1.0 FrameDetail.qml
+HexView 1.0 HexView.qml
+InspectorPane 1.0 InspectorPane.qml
+InspectorTabs 1.0 InspectorTabs.qml
+KeyGraph 1.0 KeyGraph.qml
+KeysView 1.0 KeysView.qml
+MessagesView 1.0 MessagesView.qml
+NodeDetail 1.0 NodeDetail.qml
+SecurityView 1.0 SecurityView.qml
+SessionPicker 1.0 SessionPicker.qml
+TimelineDelegate 1.0 TimelineDelegate.qml
+TimelineView 1.0 TimelineView.qml

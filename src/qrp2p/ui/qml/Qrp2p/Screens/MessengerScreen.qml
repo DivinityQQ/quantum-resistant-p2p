@@ -2,9 +2,11 @@ import QtQuick
 import QtQuick.Layouts
 import Qrp2p.Theme
 import Qrp2p.Components
+import Qrp2p.Inspector
 
-// The unlocked app: header, contact strip and the selected conversation (UI_DESIGN §3). With
-// the development preview, the Inspector layout can open beside or instead of the chat (§3.3).
+// The unlocked app: header, contact strip and the selected conversation (UI_DESIGN §3). The
+// Inspector opens beside the chat on wide windows, instead of it on narrow ones, and can be
+// expanded over it (§3.3); the conversation and its draft stay as they were meanwhile.
 Item {
     id: screen
 
@@ -14,8 +16,18 @@ Item {
     signal attention()
 
     property bool inspectorOpen: false
+    property bool inspectorExpanded: false
     objectName: "messenger"
     readonly property bool split: width >= 1000
+
+    onInspectorOpenChanged: {
+        workspace.inspector.setOpen(inspectorOpen)
+        if (!inspectorOpen) {
+            inspectorExpanded = false
+            if (conversationLoader.item && conversationLoader.item.focusComposer)
+                conversationLoader.item.focusComposer()
+        }
+    }
 
     opacity: 0
     Component.onCompleted: opacity = 1
@@ -38,7 +50,6 @@ Item {
             Layout.fillWidth: true
             app: screen.app
             workspace: screen.workspace
-            inspectorAvailable: screen.app.devPreview
             inspectorOpen: screen.inspectorOpen
             onOpenChooser: chooser.openContacts()
             onOpenConnect: connectDialog.open()
@@ -67,7 +78,7 @@ Item {
                 anchors.bottom: parent.bottom
                 anchors.left: parent.left
                 width: !screen.inspectorOpen ? parent.width
-                    : screen.split ? Math.max(320, Math.round(parent.width * 0.34)) : 0
+                    : screen.split && !screen.inspectorExpanded ? Math.max(320, Math.round(parent.width * 0.34)) : 0
                 visible: width > 0
                 clip: true
 
@@ -90,15 +101,23 @@ Item {
                 }
             }
             Loader {
+                id: inspectorLoader
                 anchors.top: parent.top
                 anchors.bottom: parent.bottom
                 anchors.right: parent.right
                 anchors.left: chatPane.right
                 active: screen.inspectorOpen
                 visible: active
-                sourceComponent: InspectorPreview {
+                clip: true  // while the split opens, the pane is narrower than its contents
+                // Opening moves focus to the active tab (UI_DESIGN §5).
+                onLoaded: Qt.callLater(() => { if (item) item.focusTabs() })
+                sourceComponent: InspectorPane {
+                    inspector: screen.workspace.inspector
                     split: screen.split
+                    expanded: screen.inspectorExpanded
+                    canExpand: screen.split
                     onBackToChat: screen.inspectorOpen = false
+                    onToggleExpanded: screen.inspectorExpanded = !screen.inspectorExpanded
                 }
             }
         }
@@ -173,7 +192,6 @@ Item {
     ShortcutsDialog {
         id: shortcutsDialog
         objectName: "shortcutsDialog"
-        devPreview: screen.app.devPreview
     }
 
     // Notices name contacts, so they live and die with the unlocked workspace: a lock takes
@@ -197,7 +215,6 @@ Item {
     }
     Shortcut {
         sequence: "Ctrl+I"
-        enabled: screen.app.devPreview
         onActivated: screen.inspectorOpen = !screen.inspectorOpen
     }
 }

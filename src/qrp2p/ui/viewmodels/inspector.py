@@ -21,8 +21,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Final
 
-from PySide6.QtCore import QObject, Signal, Slot
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtCore import QObject, QUrl, Signal, Slot
+from PySide6.QtGui import QDesktopServices, QGuiApplication
 
 from qrp2p.core.trace import (
     Direction,
@@ -44,7 +44,7 @@ from qrp2p.ui.inspect.fields import FieldRow
 from qrp2p.ui.inspect.keygraph import KeyGraph
 from qrp2p.ui.inspect.model import RecordOpened, Revealed, SessionFacts, TraceItem
 from qrp2p.ui.inspect.security import Fact
-from qrp2p.ui.inspect.spec import cite, link
+from qrp2p.ui.inspect.spec import SECTIONS, cite, link
 from qrp2p.ui.inspect.timeline import Timeline, TimelineRow
 from qrp2p.ui.snapshots import Reply, Update
 from qrp2p.ui.tap import InspectSnap, SessionDescribed, TraceAppended, TraceOverflow
@@ -117,6 +117,7 @@ class NodeRow:
     """The inputs' names, comma-separated (for the dependency list)."""
     outputs: str
     section: str
+    """The DESIGN section that defines it (``openSpec`` opens it)."""
     cite: str
     size: int
     state: str
@@ -149,6 +150,7 @@ class FactRow:
     evidence: str
     assumption: str
     ordinal: int
+    section: str
     cite: str
 
 
@@ -212,7 +214,7 @@ def _graph_rows(graph: KeyGraph) -> tuple[list[NodeRow], list[EdgeRow]]:
             operation=n.operation,
             inputs=", ".join(n.inputs),
             outputs=", ".join(outputs.get(n.key, ())),
-            section=link(n.section),
+            section=n.section,
             cite=cite(n.section),
             size=n.size,
             state=n.state,
@@ -237,6 +239,7 @@ def _fact_row(fact: Fact) -> FactRow:
         evidence=fact.evidence,
         assumption=fact.assumption,
         ordinal=fact.ordinal,
+        section=fact.section,
         cite=cite(fact.section),
     )
 
@@ -273,6 +276,11 @@ class Inspector(ViewModel):
     isOpen = readonly(bool, "_open", openChanged)  # noqa: N815
     sessionId = readonly(int, "_session_id", sessionChanged)  # noqa: N815
     title = readonly(str, "_title", sessionChanged)
+    localName = readonly(str, "_local_name", sessionChanged)  # noqa: N815
+    peerName = readonly(str, "_peer_name", sessionChanged)  # noqa: N815
+    """The peer as the timeline's lane names it: its contact name, short ID or address."""
+    initiator = readonly(bool, "_initiator", sessionChanged)
+    """The local side opened the connection (it is the left, initiator, lane)."""
     subtitle = readonly(str, "_subtitle", sessionChanged)
     exposure = readonly(str, "_exposure", sessionChanged)
     """``public``, ``glass_box`` or ``lab`` (empty with no session)."""
@@ -309,6 +317,9 @@ class Inspector(ViewModel):
         self._session_id = -1
         self._facts_now: SessionFacts | None = None
         self._title = ""
+        self._local_name = ""
+        self._peer_name = ""
+        self._initiator = True
         self._subtitle = ""
         self._exposure = ""
         self._loading = False
@@ -416,6 +427,9 @@ class Inspector(ViewModel):
         else:
             self._expanded.add(key)
         self._sync_timeline()
+        if self._timeline_model.indexOf(self._selected_row) < 0:  # a record of the folded group
+            self._selected_row = key
+            self.selectionChanged.emit()
 
     @Slot(int)
     def selectFrame(self, ordinal: int) -> None:  # noqa: N802
@@ -482,6 +496,17 @@ class Inspector(ViewModel):
         row = next((r for r in self._nodes.rows() if r.key == key), None)
         if row is not None and row.value:
             _copy(row.value)
+
+    @Slot(str, result=str)
+    def cite(self, section: str) -> str:
+        """How a section is cited (``DESIGN §7.2``); empty for an unknown one."""
+        return cite(section) if section in SECTIONS else ""
+
+    @Slot(str)
+    def openSpec(self, section: str) -> None:  # noqa: N802
+        """Open a DESIGN section in the browser: only the specification's own URL, by section."""
+        if section in SECTIONS:
+            QDesktopServices.openUrl(QUrl(link(section)))
 
     # -- updates -----------------------------------------------------------------------------------
 
@@ -575,6 +600,9 @@ class Inspector(ViewModel):
         self._known[facts.session_id] = facts
         row = _session_row(facts)
         self._title = row.title
+        self._local_name = facts.local_name
+        self._peer_name = facts.peer_name or facts.address or "Peer"
+        self._initiator = facts.initiator
         self._subtitle = row.subtitle
         self._exposure = "lab" if facts.lab else ("glass_box" if facts.exposed else "public")
         self._facts_dirty = self._graph_dirty = True
@@ -595,6 +623,7 @@ class Inspector(ViewModel):
         self._facts.clear()
         self._clear_selection()
         self._title = self._subtitle = self._exposure = self._error = ""
+        self._local_name = self._peer_name = ""
         self._loading = False
         self._following = True
         self.sessionChanged.emit()
@@ -623,28 +652,30 @@ class Inspector(ViewModel):
         if not snapshot and len(self._items) + len(fresh) > ITEM_CAP:
             self._inspect(self._session_id, reset=True)  # what the bus retains, afresh
             return
-        frames: list[FrameRow] = []
+        self._timeline.extend(fresh)  # first: it fixes the clock origin the frame rows use
+        frames: dict[int, FrameRow] = {}
         for item in fresh:
             self._items.append(item)
             self._by_ordinal[item.ordinal] = item
             self._index(item, frames)
         self._last = fresh[-1].ordinal
-        self._timeline.extend(fresh)
         self._sync_timeline()
-        self._frames.append(frames)
+        self._frames.append(list(frames.values()))
         self._refresh_derived()
 
-    def _index(self, item: TraceItem, frames: list[FrameRow]) -> None:
+    def _index(self, item: TraceItem, frames: dict[int, FrameRow]) -> None:
+        """Index one event; ``frames`` collects this batch's new frame rows by ordinal."""
         event = item.event
         match event:
             case FrameTraced():
                 if event.frame.type is FrameType.RECORD:
                     self._pending_frames[event.direction] = item.ordinal
-                frames.append(self._frame_row(item, event))
+                frames[item.ordinal] = self._frame_row(item, event)
             case RecordTraced():
                 frame = self._pending_frames.pop(event.direction, None)
                 if frame is not None:
                     self._record_of[frame] = event
+                    self._name_record(frame, event, frames)
                 if event.direction is Direction.IN and self._first_in_record is None:
                     self._first_in_record = item
                     self._facts_dirty = True
@@ -659,6 +690,17 @@ class Inspector(ViewModel):
             case _:
                 pass
 
+    def _name_record(self, frame: int, record: RecordTraced, frames: dict[int, FrameRow]) -> None:
+        """A record frame is named by its kind once its counters arrive (just after it)."""
+        row = frames.get(frame)
+        if row is not None:
+            frames[frame] = replace(row, name=f"Record · {record.kind}")
+        else:  # the frame came in an earlier batch
+            match = self._frames.indexOf(str(frame))
+            if match >= 0:
+                old = self._frames.rows()[match]
+                self._frames.update(replace(old, name=f"Record · {record.kind}"))
+
     def _frame_row(self, item: TraceItem, event: FrameTraced) -> FrameRow:
         origin = self._timeline.origin if self._timeline.origin is not None else item.time
         return FrameRow(
@@ -671,8 +713,20 @@ class Inspector(ViewModel):
         )
 
     def _sync_timeline(self) -> None:
+        """Update the rows; the selected row's detail follows when its row changed."""
+        old = self._row(self._selected_row)
         rows = self._timeline.rows(self._expanded)
         self._timeline_model.sync([_event_row(r, self._expanded) for r in rows])
+        if old is not None and self._row(self._selected_row) != old:
+            self.selectionChanged.emit()
+
+    def _node(self, key: str) -> NodeRow | None:
+        index = self._nodes.indexOf(key) if key else -1
+        return self._nodes.rows()[index] if index >= 0 else None
+
+    def _row(self, key: str) -> EventRow | None:
+        index = self._timeline_model.indexOf(key) if key else -1
+        return self._timeline_model.rows()[index] if index >= 0 else None
 
     def _refresh_derived(self) -> None:
         facts = self._facts_now
@@ -682,10 +736,13 @@ class Inspector(ViewModel):
             self._graph_dirty = False
             graph = keygraph.build(self._schedule, facts)
             nodes, edges = _graph_rows(graph)
+            old = self._node(self._selected_node)
             self._nodes.sync(nodes)
             self._edges.sync(edges)
             self._key_columns, self._key_rows = graph.columns, graph.rows
             self.graphChanged.emit()
+            if old is not None and self._node(self._selected_node) != old:
+                self.selectionChanged.emit()
         if self._view == "security" and self._facts_dirty:
             self._facts_dirty = False
             control = list(self._control)

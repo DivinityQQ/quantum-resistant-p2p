@@ -1,7 +1,7 @@
 """``qrp2p``: the desktop app (DESIGN §12, §14; UI_DESIGN §11).
 
 ```text
-qrp2p [--data-dir DIR] [--port N] [--listen HOST] [--no-mdns] [--verbose] [--dev-preview]
+qrp2p [--data-dir DIR] [--port N] [--listen HOST] [--no-mdns] [--verbose]
 ```
 
 The Qt main thread runs the interface; the node runs on its own thread and event loop
@@ -115,9 +115,6 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--no-mdns", action="store_true", help="no mDNS announce or discovery")
     parser.add_argument("-v", "--verbose", action="store_true", help="log to standard error")
     parser.add_argument(
-        "--dev-preview", action="store_true", help="show development previews (Inspector layout)"
-    )
-    parser.add_argument(
         "--smoke-test",
         type=Path,
         metavar="PNG",
@@ -145,8 +142,9 @@ class SmokeTest:
 
     It renders the first screen to the given PNG. In a data directory that did not exist before,
     it then creates a throwaway vault (exercising Argon2id, the identity keys, SQLite and the
-    listener) and renders the messenger beside it as ``<name>-messenger.png``. It never touches
-    an existing vault. Last, it opens Qt's own file and folder dialogs.
+    listener) and renders the messenger beside it as ``<name>-messenger.png`` and the Inspector as
+    ``<name>-inspector.png``. It never touches an existing vault. Last, it opens Qt's own file and
+    folder dialogs.
     """
 
     def __init__(
@@ -211,6 +209,20 @@ class SmokeTest:
             self._finish(ok=False)
             return
         window.grabWindow().save(str(self._out.with_name(f"{self._out.stem}-messenger.png")))
+        messenger = window.findChild(QQuickItem, "messenger")
+        if messenger is None:
+            self._finish(ok=False)
+            return
+        messenger.setProperty("inspectorOpen", True)  # noqa: FBT003  # a Qt property
+        QTimer.singleShot(500, self._inspector)
+
+    def _inspector(self) -> None:
+        window = self._window()
+        if window is None or window.findChild(QQuickItem, "inspectorPane") is None:
+            sys.stderr.write("smoke test: the Inspector did not open\n")
+            self._finish(ok=False)
+            return
+        window.grabWindow().save(str(self._out.with_name(f"{self._out.stem}-inspector.png")))
         self._open_dialogs()
 
     def _open_dialogs(self) -> None:
@@ -339,11 +351,7 @@ def main(argv: list[str] | None = None) -> int:
     app.setWindowIcon(QIcon(str(APP_ICON)))
     mono = load_fonts(app)
     bridge = make_bridge(args, data_dir)
-    controller = AppController(
-        bridge,
-        data_dir=str(data_dir),
-        dev_preview=args.dev_preview or os.environ.get("QRP2P_DEV_PREVIEW") == "1",
-    )
+    controller = AppController(bridge, data_dir=str(data_dir))
     engine = create_engine(controller, mono)
     if not engine.rootObjects():
         _log.error("the interface did not load")

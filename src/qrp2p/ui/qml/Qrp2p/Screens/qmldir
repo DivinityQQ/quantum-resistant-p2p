@@ -13,7 +13,6 @@ DevicePopup 1.0 DevicePopup.qml
 EmptyState 1.0 EmptyState.qml
 FileCard 1.0 FileCard.qml
 HeaderBar 1.0 HeaderBar.qml
-InspectorPreview 1.0 InspectorPreview.qml
 MessageDelegate 1.0 MessageDelegate.qml
 MessageList 1.0 MessageList.qml
 MessengerScreen 1.0 MessengerScreen.qml
