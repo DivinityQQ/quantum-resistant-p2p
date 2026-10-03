@@ -47,6 +47,8 @@ class X25519Kem:
     ek_len: int = X25519_LEN
     ct_len: int = X25519_LEN
     ss_len: int = 32
+    ek_parts: tuple[tuple[str, int], ...] = ()
+    ct_parts: tuple[tuple[str, int], ...] = ()
 
     def keygen(self, seed: Secret) -> tuple[Secret, bytes]:
         """Return ``(dk, ek)`` from a 32-byte seed."""

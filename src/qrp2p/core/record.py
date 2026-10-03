@@ -38,7 +38,9 @@ from qrp2p.core.trace import (
     KeysSwitched,
     RecordTraced,
     RekeyStep,
+    ReleaseCause,
     SecretDerived,
+    SecretsReleased,
     SessionClosed,
     dissect,
 )
@@ -103,6 +105,10 @@ class _Direction:
     """Records sealed under this secret (send direction only; triggers KeyUpdate)."""
     since: float = 0.0
 
+    def secrets(self) -> tuple[Secret, ...]:
+        """The traffic secret and its key and IV."""
+        return (self.secret, self.keys.key, self.keys.iv)
+
 
 @dataclass(slots=True)
 class _Rekey:
@@ -117,6 +123,11 @@ class _Rekey:
     recv: Secret | None = None
     send_switched: bool = False
     recv_switched: bool = False
+
+    def held(self) -> tuple[Secret, ...]:
+        """The secrets this rekey references now (the new epoch's retained state excepted)."""
+        pending = (self.dk, self.ss, self.send, self.recv)
+        return tuple(secret for secret in pending if secret is not None)
 
 
 class Channel:
@@ -144,6 +155,7 @@ class Channel:
         self._peer = peer
         self._glass_box = glass_box
         self._state = ChannelState.OPEN
+        self._events: list[ChannelEvent] = []
         self._epoch = epoch.retained()
         self._epoch_started = now
         send, recv = (epoch.ap_i, epoch.ap_r) if is_initiator else (epoch.ap_r, epoch.ap_i)
@@ -155,7 +167,6 @@ class Channel:
         self._key_update_queued = False
         self._rekey: _Rekey | None = None
         self._last_rekey_start = float("-inf")
-        self._events: list[ChannelEvent] = []
 
     # -- public state ---------------------------------------------------------------------------
 
@@ -198,6 +209,8 @@ class Channel:
 
     def _direction(self, secret: Secret, epoch: int, now: float) -> _Direction:
         keys = self._provider.traffic_keys(self._profile, secret)
+        self._trace_secret(keys.key)
+        self._trace_secret(keys.iv)
         return _Direction(secret, keys, epoch=epoch, since=now)
 
     def _emit(self, event: ChannelEvent) -> None:
@@ -206,6 +219,24 @@ class Channel:
     def _take(self) -> list[ChannelEvent]:
         events, self._events = self._events, []
         return events
+
+    def take_traces(self) -> list[Trace]:
+        """Trace events produced outside a call: the traffic keys derived when it was built.
+
+        The handshake that creates the channel reports them in its own event list.
+        """
+        return [event for event in self._take() if isinstance(event, Trace)]
+
+    def _release(self, cause: ReleaseCause, *secrets: Secret) -> None:
+        if secrets:
+            labels = tuple(secret.label for secret in secrets)
+            self._emit(Trace(SecretsReleased(labels, cause)))
+
+    def _drop_rekey(self) -> None:
+        """A rekey ends unfinished (the channel failed or closed): drop what it holds."""
+        rekey, self._rekey = self._rekey, None
+        if rekey is not None:
+            self._release(ReleaseCause.CLOSED, *rekey.held())
 
     def _queue(self, message: Inner) -> None:
         self._emit(Queue(message, Priority.CONTROL))
@@ -223,7 +254,7 @@ class Channel:
         return self._take()
 
     def _fail(self, reason: CloseReason) -> None:
-        self._rekey = None
+        self._drop_rekey()
         self._state = ChannelState.CLOSING
         self._queue(Close(reason=reason))
         self._emit(Trace(SessionClosed(reason, None, by_peer=False)))
@@ -288,6 +319,7 @@ class Channel:
         new = self._direction(secret, direction.epoch, now)
         new.generation = direction.generation + 1
         self._emit(Trace(KeysSwitched(which, new.epoch, new.generation, "key_update")))
+        self._release(ReleaseCause.REPLACED, *direction.secrets())
         return new
 
     def close(self, reason: CloseReason = CloseReason.NORMAL) -> list[ChannelEvent]:
@@ -345,7 +377,7 @@ class Channel:
                 self._switch_recv(now)
             case Close():
                 self._state = ChannelState.CLOSED
-                self._rekey = None
+                self._drop_rekey()
                 self._emit(Trace(SessionClosed(message.reason, None, by_peer=True)))
                 self._emit(Closed(message.reason, by_peer=True))
             case Ping():
@@ -393,7 +425,7 @@ class Channel:
     def _start_rekey(self, now: float) -> None:
         if self._rekey is not None or now - self._last_rekey_start < REKEY_MIN_INTERVAL:
             return
-        dk, ek = self._provider.kem_keygen(self._profile)
+        dk, ek = self._provider.kem_keygen(self._profile, epoch=self._epoch.epoch + 1)
         self._trace_secret(dk)
         self._last_rekey_start = now
         self._rekey = _Rekey(rt=transcript_entry(Tag.REKEY_EK, ek), dk=dk)
@@ -412,9 +444,12 @@ class Channel:
         profile = self._profile
         if len(message.ek) != profile.ek_len:
             raise ProtocolError(CloseReason.SCHEMA_ERROR, "rekey_offer.ek has the wrong size")
-        shared, ct = self._provider.kem_encapsulate(profile, message.ek)
+        shared, ct = self._provider.kem_encapsulate(
+            profile, message.ek, epoch=self._epoch.epoch + 1
+        )
         for secret in (*shared.components, shared.ss):
             self._trace_secret(secret)
+        self._release(ReleaseCause.USED, *shared.components)  # only ss waits for rekey_finish
         rt = transcript_entry(Tag.REKEY_EK, message.ek) + transcript_entry(Tag.REKEY_CT, ct)
         sig = self._provider.sign(profile, self._identity, Role.REKEY_ANSWER, self._signed_hash(rt))
         self._last_rekey_start = now
@@ -429,10 +464,15 @@ class Channel:
         profile = self._profile
         if len(message.ct) != profile.ct_len or len(message.sig) != profile.sig_len:
             raise ProtocolError(CloseReason.SCHEMA_ERROR, "rekey_answer has the wrong size")
-        shared = self._provider.kem_decapsulate(profile, rekey.dk, message.ct)
+        dk = rekey.dk
+        shared = self._provider.kem_decapsulate(
+            profile, dk, message.ct, epoch=self._epoch.epoch + 1
+        )
         rekey.dk = None
+        self._release(ReleaseCause.USED, dk)
         for secret in (*shared.components, shared.ss):
             self._trace_secret(secret)
+        self._release(ReleaseCause.USED, *shared.components)
         rt = rekey.rt + transcript_entry(Tag.REKEY_CT, message.ct)
         self._provider.verify(
             profile, self._peer, Role.REKEY_ANSWER, self._signed_hash(rt), message.sig
@@ -471,14 +511,17 @@ class Channel:
         rekey.ss = None
         for secret in new.all():
             self._trace_secret(secret)
+        self._release(ReleaseCause.USED, ss, new.cs)  # cs_{n+1} is a root, not state
 
     def _switch_send(self, now: float) -> None:
         rekey = self._rekey
         assert rekey is not None and rekey.next is not None  # noqa: S101, PT018  # queued after derivation
         new = rekey.next
         assert rekey.send is not None  # noqa: S101  # consumed once at the switch
+        old = self._send
         self._send = self._direction(rekey.send, new.epoch, now)
         rekey.send = None
+        self._release(ReleaseCause.REPLACED, *old.secrets())
         rekey.send_switched = True
         self._emit(Trace(KeysSwitched(Direction.OUT, new.epoch, 0, "rekey")))
         self._finish_rekey_if_done(now)
@@ -489,8 +532,10 @@ class Channel:
             raise ProtocolError(CloseReason.UNEXPECTED_MESSAGE, "rekey_switch not expected")
         new = rekey.next
         assert rekey.recv is not None  # noqa: S101  # consumed once at the switch
+        old = self._recv
         self._recv = self._direction(rekey.recv, new.epoch, now)
         rekey.recv = None
+        self._release(ReleaseCause.REPLACED, *old.secrets())
         rekey.recv_switched = True
         self._emit(Trace(KeysSwitched(Direction.IN, new.epoch, 0, "rekey")))
         self._finish_rekey_if_done(now)
@@ -500,7 +545,9 @@ class Channel:
         assert rekey is not None and rekey.next is not None  # noqa: S101, PT018
         if rekey.send_switched and rekey.recv_switched:
             # Erase the old rekey salt and exporter: only the new epoch remains.
+            old = self._epoch
             self._epoch = rekey.next
+            self._release(ReleaseCause.EPOCH_DONE, old.rekey_salt, old.exporter)
             self._epoch_started = now
             self._rekey = None
             self._emit(Trace(RekeyStep("done", self._epoch.epoch)))

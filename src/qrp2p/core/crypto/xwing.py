@@ -123,6 +123,14 @@ class XWing:
     ek_len: int = EK_LEN
     ct_len: int = CT_LEN
     ss_len: int = SS_LEN
+    ek_parts: tuple[tuple[str, int], ...] = (
+        ("pkM", _MLKEM_EK_LEN),
+        ("pkX", EK_LEN - _MLKEM_EK_LEN),
+    )
+    ct_parts: tuple[tuple[str, int], ...] = (
+        ("ctM", _MLKEM_CT_LEN),
+        ("ctX", CT_LEN - _MLKEM_CT_LEN),
+    )
 
     def keygen(self, seed: Secret) -> tuple[Secret, bytes]:
         """See :func:`keygen`."""

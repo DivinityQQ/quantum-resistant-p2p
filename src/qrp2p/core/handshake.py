@@ -33,7 +33,9 @@ from qrp2p.core.schedule import HandshakeSecrets, first_epoch, handshake_secrets
 from qrp2p.core.trace import (
     Direction,
     FrameTraced,
+    ReleaseCause,
     SecretDerived,
+    SecretsReleased,
     SessionClosed,
     StateChanged,
     TranscriptHashed,
@@ -174,12 +176,19 @@ class _Machine:
         self._emit(Trace(FrameTraced(Direction.OUT, frame, dissect(frame, self._profile))))
         self._emit(Send(frame))
 
-    def _trace_in(self, frame: Frame) -> None:
-        self._emit(Trace(FrameTraced(Direction.IN, frame, dissect(frame, self._profile))))
+    def _trace_in(self, frame: Frame, profile: Profile | None = None) -> None:
+        dissected = dissect(frame, profile or self._profile)
+        self._emit(Trace(FrameTraced(Direction.IN, frame, dissected)))
 
     def _trace_secrets(self, *secrets: Secret) -> None:
         for secret in secrets:
             self._emit(Trace(SecretDerived(secret.label, len(secret))))
+
+    def _release(self, cause: ReleaseCause, *secrets: Secret) -> None:
+        """Note that the engine dropped its references to ``secrets`` (DESIGN §7.4 "erase")."""
+        if secrets:
+            labels = tuple(secret.label for secret in secrets)
+            self._emit(Trace(SecretsReleased(labels, cause)))
 
     def _hash(self, name: str) -> bytes:
         assert self._transcript is not None  # noqa: S101  # set before any hashing
@@ -188,14 +197,20 @@ class _Machine:
         return digest
 
     def _close(self, reason: CloseReason, admit_reason: AdmitReason | None = None) -> None:
-        self._drop_secrets()
+        self._drop_secrets(ReleaseCause.CLOSED)
         self._enter(State.CLOSED)
         self._emit(Trace(SessionClosed(reason, admit_reason, by_peer=False)))
         self._emit(Closed(reason, admit_reason))
 
-    def _drop_secrets(self) -> None:
+    def _held(self) -> tuple[Secret, ...]:
+        """The secrets the machine references now."""
+        return self._secrets.all() if self._secrets is not None else ()
+
+    def _drop_secrets(self, cause: ReleaseCause) -> None:
         """Erase: drop every reference to handshake secrets (DESIGN §3.5, §7.4)."""
+        held = self._held()
         self._secrets = None
+        self._release(cause, *held)
 
     def _require_not_established(self) -> None:
         if self._state is State.ESTABLISHED:
@@ -247,7 +262,9 @@ class _Machine:
             glass_box=glass_box,
             now=now,
         )
-        self._drop_secrets()
+        self._events.extend(channel.take_traces())  # its traffic keys, derived just now
+        self._release(ReleaseCause.USED, epoch.cs)  # cs_0 is a root, not state (DESIGN §7.4)
+        self._drop_secrets(ReleaseCause.HANDSHAKE_DONE)
         self._enter(State.ESTABLISHED)
         self._emit(Established(channel, peer, profile, glass_box))
 
@@ -347,10 +364,12 @@ class Initiator(_Machine):
         reply = Reply.decode(frame.body, profile)
         shared = provider.kem_decapsulate(profile, dk, reply.ct)
         self._dk = None  # erase the ephemeral key: it has done its only job
+        self._release(ReleaseCause.USED, dk)
         transcript.add(Tag.REPLY, reply.transcript_value)
         secrets = handshake_secrets(provider, profile, shared.ss, self._hash("th_hello"))
         self._secrets = secrets
         self._trace_secrets(*shared.components, shared.ss, *secrets.all())
+        self._release(ReleaseCause.USED, *shared.components, shared.ss)
 
         plaintext = provider.unseal(profile, secrets.keys_r, 0, frame.header, reply.sealed)
         inner = SignedInner.decode(plaintext, profile)
@@ -401,8 +420,11 @@ class Initiator(_Machine):
             return
         self._establish(self._peer, th_final, glass_box=body.glass_box, is_initiator=True, now=now)
 
-    def _drop_secrets(self) -> None:
-        super()._drop_secrets()
+    def _held(self) -> tuple[Secret, ...]:
+        return (*super()._held(), *((self._dk,) if self._dk is not None else ()))
+
+    def _drop_secrets(self, cause: ReleaseCause) -> None:
+        super()._drop_secrets(cause)
         self._dk = None
 
 
@@ -449,18 +471,24 @@ class Responder(_Machine):
     def _receive(self, frame: Frame, now: float) -> None:
         if self._check_deadline(now):
             return
-        self._trace_in(frame)
         match (self._state, frame.type):
             case (State.WAIT_HELLO, FrameType.HELLO):
                 self._on_hello(frame)
             case (State.WAIT_CONFIRM, FrameType.CONFIRM):
+                self._trace_in(frame)
                 self._on_confirm(frame, now)
             case _:
+                self._trace_in(frame)
                 raise ProtocolError(CloseReason.UNEXPECTED_MESSAGE, "frame not expected now")
 
     def _on_hello(self, frame: Frame) -> None:
-        profile_id, gb_request = hello_prefix(frame.body)
+        try:
+            profile_id, gb_request = hello_prefix(frame.body)
+        except ProtocolError:
+            self._trace_in(frame)
+            raise
         profile = self._served.get(profile_id)
+        self._trace_in(frame, profile)  # with the offered profile, so the trace splits ek_I
         if profile is None:
             supported = profile_bitmask(self._served.values())
             self._send(Frame(FrameType.PROFILE_UNSUPPORTED, bytes([supported])))
@@ -479,6 +507,7 @@ class Responder(_Machine):
         secrets = handshake_secrets(provider, profile, shared.ss, self._hash("th_hello"))
         self._secrets = secrets
         self._trace_secrets(*shared.components, shared.ss, *secrets.all())
+        self._release(ReleaseCause.USED, *shared.components, shared.ss)
 
         own = self._identity.bundle.encode()
         transcript.add(Tag.ID_R, own)

@@ -71,6 +71,8 @@ class MlKem1024:
     ek_len: int = EK_LEN
     ct_len: int = CT_LEN
     ss_len: int = SS_LEN
+    ek_parts: tuple[tuple[str, int], ...] = ()
+    ct_parts: tuple[tuple[str, int], ...] = ()
 
     def keygen(self, seed: Secret) -> tuple[Secret, bytes]:
         """See :func:`keygen`."""

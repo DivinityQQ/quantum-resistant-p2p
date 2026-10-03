@@ -60,7 +60,13 @@ class Replay(PlainProvider):
         assert len(value) == n
         return value
 
-    def kem_encapsulate(self, profile: Profile, ek: bytes) -> tuple[SharedSecret, bytes]:  # noqa: ARG002
+    def kem_encapsulate(
+        self,
+        profile: Profile,  # noqa: ARG002
+        ek: bytes,
+        *,
+        epoch: int = 0,  # noqa: ARG002
+    ) -> tuple[SharedSecret, bytes]:
         expected_ek, shared, ct = next(self._encapsulations)
         assert ek == expected_ek, "encapsulation to a different key than the reference's"
         return shared, ct

@@ -56,6 +56,16 @@ class KemScheme(Protocol):
         """Shared-secret length."""
         ...
 
+    @property
+    def ek_parts(self) -> tuple[tuple[str, int], ...]:
+        """A hybrid's encapsulation key as its components' names and sizes, in order; else ``()``."""
+        ...
+
+    @property
+    def ct_parts(self) -> tuple[tuple[str, int], ...]:
+        """A hybrid's ciphertext as its components' names and sizes, in order; else ``()``."""
+        ...
+
     def keygen(self, seed: Secret) -> tuple[Secret, bytes]:
         """Derive ``(dk, ek)`` deterministically from ``seed``."""
         ...

@@ -5,10 +5,18 @@ import os
 
 import pytest
 
+from qrp2p.core.crypto import aead
 from qrp2p.core.crypto.hybrid_sig import Role
 from qrp2p.core.crypto.kdf import SHA256
 from qrp2p.core.crypto.profiles import HYBRID_1, PQ_CNSA_1, REAL_PROFILES, Profile
-from qrp2p.core.crypto.provider import CryptoProvider, PlainProvider, RevealingProvider
+from qrp2p.core.crypto.provider import (
+    AeadRevealed,
+    CryptoProvider,
+    PlainProvider,
+    Revealed,
+    RevealingProvider,
+    epoch_name,
+)
 from qrp2p.core.crypto.secret import Secret
 from qrp2p.core.errors import CloseReason, ProtocolError
 from tests.support import DeterministicRandom, identity_from_label
@@ -85,16 +93,61 @@ def test_plain_provider_has_no_way_to_emit() -> None:
 
 @pytest.mark.parametrize("profile", REAL_PROFILES, ids=lambda p: p.name)
 def test_revealing_provider_emits_every_derived_secret(profile: Profile) -> None:
-    revealed: list[Secret] = []
+    revealed: list[Revealed] = []
     run_exchange(RevealingProvider(PlainProvider(os.urandom), revealed.append), profile)
-    labels = [s.label for s in revealed]
+    labels = [s.label for s in revealed if isinstance(s, Secret)]
     hybrid = ["ssM", "ssX"] if profile is HYBRID_1 else []
-    kem = [labels[0], *hybrid, "ss", *hybrid, "ss"]  # dk, then encapsulate and decapsulate
+    kem = ["dk", *hybrid, "ss", *hybrid, "ss"]  # dk, then encapsulate and decapsulate
     assert labels == [*kem, "hs", "hs_R", "fk_R", "hs_R.key", "hs_R.iv"]
 
 
+def test_revealing_provider_reveals_each_record_nonce_and_plaintext() -> None:
+    revealed: list[Revealed] = []
+    provider = RevealingProvider(PlainProvider(os.urandom), revealed.append)
+    secret = provider.extract(HYBRID_1, bytes(32), bytes(32), name="ap_I[0]")
+    keys = provider.traffic_keys(HYBRID_1, secret)
+    sealed = provider.seal(HYBRID_1, keys, 7, b"hdr", b"inner")
+    provider.unseal(HYBRID_1, keys, 7, b"hdr", sealed)
+    with pytest.raises(ProtocolError):  # a forged record reveals nothing
+        provider.unseal(HYBRID_1, keys, 8, b"hdr", sealed)
+    records = [r for r in revealed if isinstance(r, AeadRevealed)]
+    assert [(r.key, r.seq, r.opened) for r in records] == [
+        ("ap_I[0].key", 7, False),
+        ("ap_I[0].key", 7, True),
+    ]
+    nonce = aead.nonce(keys.iv.reveal(), 7)
+    assert all(r.nonce.reveal() == nonce and r.plaintext.reveal() == b"inner" for r in records)
+    assert all(r.nonce.label == "ap_I[0].key.nonce" for r in records)
+
+
+@pytest.mark.parametrize("profile", REAL_PROFILES, ids=lambda p: p.name)
+def test_kem_outputs_are_named_by_epoch(profile: Profile) -> None:
+    """Labels are unique per session: a rekey's KEM outputs carry their epoch."""
+    provider = PlainProvider(os.urandom)
+    dk, ek = provider.kem_keygen(profile, epoch=2)
+    shared, ct = provider.kem_encapsulate(profile, ek, epoch=2)
+    opened = provider.kem_decapsulate(profile, dk, ct, epoch=2)
+    hybrid = ["ssM[2]", "ssX[2]"] if profile is HYBRID_1 else []
+    assert dk.label == "dk[2]"
+    for result in (shared, opened):
+        assert [result.ss.label, *(c.label for c in result.components)] == ["ss[2]", *hybrid]
+    assert opened == shared
+    assert (epoch_name("ss", 0), epoch_name("ss", 1)) == ("ss", "ss[1]")
+
+
+def test_revealing_provider_names_kem_outputs_by_epoch() -> None:
+    revealed: list[Revealed] = []
+    provider = RevealingProvider(PlainProvider(os.urandom), revealed.append)
+    dk, ek = provider.kem_keygen(HYBRID_1, epoch=1)
+    shared, ct = provider.kem_encapsulate(HYBRID_1, ek, epoch=1)
+    opened = provider.kem_decapsulate(HYBRID_1, dk, ct, epoch=1)
+    assert [dk.label, shared.ss.label, opened.ss.label] == ["dk[1]", "ss[1]", "ss[1]"]
+    emitted = [s.label for s in revealed if isinstance(s, Secret)]
+    assert emitted == ["dk[1]", *(["ssM[1]", "ssX[1]", "ss[1]"] * 2)]
+
+
 def test_revealing_provider_emits_nothing_for_public_operations() -> None:
-    revealed: list[Secret] = []
+    revealed: list[Revealed] = []
     provider = RevealingProvider(PlainProvider(os.urandom), revealed.append)
     th = bytes(32)
     provider.random(32)
