@@ -261,7 +261,7 @@ def test_vault_json_rejects_unknown_fields() -> None:
 def test_files_are_private(tmp_path: Path) -> None:
     vault = make_vault(tmp_path)
     assert vault.directory.stat().st_mode & 0o777 == 0o700
-    for name in (VAULT_FILE, DB_FILE):
+    for name in (VAULT_FILE, DB_FILE, LOCK_FILE):
         assert (vault.directory / name).stat().st_mode & 0o777 == 0o600
 
 
