@@ -13,6 +13,7 @@ Item {
     property bool split: true          // the chat is visible beside it
     property bool expanded: false
     property bool canExpand: false
+    property bool canSave: false       // a glass-box session of the messenger can be saved
 
     signal backToChat()
     signal toggleExpanded()
@@ -90,6 +91,16 @@ Item {
                 Layout.minimumWidth: 120
                 Layout.maximumWidth: 320
                 inspector: pane.inspector
+            }
+            AppButton {
+                objectName: "saveRecording"
+                visible: pane.canSave && pane.inspector.exposure === "glass_box" && pane.inspector.sessionId >= 0
+                kind: "exposure"
+                compact: true
+                iconName: "save"
+                text: pane.roomy ? qsTr("Save…") : ""
+                toolTipText: qsTr("Save this glass-box session as a recording, marked EXPOSED")
+                onClicked: saveDialog.ask(qsTr("Glass-box with %1").arg(pane.inspector.peerName))
             }
             AppButton {
                 objectName: "followButton"
@@ -240,5 +251,16 @@ Item {
         SecurityView {
             inspector: pane.inspector
         }
+    }
+
+    TextPromptDialog {
+        id: saveDialog
+        objectName: "sessionSaveDialog"
+        titleText: qsTr("Save this glass-box session")
+        iconName: "eye"
+        iconColor: Theme.exposureText
+        message: qsTr("The recording holds every key and message this side saw, sealed with your vault's key and marked EXPOSED. Only this side's view is saved; it can be viewed, not replayed.")
+        fieldLabel: qsTr("Title")
+        onSubmitted: text => pane.inspector.saveRecording(text)
     }
 }

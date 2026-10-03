@@ -267,6 +267,8 @@ class Inspector(ViewModel):
     frameChanged = Signal()  # noqa: N815
     graphChanged = Signal()  # noqa: N815
     viewChanged = Signal()  # noqa: N815
+    recordingSaved = Signal(str)  # noqa: N815
+    """A save finished: what to tell the user."""
 
     sessions = constant(QObject, "_sessions")
     timeline = constant(QObject, "_timeline_model")
@@ -506,6 +508,20 @@ class Inspector(ViewModel):
         row = next((r for r in self._nodes.rows() if r.key == key), None)
         if row is not None and row.value:
             _copy(row.value)
+
+    @Slot(str)
+    def saveRecording(self, title: str) -> None:  # noqa: N802
+        """Save the inspected glass-box session as a recording (an explicit action only)."""
+        if self._exposure != "glass_box" or self._session_id < 0:
+            return
+
+        def done(reply: Reply) -> None:
+            if reply.error is not None:
+                self.recordingSaved.emit(f"Not saved: {reply.error.message}")
+            else:
+                self.recordingSaved.emit("Saved. It is in Learn → Recordings, marked EXPOSED.")
+
+        self._scope.request(ops.save_session_recording(self._session_id, title), done)
 
     @Slot(str, result=str)
     def cite(self, section: str) -> str:

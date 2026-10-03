@@ -10,11 +10,14 @@ else of the unlocked period: its run, identities and revealed values are dropped
 import itertools
 import os
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Final
 
 from qrp2p.lab.classical import LAB_PROFILES, lab_profile_named
+from qrp2p.lab.recording import LabRecording
 from qrp2p.lab.solo import Kind, LabError, Side, SoloLab, Step
+from qrp2p.services.node import Node
+from qrp2p.services.recordings import RecordingInfo, restored
 from qrp2p.services.trace_bus import SessionInfo, TraceBus
 from qrp2p.ui.inspect.model import SessionFacts
 from qrp2p.ui.tap import TraceTap, profile_facts
@@ -59,6 +62,8 @@ class LabSnap:
     alice_received: tuple[str, ...]
     bob_received: tuple[str, ...]
     lab_time: float
+    recording: str = ""
+    """While a glass-box recording is shown (view only): its title; empty for a lab run."""
 
 
 INACTIVE: Final = LabSnap(
@@ -90,13 +95,19 @@ class LabHost:
     """
 
     def __init__(
-        self, wake: Callable[[], None], random_source: Callable[[int], bytes] = os.urandom
+        self,
+        wake: Callable[[], None],
+        random_source: Callable[[int], bytes] = os.urandom,
+        node: Node | None = None,
     ) -> None:
         self._bus = TraceBus()
         self._tap = TraceTap(self._bus, self._describe, wake, source="lab")
         self._random = random_source
+        self._node = node
         self._ids = itertools.count(1)
         self._lab: SoloLab | None = None
+        self._viewing: tuple[str, str, int] | None = None
+        """A glass-box recording on show: its title, profile and bus session ID."""
 
     @property
     def tap(self) -> TraceTap:
@@ -105,6 +116,18 @@ class LabHost:
 
     def snapshot(self) -> LabSnap:
         """Where the lab is now."""
+        if self._viewing is not None:
+            title, profile, session_id = self._viewing
+            return replace(
+                INACTIVE,
+                active=True,
+                profile=profile,
+                phase="recording",
+                note="A glass-box recording: view only. It cannot be replayed, because the "
+                "peer's randomness and keys were never this side's.",
+                alice_session=session_id,
+                recording=title,
+            )
         lab = self._lab
         if lab is None:
             return INACTIVE
@@ -197,13 +220,57 @@ class LabHost:
         )
         return self.snapshot()
 
+    async def save(self, title: str) -> RecordingInfo:
+        """Save the current run as a recording (an explicit action, never automatic).
+
+        Raises:
+            LabError: No run (a recording on show is saved already).
+            RecordingError: Beyond a bound.
+        """
+        if self._viewing is not None:
+            msg = "this recording is saved already"
+            raise LabError(msg)
+        return await self._recordings().save_lab_recording(title, self._current().run_record())
+
+    async def open(self, file_id: str) -> LabSnap:
+        """Open a saved recording: a lab run replays, then continues live.
+
+        A glass-box recording is shown instead, view only.
+
+        Raises:
+            RecordingError: No such recording, or it does not decode.
+            VaultError: It does not open with this vault.
+        """
+        recording = await self._recordings().open_recording(file_id)
+        if isinstance(recording, LabRecording):
+            run = recording.run
+            self._replace(
+                lambda ids: SoloLab.replayed(run, self._bus, ids, random_source=self._random)
+            )
+        else:
+            self._tap.pause()
+            self._bus.clear()
+            self._lab = None
+            session_id = next(self._ids)
+            info, records = restored(recording, session_id)
+            self._bus.restore(info, records)
+            self._viewing = (recording.meta.title, recording.meta.profile, session_id)
+        return self.snapshot()
+
     def close(self) -> None:
         """End the lab: drop the run, its bus and what the tap holds (a lock, the app closing)."""
         self._lab = None
+        self._viewing = None
         self._tap.close()
         self._bus.clear()
 
     # -- internals -----------------------------------------------------------------------------
+
+    def _recordings(self) -> Node:
+        if self._node is None:
+            msg = "recordings need the node"
+            raise LabError(msg)
+        return self._node
 
     def _current(self) -> SoloLab:
         if self._lab is None:
@@ -214,9 +281,12 @@ class LabHost:
     def _replace(self, make: Callable[[tuple[int, int]], SoloLab]) -> None:
         self._tap.pause()
         self._bus.clear()
+        self._viewing = None
         self._lab = make((next(self._ids), next(self._ids)))
 
     def _describe(self, info: SessionInfo) -> SessionFacts:
+        if self._viewing is not None and info.session_id == self._viewing[2]:
+            return _recorded(info)
         local, peer = ("Alice", "Bob") if info.initiator else ("Bob", "Alice")
         return SessionFacts(
             session_id=info.session_id,
@@ -239,3 +309,28 @@ class LabHost:
             admit_reason=info.admit_reason,
             by_peer=info.by_peer,
         )
+
+
+def _recorded(info: SessionInfo) -> SessionFacts:
+    """A glass-box recording's session: our side of it, every value revealed (EXPOSED)."""
+    return SessionFacts(
+        session_id=info.session_id,
+        initiator=info.initiator,
+        address=info.address,
+        profile=profile_facts(info.profile) if info.profile else None,
+        local_name="You",
+        peer_name=info.peer_short_id or "Peer",
+        peer_short_id=info.peer_short_id,
+        contact_id="",
+        trust="",
+        pinned_before=False,
+        glass_box_requested=info.glass_box_requested,
+        glass_box=True,
+        exposed=True,
+        lab=False,
+        established=info.established,
+        ended=True,
+        end_reason=info.end_reason,
+        admit_reason=info.admit_reason,
+        by_peer=info.by_peer,
+    )

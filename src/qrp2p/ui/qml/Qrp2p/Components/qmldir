@@ -24,5 +24,6 @@ SegmentedControl 1.0 SegmentedControl.qml
 Spinner 1.0 Spinner.qml
 Tag 1.0 Tag.qml
 TextEditMenu 1.0 TextEditMenu.qml
+TextPromptDialog 1.0 TextPromptDialog.qml
 ToastHost 1.0 ToastHost.qml
 TrustBadge 1.0 TrustBadge.qml

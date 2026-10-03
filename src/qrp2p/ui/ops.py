@@ -13,9 +13,18 @@ from typing import Final
 
 from qrp2p.services.models import TEXT_SCALES, Appearance, Retention, TrustState
 from qrp2p.services.node import Node, NodeError, profile_by_name
+from qrp2p.services.recordings import RecordingInfo
 from qrp2p.ui.host import LabOp, Op, TapOp, network_snap
-from qrp2p.ui.snapshots import ID_HEX_LEN, ActivitySnap, SafetySnap, message_snap, settings_snap
-from qrp2p.ui.text import fingerprint
+from qrp2p.ui.labhost import LabHost
+from qrp2p.ui.snapshots import (
+    ID_HEX_LEN,
+    ActivitySnap,
+    RecordingSnap,
+    SafetySnap,
+    message_snap,
+    settings_snap,
+)
+from qrp2p.ui.text import display_text, fingerprint
 
 HISTORY_PAGE: Final = 300
 """History entries a conversation loads at first; more on request."""
@@ -546,3 +555,68 @@ def lab_fork(upto: int) -> Op:
 def lab_close() -> Op:
     """Leave the lab: its run and values are dropped."""
     return LabOp(lambda lab: lab.close())
+
+
+def lab_save(title: str) -> Op:
+    """Save the lab's current run as a recording."""
+
+    async def save(lab: LabHost) -> RecordingSnap:
+        return recording_snap(await lab.save(_title(title)))
+
+    return LabOp(save)
+
+
+def lab_open(file_id: str) -> Op:
+    """Open a saved recording in the lab (a lab run replays; a glass-box one is shown)."""
+    return LabOp(lambda lab: lab.open(file_id))
+
+
+# -- recordings ----------------------------------------------------------------------------------------
+
+
+def recording_snap(info: RecordingInfo) -> RecordingSnap:
+    """A saved recording as the Learn list shows it."""
+    return RecordingSnap(
+        info.file_id,
+        display_text(info.title),
+        info.kind,
+        info.profile,
+        info.created,
+        info.size,
+        info.problem,
+    )
+
+
+def _title(title: str) -> str:
+    cleaned = " ".join(title.split())
+    if not cleaned:
+        msg = "a recording needs a title"
+        raise ValueError(msg)
+    return cleaned
+
+
+def recordings() -> Op:
+    """The saved recordings, newest first."""
+
+    async def op(node: Node) -> tuple[RecordingSnap, ...]:
+        return tuple(recording_snap(r) for r in await node.recordings())
+
+    return op
+
+
+def save_session_recording(session_id: int, title: str) -> Op:
+    """Save what this side retained of a glass-box session (refused for a normal one)."""
+
+    async def op(node: Node) -> RecordingSnap:
+        return recording_snap(await node.save_session_recording(session_id, _title(title)))
+
+    return op
+
+
+def delete_recording(file_id: str) -> Op:
+    """Delete a saved recording."""
+
+    async def op(node: Node) -> None:
+        await node.delete_recording(file_id)
+
+    return op

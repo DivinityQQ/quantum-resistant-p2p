@@ -21,7 +21,7 @@ Front ends subscribe; the desktop app batches what it receives (at most 30 times
 """
 
 from collections import OrderedDict, deque
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Final
 
@@ -141,6 +141,18 @@ class TraceBus:
     def open_session(self, info: SessionInfo) -> None:
         """Start a session's ring with what is known when its connection opens."""
         self._rings[info.session_id] = _Ring(info)
+        self._announce(info)
+
+    def restore(self, info: SessionInfo, records: Sequence[TraceRecord]) -> None:
+        """Show a saved session: its descriptor and events, ordinals kept (gaps stay visible).
+
+        The session is ended: nothing more is published to it.
+        """
+        ring = _Ring(info)
+        ring.head = list(records)
+        ring.head_open = False
+        ring.next_ordinal = records[-1].ordinal + 1 if records else 0
+        self._rings[info.session_id] = ring
         self._announce(info)
 
     def describe(self, session_id: int, **changes: object) -> None:

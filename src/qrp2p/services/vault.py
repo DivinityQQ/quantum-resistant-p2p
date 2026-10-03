@@ -417,7 +417,7 @@ class _EntryRow(msgspec.Struct):
 def _decode[T](data: bytes, kind: type[T]) -> T:
     try:
         return msgspec.msgpack.decode(data, type=kind)
-    except msgspec.DecodeError:
+    except msgspec.DecodeError, UnicodeDecodeError:
         msg = "a row does not match its schema"
         raise VaultCorruptError(msg) from None
 
@@ -904,6 +904,29 @@ class Vault:
 
     def _key(self, name: str) -> Secret:
         return self._state().keys[name]
+
+    # -- recordings (DESIGN §11.5): k_lab never leaves the vault ----------------------------------
+
+    def seal_lab(self, header: bytes, body: bytes) -> bytes:
+        """``nonce ‖ AEAD(k_lab, nonce, body, aad = header)``: a recording's sealed body.
+
+        Raises:
+            VaultLockedError: Locked.
+        """
+        return _seal(self._key("lab"), self._random(NONCE_LEN), body, header)
+
+    def open_lab(self, header: bytes, sealed: bytes) -> bytes:
+        """A recording's body, if it was sealed with this vault's ``k_lab`` under ``header``.
+
+        Raises:
+            VaultLockedError: Locked.
+            VaultCorruptError: It does not authenticate (another vault's, or altered).
+        """
+        body = _open(self._key("lab"), sealed, header)
+        if body is None:
+            msg = "the recording does not open with this vault (another vault's, or altered)"
+            raise VaultCorruptError(msg)
+        return body
 
     # -- identity and settings ------------------------------------------------------------------
 

@@ -20,6 +20,8 @@ Item {
     readonly property bool wide: width >= 1000 * Math.max(1, Theme.scale)
     property string pane: "controls"   // narrow windows: controls | inspector
     readonly property bool terminal: lab.phase === "ended" || lab.phase === "diverged"
+    // A glass-box recording on show: view only, the Inspector alone.
+    readonly property bool viewing: lab.recording !== ""
 
     function focusFirst() {
         stepButton.forceActiveFocus(Qt.TabFocusReason)
@@ -54,16 +56,24 @@ Item {
                 Layout.minimumWidth: 0
                 Layout.preferredWidth: Math.ceil(implicitWidth)
                 Layout.maximumWidth: Math.ceil(implicitWidth)
-                text: qsTr("Solo lab")
+                text: screen.viewing ? screen.lab.recording : qsTr("Solo lab")
                 role: "title"
                 elide: Text.ElideRight
                 Accessible.role: Accessible.Heading
             }
             Tag {
                 objectName: "labTag"
+                visible: !screen.viewing
                 text: qsTr("LAB")
                 kind: "lab"
                 iconName: "flask-conical"
+            }
+            Tag {
+                objectName: "exposedTag"
+                visible: screen.viewing
+                text: qsTr("EXPOSED")
+                kind: "exposure"
+                iconName: "eye"
             }
             Item {
                 Layout.fillWidth: true
@@ -78,12 +88,24 @@ Item {
                 onChosen: value => screen.lab.reset(value)
             }
             AppButton {
+                objectName: "labSave"
+                visible: !screen.viewing
+                compact: true
+                kind: "quiet"
+                iconName: "save"
+                text: screen.wide ? qsTr("Save…") : ""
+                toolTipText: qsTr("Save this run as a recording: it replays exactly and can be forked")
+                enabled: screen.lab.stepCount > 0 && !screen.lab.busy
+                onClicked: saveDialog.ask(qsTr("Solo lab · %1 · %n steps", "", screen.lab.stepCount).arg(screen.lab.profile))
+            }
+            AppButton {
                 objectName: "labReset"
                 compact: true
                 kind: "secondary"
                 iconName: "rotate-ccw"
                 text: screen.wide ? qsTr("Reset") : ""
-                toolTipText: qsTr("A fresh run: new identities, nothing sent yet")
+                toolTipText: screen.viewing ? qsTr("Close the recording and start a fresh run")
+                    : qsTr("A fresh run: new identities, nothing sent yet")
                 enabled: !screen.lab.busy
                 onClicked: screen.lab.reset(screen.lab.profile)
             }
@@ -95,10 +117,17 @@ Item {
             opacity: 0.6
         }
 
+        Banner {
+            Layout.fillWidth: true
+            Layout.margins: Theme.s3
+            visible: screen.viewing
+            kind: "exposure"
+            text: screen.lab.note
+        }
         SegmentedControl {
             Layout.margins: Theme.s2
             Layout.alignment: Qt.AlignHCenter
-            visible: !screen.wide
+            visible: !screen.wide && !screen.viewing
             label: qsTr("Show")
             current: screen.pane
             options: [
@@ -119,7 +148,7 @@ Item {
                 Layout.fillHeight: true
                 Layout.fillWidth: !screen.wide
                 Layout.preferredWidth: screen.wide ? Math.round(Math.max(340, screen.width * 0.3)) : -1
-                visible: screen.wide || screen.pane === "controls"
+                visible: !screen.viewing && (screen.wide || screen.pane === "controls")
                 contentHeight: panel.implicitHeight + Theme.s4 * 2
                 boundsBehavior: Flickable.StopAtBounds
                 clip: true
@@ -247,11 +276,21 @@ Item {
             InspectorPane {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                visible: screen.wide || screen.pane === "inspector"
+                visible: screen.viewing || screen.wide || screen.pane === "inspector"
                 inspector: screen.lab.inspector
                 split: true
                 canExpand: false
             }
         }
+    }
+
+    TextPromptDialog {
+        id: saveDialog
+        objectName: "labSaveDialog"
+        titleText: qsTr("Save this run")
+        iconName: "save"
+        message: qsTr("The recording holds both throwaway identities and every value of the run, sealed with your vault's key. Replaying it reproduces the run exactly.")
+        fieldLabel: qsTr("Title")
+        onSubmitted: text => screen.lab.save(text)
     }
 }

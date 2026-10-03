@@ -51,6 +51,11 @@ Item {
     Connections {
         target: screen.workspace.lab
         function onFailed(message) { toasts.show(message) }
+        function onSaved(message) { toasts.show(message) }
+    }
+    Connections {
+        target: screen.workspace.inspector
+        function onRecordingSaved(message) { toasts.show(message) }
     }
     Connections {
         target: screen.workspace
@@ -156,6 +161,7 @@ Item {
                 onLoaded: Qt.callLater(() => { if (item) item.focusTabs() })
                 sourceComponent: InspectorPane {
                     inspector: screen.workspace.inspector
+                    canSave: true
                     split: screen.split
                     expanded: screen.inspectorExpanded
                     canExpand: screen.split

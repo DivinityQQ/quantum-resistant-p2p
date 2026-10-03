@@ -97,7 +97,7 @@ class Kind(StrEnum):
     WAIT = "wait"
 
 
-class Step(Struct, frozen=True):
+class Step(Struct, frozen=True, forbid_unknown_fields=True):
     """One step: what happens, at which node (for a delivery: the receiver), and chat text."""
 
     kind: Kind
@@ -120,7 +120,7 @@ class Phase(StrEnum):
     """A replay asked for something other than what was recorded."""
 
 
-class LabRun(Struct, frozen=True):
+class LabRun(Struct, frozen=True, forbid_unknown_fields=True):
     """Everything needed to replay a lab run: identities, profile, steps and provider logs."""
 
     format: int

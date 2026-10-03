@@ -185,6 +185,20 @@ class SafetySnap:
 
 
 @dataclass(frozen=True, slots=True)
+class RecordingSnap:
+    """A saved recording in the Learn list (DESIGN §11.5)."""
+
+    file_id: str
+    title: str
+    kind: str
+    """``lab``, ``glass_box`` (EXPOSED) or ``unreadable``."""
+    profile: str
+    created: float
+    size: int
+    problem: str
+
+
+@dataclass(frozen=True, slots=True)
 class ActivitySnap:
     """When each conversation last had an entry (wall-clock seconds), by contact ID."""
 

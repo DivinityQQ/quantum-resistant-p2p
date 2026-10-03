@@ -20,12 +20,14 @@ one file transfer are coalesced: only the latest counts.
 
 import asyncio
 import contextlib
+import inspect
 import logging
 import threading
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Final
 
+from qrp2p.lab.recording import RecordingError
 from qrp2p.lab.solo import LabError
 from qrp2p.services.discovery import local_addresses
 from qrp2p.services.events import (
@@ -135,6 +137,7 @@ _NAMED: Final[tuple[tuple[type[Exception], str], ...]] = (
     (NotConnectedError, "not_connected"),
     (NodeError, "node"),
     (LabError, "lab"),
+    (RecordingError, "recording"),
     (VaultError, "vault"),
     (ValueError, "value"),
 )
@@ -252,7 +255,7 @@ class ServiceHost:
         self._node = node
         node.subscribe(self._on_event)
         self._tap = TraceTap.of_node(node, wake=self._schedule_flush)
-        self._lab = LabHost(wake=self._schedule_flush)
+        self._lab = LabHost(wake=self._schedule_flush, node=node)
         try:
             await node.open()
         except VaultInUseError:
@@ -294,6 +297,8 @@ class ServiceHost:
             elif isinstance(op, LabOp):
                 assert self._lab is not None  # noqa: S101  # created with the node
                 value = op.run(self._lab)
+                if inspect.isawaitable(value):  # recordings go through the vault's thread
+                    value = await value
             else:
                 value = await op(node)
         except Exception as error:  # noqa: BLE001  # every failure becomes a reply

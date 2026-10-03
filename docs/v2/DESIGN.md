@@ -684,12 +684,20 @@ Every secret has a name that is unique within its session, and the Inspector joi
 ### 11.5 Recordings (`.qrlab`)
 
 ```text
-file = "QRLAB\0" ‖ version:u8 ‖ nonce[12] ‖ AEAD(k_lab, msgpack{ meta, transcript, provider_log, secrets, records })
+file   = header ‖ nonce[12] ‖ ChaCha20-Poly1305(k_lab, nonce, body, aad = header)
+header = "QRLAB" ‖ 0x00 ‖ version:u8 (= 1)
+body   = msgpack, one of
+         lab       { meta, run }                           # a solo-lab run: replays and forks
+         glass_box { meta, exposed, session, events }      # our side of a glass-box session: view only
+meta   = { title, created, profile }
+run    = { profile, both lab identities' seeds, steps, provider-log marks per step, both provider logs }
+events = the retained trace events in order, with their ordinals and times, and the revealed values
 ```
 
-- `provider_log` stores every randomised crypto output in call order (§11.6).
-- `records` stores direction, sequence number, header, ciphertext and plaintext.
-- Imports are untrusted input: 256 MiB cap, strict schema, opened only in the lab engine.
+- A lab recording's provider logs hold every randomised crypto output in call order (§11.6), so it replays exactly and can be forked at any step.
+- A glass-box recording holds what this side retained of the session (frames, schedule, revealed keys, each record's nonce and plaintext) and the EXPOSED stamp. It cannot be replayed: the peer's randomness and keys were never ours. Only a glass-box session can be saved; a normal session's provider never had values to give.
+- Saving is an explicit action. Each recording is one file with a random name in `lab/`, so its title never shows on disk; `k_lab` never leaves the vault, which seals and opens bodies.
+- Opening is untrusted input: the file is capped at 256 MiB before it is read, the schema is strict (unknown fields, wrong types and a missing stamp are refused), every list has a bound, and a failure names its reason without quoting recorded bytes. A file that does not open (another vault's, altered, another version) is listed as unreadable rather than hidden.
 
 ### 11.6 Step-through and replay
 

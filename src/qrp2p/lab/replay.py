@@ -35,13 +35,13 @@ from qrp2p.core.crypto.secret import Secret
 from qrp2p.core.errors import ProtocolError
 
 
-class Draw(Struct, frozen=True, tag="draw"):
+class Draw(Struct, frozen=True, tag="draw", forbid_unknown_fields=True):
     """Bytes from the random source."""
 
     data: bytes
 
 
-class Encapsulation(Struct, frozen=True, tag="encapsulation"):
+class Encapsulation(Struct, frozen=True, tag="encapsulation", forbid_unknown_fields=True):
     """One encapsulation: to ``ek``, giving ``ct`` and the named secrets (``ss`` last)."""
 
     profile: int
@@ -51,7 +51,7 @@ class Encapsulation(Struct, frozen=True, tag="encapsulation"):
     secrets: list[tuple[str, bytes]]
 
 
-class Signature(Struct, frozen=True, tag="signature"):
+class Signature(Struct, frozen=True, tag="signature", forbid_unknown_fields=True):
     """One signature by ``role`` over transcript hash ``th``."""
 
     profile: int

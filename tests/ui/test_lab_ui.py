@@ -12,10 +12,15 @@ import pytest
 from PySide6.QtCore import QCoreApplication, QObject, Qt
 from PySide6.QtQuick import QQuickItem
 
+from qrp2p.ui.labhost import LabHost
+from qrp2p.ui.tap import InspectSnap
 from qrp2p.ui.viewmodels.application import AppController
 from qrp2p.ui.viewmodels.lab import Lab
 from tests.ui.fakes import SETTINGS, FakeBackend, contact, online, settle
-from tests.ui.lab_support import lab_host, serve
+from tests.ui.inspect_support import session_facts
+from tests.ui.lab_support import Recordings, lab_host, serve
+from tests.ui.test_inspector_qml import settled
+from tests.ui.test_labhost import glass_box_recording
 from tests.ui.test_viewmodels import unlock
 from tests.ui.window import Ui, of_type
 
@@ -220,3 +225,91 @@ def test_the_lab_holds_at_small_windows_and_large_text(
     serve(ui.backend, host)  # type: ignore[arg-type]
     assert ui.item("labScreen").isVisible()
     assert ui.item("labTag").isVisible()
+
+
+# -- recordings -------------------------------------------------------------------------------
+
+
+def learn(ui: Ui, store: Recordings) -> LabHost:
+    ui.unlock(online(BOB))
+    ui.backend.reply(ui.backend.one("history"), ())
+    ui.window.resize(1400, 860)
+    host = lab_host(store)
+    ui.item("messenger").setProperty("area", "learn")
+    serve(ui.backend, host)
+    return host
+
+
+def test_a_run_is_saved_listed_replayed_and_deleted(ui: Ui) -> None:
+    store = Recordings()
+    host = learn(ui, store)
+    ui.until(
+        lambda: (f := ui.window.activeFocusItem()) is not None and f.objectName() == "openSoloLab"
+    )
+    ui.key(Qt.Key.Key_Space)
+    serve(ui.backend, host)
+    ui.click("labRun")
+    serve(ui.backend, host)
+    ui.click("labSave")
+    field = ui.item("promptField")
+    assert field.property("text") == "Solo lab · HYBRID-1 · 6 steps"
+    ui.until(lambda: ui.window.activeFocusItem() is field)
+    ui.key(Qt.Key.Key_Return)  # takes the suggestion
+    serve(ui.backend, host)
+    dialog = ui.window.findChild(QObject, "labSaveDialog")
+    assert dialog is not None
+    ui.until(lambda: not dialog.property("visible"))  # its modal overlay is gone
+    assert len(store.saved) == 1
+    (file_id,) = store.saved
+    lab = ui.app.property("workspace").lab_model
+    lab.reset("PQ-CNSA-1")
+    serve(ui.backend, host)
+    ui.item("messenger").setProperty("area", "learn")
+    serve(ui.backend, host)
+    ui.click(f"openRecording-{file_id}")
+    serve(ui.backend, host)
+    assert ui.item("labScreen").isVisible()
+    assert lab.property("profile") == "HYBRID-1"
+    assert lab.property("stepCount") == 6
+    ui.item("messenger").setProperty("area", "learn")
+    serve(ui.backend, host)
+    ui.click(f"deleteRecording-{file_id}")
+    assert store.saved  # the first click only asks
+    ui.click(f"deleteRecording-{file_id}")
+    serve(ui.backend, host)
+    assert store.saved == {}
+    assert ui.find(f"recording-{file_id}") is None
+
+
+def test_a_glass_box_recording_opens_view_only(ui: Ui) -> None:
+    store = Recordings()
+    info = store.add(glass_box_recording())
+    host = learn(ui, store)
+    view = ui.item(f"openRecording-{info.file_id}")
+    assert view.property("text") == "View"
+    ui.click_item(view)
+    serve(ui.backend, host)
+    assert ui.item("exposedTag").isVisible()
+    assert ui.find("labStep") is None or not ui.item("labStep").isVisible()
+    inspector = ui.app.property("workspace").lab_model.inspector_model
+    assert inspector.property("exposure") == "glass_box"
+    assert inspector.trace_items
+
+
+def test_only_a_glass_box_session_offers_saving_from_the_inspector(ui: Ui) -> None:
+    ui.unlock(online(BOB, glass_box=True))
+    ui.backend.reply(ui.backend.one("history"), ())
+    ui.key(Qt.Key.Key_I, Qt.KeyboardModifier.ControlModifier)
+    exposed = session_facts(session_id=7, contact_id=BOB.contact_id, glass_box=True, exposed=True)
+    ui.backend.reply(ui.backend.one("inspect_sessions"), (exposed,))
+    ui.backend.reply(ui.backend.one("inspect"), InspectSnap(exposed, (), missing=False))
+    settled(ui)
+    ui.click("saveRecording")
+    ui.until(
+        lambda: (f := ui.window.activeFocusItem()) is not None and f.objectName() == "promptField"
+    )
+    ui.key(Qt.Key.Key_Return)
+    assert ui.backend.one("save_session_recording").args == {
+        "session_id": 7,
+        "title": "Glass-box with Bob",
+    }
