@@ -655,7 +655,7 @@ async def test_unreachable_hints_at_a_firewall(nodes: tuple[NodeHarness, NodeHar
     alice, bob = nodes
     port = bob.port
     await bob.node.lock()
-    with pytest.raises(NodeError, match="firewall"):
+    with pytest.raises(NodeError, match=f"at {LOOPBACK}:{port} .*firewall.* port {port}\\?"):
         await alice.node.connect_address(LOOPBACK, port)
     (failed,) = alice.of(ConnectFailed)
     assert failed.detail == "unreachable"

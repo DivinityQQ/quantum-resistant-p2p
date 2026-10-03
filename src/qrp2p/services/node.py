@@ -894,9 +894,13 @@ class Node:
                 raise NodeError(msg) from None
         if contact is not None and self.is_online(contact.contact_id):
             return contact.contact_id
-        targets = ", ".join(f"{h}:{p}" for h, p in addresses)
+        targets = ", ".join(f"[{h}]:{p}" if ":" in h else f"{h}:{p}" for h, p in addresses)
         self._emit(ConnectFailed(targets, None, detail="unreachable"))
-        msg = "could not reach the peer (is it running, and does its firewall allow the port?)"
+        ports = ", ".join(sorted({str(p) for _, p in addresses}))
+        msg = (
+            f"could not reach the peer at {targets} (is it running, and does its firewall allow "
+            f"incoming TCP on port {ports}? Or ask them to connect to you)"
+        )
         raise NodeError(msg)
 
     async def disconnect(self, contact_id: bytes) -> None:
