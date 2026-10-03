@@ -296,8 +296,11 @@ class Session:
         elif self._machine is not None:
             self._dispatch(self._machine.tick(now))
 
-    def accept(self, *, glass_box: bool) -> None:
+    def accept(self, *, glass_box: bool) -> bool:
         """Responder: admit the initiator (DESIGN §7.6).
+
+        Returns ``False`` if the live-session cap was reached meanwhile: the initiator is then
+        rejected with ``busy`` instead (DESIGN §6.4).
 
         Raises:
             RuntimeError: No admission decision is pending.
@@ -305,10 +308,11 @@ class Session:
         responder = self._responder()
         if not self._hooks.admission_allowed(self):
             self.reject(AdmitReason.BUSY)
-            return
+            return False
         # No await between the final capacity check and Established: the event loop serializes
         # this check and the manager's registration, including decisions deferred by the UI.
         self._dispatch(responder.accept(glass_box=glass_box, now=self._clock()))
+        return True
 
     def reject(self, reason: AdmitReason) -> None:
         """Responder: reject the initiator with a named reason.

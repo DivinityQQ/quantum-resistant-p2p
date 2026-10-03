@@ -8,9 +8,10 @@ can **watch, pause and attack that exact channel**.
 - A learning layer: Inspector, glass-box sessions with mutual consent, solo lab, Attack Lab,
   weakened engines, Algorithm Lab and guided lessons.
 
-> **Status:** early development. M0 (crypto foundations), M1 (protocol core) and M2 (services and
-> the headless `qrp2p-cli`: LAN discovery, sessions, encrypted history, file transfer) are built;
-> the desktop app (M3) is next. `qrp2p` 2.0.0.dev0 on PyPI only reserves the name. Nothing here is
+> **Status:** early development. M0 (crypto foundations), M1 (protocol core), M2 (services and
+> the headless `qrp2p-cli`: LAN discovery, sessions, encrypted history, file transfer) and the
+> desktop app (M3) are built; the learning layer (M4, M5) is next. `qrp2p` 2.0.0.dev0 on PyPI
+> only reserves the name. Nothing here is
 > ready for use, and the protocol must not be called secure until every item in DESIGN §15 passes.
 > v1 is preserved at the tag
 > [`v1-final`](https://github.com/DivinityQQ/quantum-resistant-p2p/tree/v1-final).
@@ -35,12 +36,21 @@ uv run tools/check.py               # format, lint, layers, strict types, tests,
 uv run tools/check.py --audit       # plus the dependency audit
 ```
 
-Try two nodes on one machine (each needs its own data directory and port):
+Run the desktop app (light and dark follow the system until you choose in Settings):
 
 ```bash
-uv run qrp2p-cli --data-dir /tmp/alice --port 47470
+uv run qrp2p
+```
+
+Try two nodes on one machine (each needs its own data directory and port); the desktop app and
+the terminal one talk to each other:
+
+```bash
+uv run qrp2p --data-dir /tmp/alice --port 47470
 uv run qrp2p-cli --data-dir /tmp/bob --port 47471      # then: /connect 127.0.0.1:47470 Alice
 ```
+
+Native builds that need no Python: see [`packaging/README.md`](packaging/README.md).
 
 Between machines, each side's firewall must let in TCP on its port (47470 by default, the next
 ones if busy) and mDNS (UDP 5353), e.g. `sudo ufw allow 47470:47485/tcp` with `ufw`. Windows asks

@@ -1,0 +1,4 @@
+#!/bin/sh
+# AppImage entry: the Nuitka build lives in usr/lib/qrp2p beside this script.
+HERE="$(dirname "$(readlink -f "$0")")"
+exec "$HERE/usr/lib/qrp2p/qrp2p-desktop" "$@"

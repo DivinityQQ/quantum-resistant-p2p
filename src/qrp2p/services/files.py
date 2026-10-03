@@ -249,6 +249,8 @@ class Transfer:
     size: int
     media_type: str
     status: FileStatus = FileStatus.OFFERED
+    accepting: bool = False
+    """An accept is preparing the file (an offer is answered once)."""
     transferred: int = 0
     """Bytes sent (out) or received and written (in)."""
     acknowledged: int = 0
@@ -423,21 +425,16 @@ class FileTransfers:
             SessionNotOpenError: The session ended.
         """
         transfer = self._pending(file_id)
-
-        def free_space() -> int:
-            directory.mkdir(parents=True, exist_ok=True)
-            return shutil.disk_usage(directory).free
-
-        free = await asyncio.to_thread(free_space)
-        if transfer.finished:  # the peer cancelled while we looked
-            raise KeyError(file_id)
-        if free < transfer.size + FREE_SPACE_MARGIN:
-            self._cancel(transfer, FileCancelReason.DISK_FULL, notify=True)
+        # Reserve the offer before the first await: a second accept (or a decline) while the
+        # disk work runs would otherwise pass the check too and send a second FileAccept.
+        transfer.accepting = True
+        try:
+            prepared = await self._prepare(transfer, directory)
+        finally:
+            transfer.accepting = False
+        if prepared is None:
             return transfer
-        name = transfer.name
-        part, final, stream = await _owned_in_thread(
-            lambda: self._create_part(directory, name), _remove_part
-        )
+        part, final, stream = prepared
         if transfer.finished:  # the peer cancelled while we created the file
             await asyncio.to_thread(_remove_part, (part, final, stream))
             raise KeyError(file_id)
@@ -450,6 +447,24 @@ class FileTransfers:
             raise
         self._hooks.changed(transfer)
         return transfer
+
+    async def _prepare(
+        self, transfer: Transfer, directory: Path
+    ) -> tuple[Path, Path, BinaryIO] | None:
+        """Check the free space and create the ``.part`` file; ``None`` if cancelled for space."""
+
+        def free_space() -> int:
+            directory.mkdir(parents=True, exist_ok=True)
+            return shutil.disk_usage(directory).free
+
+        free = await asyncio.to_thread(free_space)
+        if transfer.finished:  # the peer cancelled while we looked
+            raise KeyError(transfer.file_id)
+        if free < transfer.size + FREE_SPACE_MARGIN:
+            self._cancel(transfer, FileCancelReason.DISK_FULL, notify=True)
+            return None
+        name = transfer.name
+        return await _owned_in_thread(lambda: self._create_part(directory, name), _remove_part)
 
     @staticmethod
     def _create_part(directory: Path, name: str) -> tuple[Path, Path, BinaryIO]:
@@ -484,6 +499,7 @@ class FileTransfers:
             transfer is None
             or transfer.direction is not TransferDirection.IN
             or transfer.status is not FileStatus.OFFERED
+            or transfer.accepting
         ):
             raise KeyError(file_id)
         return transfer

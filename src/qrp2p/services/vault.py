@@ -42,6 +42,8 @@ from qrp2p.core.errors import ProtocolError
 from qrp2p.services.models import (
     ID_LEN,
     RETENTION_SECONDS,
+    TEXT_SCALES,
+    Appearance,
     Contact,
     Direction,
     FileInfo,
@@ -372,6 +374,9 @@ class _SettingsRow(msgspec.Struct):  # unknown fields ignored: a newer version m
     port: int = 47470
     downloads_dir: str = ""
     max_file_size: int = 4 * 2**30
+    appearance: str = "system"
+    reduced_motion: bool = False
+    text_scale: int = 100
 
 
 class _ContactRow(msgspec.Struct):
@@ -943,6 +948,9 @@ class Vault:
             port=settings.port,
             downloads_dir=settings.downloads_dir,
             max_file_size=settings.max_file_size,
+            appearance=settings.appearance.value,
+            reduced_motion=settings.reduced_motion,
+            text_scale=settings.text_scale,
         )
         db = self._state().db
         found = db.execute("SELECT row_uid FROM settings").fetchone()
@@ -975,6 +983,12 @@ class Vault:
             port=row.port,
             downloads_dir=row.downloads_dir,
             max_file_size=row.max_file_size,
+            # A newer version may add a scheme; an older one falls back to the system's.
+            appearance=Appearance(row.appearance)
+            if row.appearance in set(Appearance)
+            else Appearance.SYSTEM,
+            reduced_motion=row.reduced_motion,
+            text_scale=row.text_scale if row.text_scale in TEXT_SCALES else 100,
         )
 
     def save_settings(self, settings: Settings) -> None:

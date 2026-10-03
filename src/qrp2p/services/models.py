@@ -38,6 +38,18 @@ class Retention(StrEnum):
 RETENTION_SECONDS: Final = {Retention.DAYS_30: 30 * 86_400.0}
 
 
+class Appearance(StrEnum):
+    """The desktop app's colour scheme (UI_DESIGN §4.2)."""
+
+    SYSTEM = "system"
+    LIGHT = "light"
+    DARK = "dark"
+
+
+TEXT_SCALES: Final = (100, 115, 130, 150)
+"""Text sizes the desktop app offers, in percent of the base size."""
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Contact:
     """A pinned, verified or blocked peer.
@@ -85,6 +97,12 @@ class Settings:
     downloads_dir: str = ""
     """Empty: the OS downloads directory."""
     max_file_size: int = DEFAULT_MAX_FILE_SIZE
+    appearance: Appearance = Appearance.SYSTEM
+    """Desktop app only: applied after unlock; the unlock screen follows the system."""
+    reduced_motion: bool = False
+    """Desktop app only: immediate transitions instead of animations."""
+    text_scale: int = 100
+    """Desktop app only: one of :data:`TEXT_SCALES`."""
 
 
 class MessageKind(StrEnum):

@@ -3,7 +3,19 @@
 Things a Claude Code session cannot do for you. Work top to bottom; delete items as you finish
 them, and this file once it is empty.
 
-_Last updated: 2026-09-28 (v2 on `main`, 2.0.0.dev0 on PyPI)._
+_Last updated: 2026-10-02 (M3 desktop app built; its gate needs your machines)._
+
+## 0. M3 gate: daily use on Windows, macOS and Linux
+
+Use the desktop app for real on each OS (`uv run qrp2p` from a checkout, or the unsigned
+artifacts of *Actions → Build desktop apps → Run workflow*). Things worth trying: first contact
+in both directions, chat with receipts, a large file each way, verify safety numbers, lock and
+unlock, light/dark and 150 % text, a narrow window, Nearby between two machines. Note what you
+find in IMPLEMENTATION_PLAN's M3 notes (a Claude session can do the write-up and fixes).
+
+Also decide on code-signing identities when the first installer should ship (Apple Developer
+Program; Azure Trusted Signing or an OV certificate for Windows): `packaging/README.md` has the
+plan and costs.
 
 ## 1. GitHub: turn off the v1 Pages site
 

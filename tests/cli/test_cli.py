@@ -69,6 +69,7 @@ async def screens(tmp_path: Path) -> AsyncIterator[tuple[Screen, Screen]]:
 async def connected(alice: Screen, bob: Screen) -> None:
     await alice.run(f"/connect {LOOPBACK}:{bob.harness.port} Bob")
     number = (await bob.shows(r"/admit (\d+)")).group(1)
+    await alice.shows(f"Waiting for {LOOPBACK}:{bob.harness.port} to accept")
     await bob.run(f"/admit {number} Alice")
     await alice.shows("Connected to Bob")
     await bob.shows("Connected to Alice")

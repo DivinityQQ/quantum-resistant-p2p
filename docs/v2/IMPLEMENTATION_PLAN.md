@@ -10,7 +10,8 @@ Linux–Linux and Windows–Linux (see the M2 status notes). v1 is tagged
 `v1-final`. CI runs lint, types, layers, audit, the tests on three OSes, liboqs on three OSes, the
 ProVerif models and mutation testing, each job only when its inputs changed; the `main` ruleset
 requires the gate job "CI result". Local hooks run the fast suite (`tools/check.py`) before every
-push. **Next: land the post-M2 review corrections, then M3** (desktop app). `qrp2p` 2.0.0.dev0 is on PyPI, published by
+push. **M3 (desktop app) is built** on branch `claude/v2-m3-desktop` (see the M3 status notes);
+its gate, daily use on three OSes, is the owner's to run. `qrp2p` 2.0.0.dev0 is on PyPI, published by
 `.github/workflows/release.yml` (trusted publishing). Steps that need the owner's accounts (the v1
 Pages site, the liboqs bug report) are in [OWNER_TODO.md](OWNER_TODO.md).
 
@@ -294,7 +295,75 @@ design (DESIGN 1.3):
 
 **Gate:** daily use on 3 OSes.
 
-## M4 — Learning layer I
+**M3 status notes (2026-10-02)** — what was built, and what it settled (DESIGN 1.6, UI_DESIGN §11.2):
+
+- **Services additions:** `Node.answer_prompt` returns the actual `PromptOutcome` (an acceptance
+  can end *busy* when the live-session cap was taken while the prompt was open, or find the
+  initiator gone; `Session.accept` now says whether it admitted); `ConnectProgress` reports that
+  the peer's user is deciding (Confirm sent), so *connecting* and *waiting for admission* differ;
+  `KeyMismatchDetected` carries both full peer IDs; settings gain appearance, reduced motion and
+  text size (encrypted like the rest; unknown values from a newer version fall back);
+  `setup_logging` moved to `services.logs` so the GUI does not import the CLI.
+- **Bridge** (`ui/host.py`, `ui/bridge.py`, `ui/snapshots.py`, `ui/ops.py`): the services thread
+  owns the node and hands Qt immutable snapshots of primitives (display-safe peer text, hex IDs);
+  exceptions cross as a kind and a message. Lifecycle generations start at every node state
+  change, with the unlocked snapshot taken in the same step; the Qt side accepts data only of the
+  current unlocked generation and stops the moment the user locks. View models request through a
+  `Scope` pinned to their unlocked period, so a stale dialog cannot answer a request of a later
+  one even though the node numbers prompts afresh after every unlock (found while writing the
+  tests, before any screen existed). Updates are batched at 30 Hz, transfer progress coalesced,
+  and flushed before replies and lifecycle changes.
+- **View models** (`ui/viewmodels/`): one-way data flow (read-only properties, slots for intent);
+  lists are pure row functions applied as minimal diffs (checked by Qt's model tester and a
+  shadow replay under Hypothesis). A workspace exists per unlocked period and is destroyed at
+  lock with every conversation, draft and prompt. History loads are race-free (updates during a
+  load are replayed in order). Accepting a contact request opens the new conversation (armed at
+  the click: the node reports the new contact before it answers).
+- **QML** (`ui/qml/`): the agreed visual language on Qt Quick Templates: semantic light/dark
+  tokens (six added: hover, pressed, primary hover, online, avatar, scrim), Inter and Lucide
+  bundled under their licences, a theme-tinted icon provider. Screens: create/unlock, messenger
+  with contact strip, chooser and Nearby, connect by address, conversation (grouped bubbles,
+  delivery states, file cards, glass-box frame and tags, why a session ended), contact requests,
+  glass-box consent, key mismatch (Cancel by default, two-step re-pin), verification, contact
+  details, settings, shortcuts, and the Inspector **layout** as a development preview
+  (`--dev-preview`; no protocol data). Glass-box sessions are shown and labelled; the desktop app
+  does not offer to *request* one until the Inspector can show what it exposes (M4).
+- **Tests** (`tests/ui/`, about 190): host and bridge contracts (generations, stale requests,
+  ordering, coalescing, error mapping), row wording, view models against a fake services side,
+  the whole flow over a real node and peer, the real window offscreen driven by keyboard and mouse
+  (every text item plain text, peer markup literal, Enter/Shift+Enter, lock removes every view,
+  stored settings shown, dialog focus, theme change in place, small windows with 150 % text),
+  static QML rules, and WCAG AA contrast of every composed colour pair in both themes. Any Qt
+  warning fails a UI test. Reviewing real screenshots found and fixed a layout gap, a combo box
+  showing the wrong stored value and a dialog that took focus too late.
+- **Packaging:** `packaging/build.py` (Nuitka with its PySide6 plugin; `pyside6-deploy` assumes
+  QML beside the entry script) and the manual workflow `build.yml` build unsigned native apps on
+  Linux, Windows and macOS. Installers and the signing plan are in `packaging/README.md`.
+- **Review fixes (2026-10-02, after an outside read-only review of `1157e3b`):** six findings,
+  all reproduced and fixed with tests that fail without the fix. (1) The device key unlocked
+  again after the first lock of a new vault: it is now used only when the app *starts* onto a
+  locked vault. (2) Concurrent requests could undo each other (a profile edit undid a block;
+  settings changes were lost): the node now serializes contact and settings read-modify-write
+  in request order; the same lock also stops two accepted requests from one new identity
+  making two contacts. (3) Verification could reuse the previous identity's digits after a
+  re-pin: safety numbers now carry their identity, are dropped on a re-pin, and verifying
+  names the compared `peer_id` (DESIGN §5.3 rule 5). (4) A file offer could be accepted twice:
+  it is reserved before any disk work, and its actions stay disabled while one is in flight.
+  (5) Toasts outlived the lock: they now belong to the messenger view. (6) Choosers showed the
+  first preset for a stored value outside the presets: the stored value is always shown.
+- **Platform fixes from CI:** the monospace family is an installed one (macOS warned about the
+  "monospace" alias); Qt's offscreen platform on Windows gets the system font folder; UI tests
+  register Inter like the app; pytest-qt is gone (it imported Qt for every pytest run); macOS
+  builds use a native `.icns` and prune QML plugins whose libraries are only in the Addons;
+  the Intel macOS build runs on `macos-15-intel`.
+- **CI state (2026-10-02, PR #12):** tests pass on Linux, Windows and macOS; mutation testing
+  and ProVerif pass. The native builds for Linux (AppImage), Windows (zip) and macOS arm64
+  (`.dmg`) pass their smoke test in CI: each, without Python, creates a throwaway vault and
+  renders the messenger with no Qt warning.
+- **Still to do for the gate (owner):** run the app on Windows, macOS and Linux for daily use
+  (`uv run qrp2p`, or a `build.yml` artifact) and record the findings here. Code-signing
+  identities stay an open decision (below).
+
 
 Reuse the shell, theme and evidence components from [UI_DESIGN.md](UI_DESIGN.md). Connect
 timeline/field/byte/key selection; handle ring eviction, local clock origin and bounded pause
@@ -329,13 +398,15 @@ address findings; signed installers; publish.
 
 | Topic | Options | Phase |
 | --- | --- | --- |
-| Application icon and final wordmark | Follow the minimal direction; finalize licensed assets during QML review | M3 |
+| Application icon and final wordmark | A first mark is in place (a Q drawn as two arcs, original artwork); the owner may replace it | M3 |
 | Code-signing identities (Apple, Windows) | Buy when first installer ships | M3/M6 |
 
 ### Decisions taken
 
 | Topic | Decision | When |
 | --- | --- | --- |
+| GUI dependency | `PySide6-Essentials` as the `gui` extra (Qt Quick, Controls, Dialogs, Svg); the Addons join with Qt Graphs in M5 | M3 |
+| Native builds | Nuitka with its PySide6 plugin via `packaging/build.py` (what `pyside6-deploy` drives), so QML stays package data | M3 |
 | Desktop visual language | Minimal messenger; horizontal recent contacts plus full chooser; Inspector expands the same window. Shared Inter/Lucide/Basic components, semantic light/dark tokens and explicit visibility tiers. See [UI_DESIGN.md](UI_DESIGN.md); token geometry is refined through actual QML review | 2026-10-02, before M3 |
 | Vendoring the X-Wing vectors | Vendored with attribution and a SHA-256 pin (`tests/vectors/SOURCES.md`); IETF code components are Simplified-BSD licensed | M0 |
 | liboqs tag and OSes | 0.16.0 (commit `5a1a854b`), all 3 OSes, built with `OQS_DIST_BUILD=ON`, `OQS_USE_OPENSSL=OFF`; revisit if the CI job fails on an OS | M0 |

@@ -347,8 +347,8 @@ async def test_deferred_admissions_recheck_live_capacity(
         first = await alice.connect(bob)
         second = await carol.connect(bob)
         await until(lambda: len(bob.record.admissions) == 2)
-        for session in [s for s in bob.manager.sessions() if s.awaiting_admission]:
-            session.accept(glass_box=False)
+        waiting = [s for s in bob.manager.sessions() if s.awaiting_admission]
+        assert [s.accept(glass_box=False) for s in waiting] == [True, False]
         await until(lambda: first.is_open and carol.record.ended_for(second) is not None)
         end = carol.record.ended_for(second)
         assert end is not None

@@ -1,0 +1,106 @@
+# Native desktop builds (packaging/build.py: Nuitka with its PySide6 plugin) on each OS, kept as
+# artifacts for testing the app without Python (the M3 gate). Unsigned: see packaging/README.md.
+# Runs on demand (Actions -> Build desktop apps -> Run workflow) and on pull requests that change
+# the packaging; it is not part of the "CI result" gate.
+name: Build desktop apps
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "packaging/**"
+      - ".github/workflows/build.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  UV_VERSION: "0.12.19"
+  PYTHON_VERSION: "3.14"
+  NUITKA_VERSION: "4.2.2"
+  # appimagetool for the Linux AppImage; tag and SHA-256 pinned together.
+  APPIMAGETOOL_VERSION: "1.9.1"
+  APPIMAGETOOL_SHA256: "ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0"
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # ubuntu-22.04: the oldest glibc we build against, so the Linux build runs on newer ones.
+        os: [ubuntu-22.04, windows-latest, macos-latest, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Libraries Qt needs (Linux)
+        if: runner.os == 'Linux'
+        run: >-
+          sudo apt-get update &&
+          sudo apt-get install -y --no-install-recommends
+          libegl1 libgl1 libxkbcommon0 libfontconfig1 patchelf
+      - name: Build environment (separate from the development one)
+        run: |
+          uv venv build-env --python "$PYTHON_VERSION"
+          uv pip install --python build-env ".[gui]" "nuitka==$NUITKA_VERSION"
+      - name: Build
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then py=build-env/Scripts/python.exe; else py=build-env/bin/python; fi
+          "$py" packaging/build.py --out dist --prune-build-env
+      - name: Smoke test (start, render the first screen, exit; any Qt warning fails it)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          # Qt's offscreen platform looks for fonts in its own folder; on Windows, use the system's.
+          if [ "$RUNNER_OS" = "Windows" ]; then export QT_QPA_FONTDIR='C:/Windows/Fonts'; fi
+          case "$RUNNER_OS" in
+            Windows) app=dist/qrp2p_app.dist/qrp2p-desktop.exe ;;
+            macOS) app=dist/qrp2p_app.app/Contents/MacOS/qrp2p-desktop ;;
+            *) app=dist/qrp2p_app.dist/qrp2p-desktop ;;
+          esac
+          "$app" --data-dir smoke-data --no-mdns --smoke-test "dist/first-screen-${RUNNER_OS}.png"
+      - name: Pack (AppImage, disk image or zip; all unsigned)
+        run: |
+          name="qrp2p-${RUNNER_OS}-${RUNNER_ARCH}"
+          case "$RUNNER_OS" in
+            macOS)
+              hdiutil create -volname QRP2P -srcfolder dist/qrp2p_app.app -ov -format UDZO "dist/$name.dmg"
+              ;;
+            Windows)
+              7z a "dist/$name.zip" ./dist/qrp2p_app.dist
+              ;;
+            *)
+              curl -fsSL -o appimagetool "https://github.com/AppImage/appimagetool/releases/download/${APPIMAGETOOL_VERSION}/appimagetool-x86_64.AppImage"
+              echo "${APPIMAGETOOL_SHA256}  appimagetool" | sha256sum -c -
+              chmod +x appimagetool
+              mkdir -p tools-bin
+              printf '#!/bin/sh\nexec "%s/appimagetool" --appimage-extract-and-run "$@"\n' "$PWD" > tools-bin/appimagetool
+              chmod +x tools-bin/appimagetool
+              PATH="$PWD/tools-bin:$PATH" packaging/linux/make_appimage.sh dist/qrp2p_app.dist "dist/$name.AppImage"
+              QT_QPA_PLATFORM=offscreen "dist/$name.AppImage" --appimage-extract-and-run \
+                --data-dir appimage-smoke --no-mdns --smoke-test dist/first-screen-AppImage.png
+              ;;
+          esac
+      - uses: actions/upload-artifact@v7
+        with:
+          name: qrp2p-${{ runner.os }}-${{ runner.arch }}
+          path: |
+            dist/*.AppImage
+            dist/*.dmg
+            dist/*.zip
+            dist/first-screen-*.png
+          retention-days: 14

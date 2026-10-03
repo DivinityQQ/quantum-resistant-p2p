@@ -99,12 +99,34 @@ class AdmissionPrompt:
     deadline: float
 
 
+class PromptOutcome(StrEnum):
+    """How an admission prompt ended: what actually happened, not just what the user chose."""
+
+    ACCEPTED = "accepted"
+    """Contact request: the contact was pinned and the session admitted."""
+    DECLINED = "declined"
+    """Contact request: refused with ``declined``."""
+    GLASS_BOX = "glass_box"
+    """Glass-box request: admitted as a glass-box session."""
+    NORMAL = "normal"
+    """Glass-box request declined: admitted as a normal session."""
+    BUSY = "busy"
+    """Accepted, but the live-session cap was reached meanwhile: rejected with ``busy``."""
+    GONE = "gone"
+    """Contact request accepted, but the initiator left while the contact was saved; the
+    contact stays pinned."""
+    EXPIRED = "expired"
+    """Not answered before the admission deadline."""
+    WITHDRAWN = "withdrawn"
+    """The initiator went away before an answer."""
+
+
 @dataclass(frozen=True, slots=True)
 class PromptClosed:
     """A prompt was answered, expired or became moot (the initiator went away)."""
 
     prompt_id: int
-    outcome: str
+    outcome: PromptOutcome
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,6 +141,24 @@ class KeyMismatchDetected:
     contact_id: bytes
     expected_short_id: str
     actual_short_id: str
+    expected_peer_id: bytes
+    """The pinned bundle's full peer ID (its fingerprint)."""
+    actual_peer_id: bytes
+    """The full peer ID of the identity that answered."""
+
+
+@dataclass(frozen=True, slots=True)
+class ConnectProgress:
+    """An outgoing handshake reached a stage the user waits on.
+
+    ``stage`` is ``"waiting_for_admission"``: the peer authenticated, we revealed ourselves
+    (Confirm), and the responder's user decides now (up to the admission deadline, DESIGN §6.4).
+    ``contact_id`` is ``None`` for a first contact.
+    """
+
+    target: str
+    contact_id: bytes | None
+    stage: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,6 +186,7 @@ type NodeEvent = (
     | SessionOpened
     | SessionEnded
     | ConnectFailed
+    | ConnectProgress
     | AdmissionPrompt
     | PromptClosed
     | KeyMismatchDetected
