@@ -98,9 +98,10 @@ T.Button {
     Keys.onPressed: event => event.accepted = control.busy && clickKey(event)
     Keys.onReleased: event => event.accepted = control.busy && clickKey(event)
 
+    // Present only while busy: a disabled MouseArea still shows its cursor.
     MouseArea {
         anchors.fill: parent
-        enabled: control.busy
+        visible: control.busy
         acceptedButtons: Qt.AllButtons
         cursorShape: Qt.BusyCursor
     }

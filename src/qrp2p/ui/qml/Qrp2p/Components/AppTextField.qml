@@ -24,6 +24,9 @@ T.TextField {
     selectByMouse: true
     persistentSelection: false
     Accessible.name: label
+    T.ContextMenu.menu: TextEditMenu {
+        editor: control
+    }
 
     AppText {
         x: control.leftPadding

@@ -2,9 +2,13 @@ import QtQuick
 import QtQuick.Templates as T
 import Qrp2p.Theme
 
-// A slim scroll bar that widens under the pointer.
+// A slim scroll bar that widens under the pointer. Attached to a Flickable it sits over the
+// content's right edge, so the content leaves room for it: Theme.scrollGutter, always, when the
+// content wraps (its height depends on its width); `gutter`, zero while hidden, when it does not.
 T.ScrollBar {
     id: control
+
+    readonly property int gutter: visible ? Theme.scrollGutter : 0
 
     implicitWidth: hovered || pressed ? 10 : 6
     implicitHeight: hovered || pressed ? 10 : 6

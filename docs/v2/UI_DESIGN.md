@@ -314,7 +314,11 @@ Do not turn every clickable item into a raw Rectangle with only a MouseArea.
 Primary actions are content-sized and clearly named. Busy prevents duplicate submission but
 does not imply success. Disabled actions explain their prerequisite where it is not obvious.
 Hover, keyboard focus, pressed and selected are distinct states. Tooltips supplement visible
-content; they never contain the only explanation of exposure or a dangerous action.
+content; they never contain the only explanation of exposure or a dangerous action. A tooltip
+appears beside its control, never over it, so the control stays clickable. Buttons keep the
+platform's arrow pointer; a busy button alone shows the busy pointer. Scroll bars never cover
+content. Editable and selectable text has the platform's context menu (Undo, Redo, Cut, Copy,
+Paste, Select all; read-only text Copy and Select all); a masked password is never copied out.
 
 Select via click/tap or keyboard. Double-click is optional acceleration only. Popovers close
 with Escape and return focus to their invoker. A modal moves focus inside, contains keyboard
@@ -372,7 +376,8 @@ make sender/direction depend on the session rather than fields supplied by the p
 Use the service's Sending, Sent, Delivered and Failed states. Delivered requires the matching
 encrypted receipt; it does not mean read. Show failed unsent history after crash recovery and
 do not silently resend it. Enter sends, Shift+Enter adds a line; document this near the composer
-or in Help and respect IME composition. Do not retain drafts across lock through plaintext
+or in Help and respect IME composition. The composer grows with its lines up to six, then
+scrolls with the cursor. Do not retain drafts across lock through plaintext
 settings.
 
 File offers show sender, sanitized name and actual size, with Accept and Decline. Transfers

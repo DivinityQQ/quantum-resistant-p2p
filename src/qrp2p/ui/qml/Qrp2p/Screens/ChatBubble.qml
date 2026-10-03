@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Templates as T
 import Qrp2p.Theme
 import Qrp2p.Components
 
@@ -54,6 +55,9 @@ Rectangle {
         font.family: Theme.family
         font.pixelSize: Theme.sizeBody
         activeFocusOnPress: true
+        T.ContextMenu.menu: TextEditMenu {
+            editor: body
+        }
         Accessible.role: Accessible.StaticText
         Accessible.name: (bubble.outgoing ? qsTr("You: ") : "") + bubble.text
     }

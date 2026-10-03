@@ -13,6 +13,7 @@ T.MenuItem {
 
     implicitWidth: row.implicitWidth + leftPadding + rightPadding
     implicitHeight: Math.max(Theme.controlHeight, row.implicitHeight + topPadding + bottomPadding)
+    height: visible ? implicitHeight : 0  // a hidden entry takes no room in its menu
     leftPadding: Theme.s3
     rightPadding: Theme.s3
     hoverEnabled: true

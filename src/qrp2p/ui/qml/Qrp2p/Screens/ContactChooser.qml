@@ -27,6 +27,7 @@ T.Popup {
     height: Math.min(implicitHeight, parent ? parent.height - y - Theme.s4 : 600)
     implicitHeight: content.implicitHeight + topPadding + bottomPadding
     padding: Theme.s3
+    rightPadding: Theme.s3 - Theme.scrollGutter  // rows add it back; the list's bar uses it
     modal: true
     focus: true
     closePolicy: T.Popup.CloseOnEscape | T.Popup.CloseOnPressOutside
@@ -51,6 +52,7 @@ T.Popup {
         AppTextField {
             id: search
             Layout.fillWidth: true
+            Layout.rightMargin: Theme.scrollGutter
             placeholderText: qsTr("Search contacts by name or ID")
             onTextChanged: chooser.workspace.setSearch(text)
             onAccepted: {
@@ -74,7 +76,7 @@ T.Popup {
 
             ColumnLayout {
                 id: lists
-                width: flick.width
+                width: flick.width - Theme.scrollGutter
                 spacing: Theme.s1
 
                 SectionHeading {
@@ -267,9 +269,11 @@ T.Popup {
 
         Divider {
             Layout.fillWidth: true
+            Layout.rightMargin: Theme.scrollGutter
         }
         AppButton {
             Layout.fillWidth: true
+            Layout.rightMargin: Theme.scrollGutter
             kind: "quiet"
             iconName: "globe"
             text: qsTr("Connect by address…")
