@@ -631,3 +631,13 @@ def test_pasting_files_or_an_image_offers_them(ui: Ui) -> None:
     assert area.property("text") == "just text"
     assert len(ui.backend.pending("send_file_data")) == 1
     assert len(ui.backend.pending("send_file")) == 1
+
+
+def test_the_title_counts_unread_messages_while_unlocked(ui: Ui) -> None:
+    carol = contact("Carol")
+    ui.unlock(online(BOB), online(carol))
+    other = next(c for c in (BOB, carol) if c.contact_id != ui.app.workspace.property("selectedId"))  # type: ignore[attr-defined]
+    ui.backend.updates(MessageChanged(other.contact_id, chat("psst"), added=True))
+    assert ui.window.title() == "QRP2P (1)"
+    ui.key(Qt.Key.Key_L, Qt.KeyboardModifier.ControlModifier)
+    assert ui.window.title() == "QRP2P"

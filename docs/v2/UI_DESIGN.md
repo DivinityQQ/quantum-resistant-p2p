@@ -373,6 +373,10 @@ Render every peer-supplied name/message/file label as plain text. QML rich-text 
 must be explicitly disabled for those values. Preserve message content, wrap long text, and
 make sender/direction depend on the session rather than fields supplied by the peer.
 
+A message or file offer that arrives unseen asks for the window's attention (taskbar or dock)
+and counts in the window title, **QRP2P (3)**, and the app icon's badge where the platform has
+one. Counts only: no names or text, and nothing while locked.
+
 Use the service's Sending, Sent, Delivered and Failed states. Delivered requires the matching
 encrypted receipt; it does not mean read. Show failed unsent history after crash recovery and
 do not silently resend it. Enter sends, Shift+Enter adds a line; document this near the composer

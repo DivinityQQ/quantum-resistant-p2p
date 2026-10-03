@@ -93,6 +93,7 @@ class Workspace(ViewModel):
     readyChanged = Signal()  # noqa: N815
     noticePosted = Signal(str)  # noqa: N815
     """A short message for a toast."""
+    unreadChanged = Signal()  # noqa: N815
     incomingMessage = Signal(str)  # noqa: N815
     """A message or file offer arrived (the contact's name), to draw attention to the window."""
     addressConnected = Signal(str)  # noqa: N815
@@ -114,6 +115,8 @@ class Workspace(ViewModel):
     nearby = constant(QObject, "_nearby_model")
     contactCount = readonly(int, "_contact_count", contactsChanged)  # noqa: N815
     hiddenUnread = readonly(int, "_hidden_unread", contactsChanged)  # noqa: N815
+    unread = readonly(int, "_total_unread", unreadChanged)
+    """Unread messages and file offers in all conversations (the window title and app badge)."""
     selectedId = readonly(str, "_selected", selectionChanged)  # noqa: N815
     conversation = readonly(QObject, "_conversation", selectionChanged)
     search = readonly(str, "_search", searchChanged)
@@ -154,6 +157,7 @@ class Workspace(ViewModel):
         self._strip_limit = STRIP_LIMIT
         self._contact_count = 0
         self._hidden_unread = 0
+        self._total_unread = 0
         self._selected = ""
         self._conversation: Conversation | None = None
         self._search = ""
@@ -473,3 +477,7 @@ class Workspace(ViewModel):
             self._contact_count = count
             self._hidden_unread = hidden
             self.contactsChanged.emit()
+        total = sum(self._unread.values())
+        if total != self._total_unread:
+            self._total_unread = total
+            self.unreadChanged.emit()
