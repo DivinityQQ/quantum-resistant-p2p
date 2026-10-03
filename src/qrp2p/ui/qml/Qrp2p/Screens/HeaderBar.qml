@@ -12,11 +12,13 @@ Item {
     required property var app
     required property var workspace
     property bool inspectorOpen: false
+    property bool inspectorAvailable: true
 
     signal openChooser()
     signal openConnect()
     signal openSettings()
     signal openShortcuts()
+    signal openLearn()
     signal toggleInspector()
 
     implicitHeight: 56
@@ -56,9 +58,11 @@ Item {
         Divider {
             vertical: true
             Layout.preferredHeight: 20
+            visible: bar.inspectorAvailable
         }
         AppButton {
             objectName: "inspectorButton"
+            visible: bar.inspectorAvailable
             kind: "quiet"
             compact: true
             iconName: bar.inspectorOpen ? "minimize-2" : "panel-right"
@@ -89,6 +93,12 @@ Item {
                     iconName: "users"
                     shortcutText: "Ctrl+K"
                     onTriggered: bar.openChooser()
+                }
+                AppMenuItem {
+                    objectName: "learnItem"
+                    text: qsTr("Learn")
+                    iconName: "graduation-cap"
+                    onTriggered: bar.openLearn()
                 }
                 AppMenuSeparator {}
                 AppMenuItem {

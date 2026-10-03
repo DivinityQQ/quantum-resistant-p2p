@@ -38,6 +38,7 @@ from qrp2p.ui.tap import SessionDescribed, TraceAppended, TraceOverflow
 from qrp2p.ui.text import isolate
 from qrp2p.ui.viewmodels.conversation import Conversation
 from qrp2p.ui.viewmodels.inspector import Inspector
+from qrp2p.ui.viewmodels.lab import Lab
 from qrp2p.ui.viewmodels.listmodel import RowModel
 from qrp2p.ui.viewmodels.prompts import Prompts
 from qrp2p.ui.viewmodels.qt import ViewModel, constant, readonly
@@ -113,6 +114,7 @@ class Workspace(ViewModel):
     settings = constant(QObject, "_settings")
     prompts = constant(QObject, "_prompts")
     inspector = constant(QObject, "_inspector")
+    lab = constant(QObject, "_lab")
     strip = constant(QObject, "_strip")
     contacts = constant(QObject, "_contacts_model")
     nearby = constant(QObject, "_nearby_model")
@@ -146,8 +148,8 @@ class Workspace(ViewModel):
         )
         self._prompts.setParent(self)
         self._prompts.finished.connect(self._prompt_finished)
-        self._inspector = Inspector(scope, preferred=self._preferred_session)
-        self._inspector.setParent(self)
+        self._inspector = Inspector(scope, preferred=self._preferred_session, parent=self)
+        self._lab = Lab(scope, parent=self)
         self._strip: RowModel[ContactRow] = RowModel(ContactRow, lambda r: r.contact_id, self)
         self._contacts_model: RowModel[ContactRow] = RowModel(
             ContactRow, lambda r: r.contact_id, self
@@ -194,6 +196,11 @@ class Workspace(ViewModel):
     def prompts_model(self) -> Prompts:
         """The requests waiting for the user (Python side; QML reads ``prompts``)."""
         return self._prompts
+
+    @property
+    def lab_model(self) -> Lab:
+        """The solo lab (Python side; QML reads ``lab``)."""
+        return self._lab
 
     @property
     def inspector_model(self) -> Inspector:

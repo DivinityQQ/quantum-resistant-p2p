@@ -132,3 +132,8 @@ LAB_CLASSICAL: Final = Profile(
 
 LAB_PROFILES: Final[tuple[Profile, ...]] = (*REAL_PROFILES, LAB_CLASSICAL)
 """Every profile a solo-lab node may use."""
+
+
+def lab_profile_named(name: str) -> Profile | None:
+    """A solo-lab profile by name (the real ones and ``LAB-CLASSICAL``); ``None`` if unknown."""
+    return next((p for p in LAB_PROFILES if p.name == name), None)

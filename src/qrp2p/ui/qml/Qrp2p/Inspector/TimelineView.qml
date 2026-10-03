@@ -56,7 +56,9 @@ Item {
                         Layout.leftMargin: Theme.s2
                         Layout.rightMargin: Theme.s2
                         horizontalAlignment: Text.AlignHCenter
-                        text: qsTr("Times: this device's clock, from the first retained event")
+                        text: view.inspector.exposure === "lab"
+                            ? qsTr("Times: the lab clock (virtual), from the first event")
+                            : qsTr("Times: this device's clock, from the first retained event")
                         role: "small"
                         wrapMode: Text.Wrap
                         maximumLineCount: 2

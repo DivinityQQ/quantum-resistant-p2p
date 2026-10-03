@@ -161,6 +161,9 @@ def _time(seconds: float) -> str:
 def _session_row(facts: SessionFacts) -> SessionRow:
     who = facts.peer_name or (facts.address if facts.initiator else f"from {facts.address}")
     role = "Outgoing" if facts.initiator else "Incoming"
+    if facts.lab:  # both ends are ours: name the view, and its role in the handshake
+        who = f"{facts.local_name}'s view"
+        role = "Initiator" if facts.initiator else "Responder"
     profile = facts.profile.name if facts.profile is not None else ""
     if facts.ended:
         failed = bool(facts.end_reason) and facts.end_reason not in {"normal", "locked", "replaced"}
@@ -254,6 +257,7 @@ class Inspector(ViewModel):
     Args:
         scope: Requests and updates of this unlocked period.
         preferred: The session to open first: the selected conversation's, or -1.
+        source: Whose sessions: ``node`` (the messenger's) or ``lab`` (the solo lab's).
     """
 
     openChanged = Signal()  # noqa: N815
@@ -298,11 +302,17 @@ class Inspector(ViewModel):
     keyRows = readonly(int, "_key_rows", graphChanged)  # noqa: N815
 
     def __init__(
-        self, scope: Scope, preferred: Callable[[], int], parent: QObject | None = None
+        self,
+        scope: Scope,
+        preferred: Callable[[], int],
+        parent: QObject | None = None,
+        *,
+        source: str = "node",
     ) -> None:
         super().__init__(parent)
         self._scope = scope
         self._preferred = preferred
+        self._source = source
         self._sessions: RowModel[SessionRow] = RowModel(SessionRow, lambda r: r.key, self)
         self._timeline_model: RowModel[EventRow] = RowModel(EventRow, lambda r: r.key, self)
         self._frames: RowModel[FrameRow] = RowModel(FrameRow, lambda r: r.key, self)
@@ -370,9 +380,9 @@ class Inspector(ViewModel):
         self._open = is_open
         self.openChanged.emit()
         if is_open:
-            self._scope.request(ops.inspect_sessions(), self._sessions_listed)
+            self._scope.request(ops.inspect_sessions(self._source), self._sessions_listed)
         else:
-            self._scope.request(ops.inspect_close())
+            self._scope.request(ops.inspect_close(self._source))
             self._clear_session()
 
     @Slot(int)
@@ -398,7 +408,7 @@ class Inspector(ViewModel):
         if self._following and self._session_id >= 0:
             self._following = False
             self.followingChanged.emit()
-            self._scope.request(ops.inspect_pause())
+            self._scope.request(ops.inspect_pause(self._source))
 
     @Slot()
     def followLive(self) -> None:  # noqa: N802
@@ -513,6 +523,9 @@ class Inspector(ViewModel):
     def apply(self, updates: tuple[Update, ...]) -> None:
         """Take the Inspector's updates from a batch."""
         for update in updates:
+            tapped = isinstance(update, SessionDescribed | TraceAppended | TraceOverflow)
+            if tapped and update.source != self._source:
+                continue  # the other Inspector's
             match update:
                 case SessionDescribed(facts=facts):
                     self._described(facts)
@@ -591,7 +604,7 @@ class Inspector(ViewModel):
         self._loading = True
         self._error = ""
         self.sessionChanged.emit()
-        if not self._scope.request(ops.inspect(session_id, after), done):
+        if not self._scope.request(ops.inspect(session_id, after, self._source), done):
             self._loading = False
             self.sessionChanged.emit()
 

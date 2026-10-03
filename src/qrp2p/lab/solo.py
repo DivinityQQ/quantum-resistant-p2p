@@ -217,6 +217,7 @@ class SoloLab:
         self._order = itertools.count()
         self._flight: list[InFlight] = []
         self._steps: list[Step] = []
+        self._notes: list[str] = []
         self._marks: list[tuple[int, int]] = []
         self._started = False
         self._divergence = ""
@@ -321,6 +322,28 @@ class SoloLab:
     def note(self) -> str:
         """What the last step did, in a sentence (or why it did nothing)."""
         return self._note
+
+    @property
+    def notes(self) -> tuple[str, ...]:
+        """What each step did, in order."""
+        return tuple(self._notes)
+
+    def describe(self, step: Step) -> str:
+        """What ``step`` would do, in a few words (for a button or a list)."""
+        person = step.side.person
+        match step.kind:
+            case Kind.DELIVER:
+                flight = next((f for f in self._flight if f.sender is step.side.other), None)
+                what = flight.label if flight is not None else "the next frame"
+                return f"Deliver {what} to {person}"
+            case Kind.START:
+                return "Start the handshake"
+            case Kind.ADMIT:
+                return "Bob admits Alice"
+            case Kind.DECLINE:
+                return "Bob declines Alice"
+            case _:
+                return f"{person}: {step.kind.value.replace('_', ' ')}"
 
     @property
     def divergence(self) -> str:
@@ -459,6 +482,7 @@ class SoloLab:
         except ReplayDivergence as divergence:
             self._divergence = str(divergence)
             self._note = self._divergence
+        self._notes.append(self._note)
         alice, bob = self._nodes[Side.ALICE], self._nodes[Side.BOB]
         self._marks.append((len(alice.provider.log), len(bob.provider.log)))
 

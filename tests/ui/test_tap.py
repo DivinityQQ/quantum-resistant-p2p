@@ -66,7 +66,7 @@ async def test_the_snapshot_and_live_events_join_without_gap_or_duplicate(
     alice, bob = pair
     bob_id, _, session_id = await connected(alice, bob)
     woken = Woken()
-    tap = TraceTap(alice.node, woken)
+    tap = TraceTap.of_node(alice.node, woken)
     chats = [asyncio.create_task(alice.node.send_chat(bob_id, f"m{n}")) for n in range(20)]
     await asyncio.sleep(0)  # some chats are under way while the snapshot is taken
     snap = tap.inspect(session_id)
@@ -90,7 +90,7 @@ async def test_a_paused_tap_queues_nothing_and_resuming_reports_evictions(
     alice, bob = pair
     monkeypatch.setattr(trace_bus, "RING_SIZE", 30)
     bob_id, _, session_id = await connected(alice, bob)
-    tap = TraceTap(alice.node, Woken())
+    tap = TraceTap.of_node(alice.node, Woken())
     last = tap.inspect(session_id).items[-1].ordinal
     tap.pause()
     for n in range(40):
@@ -108,7 +108,7 @@ async def test_a_burst_overflows_into_a_catch_up(
     alice, bob = pair
     monkeypatch.setattr(tap_module, "BUFFER_LIMIT", 5)
     bob_id, _, session_id = await connected(alice, bob)
-    tap = TraceTap(alice.node, Woken())
+    tap = TraceTap.of_node(alice.node, Woken())
     tap.inspect(session_id)
     for n in range(5):
         await alice.node.send_chat(bob_id, f"burst {n}")
@@ -121,7 +121,7 @@ async def test_descriptors_are_forwarded_while_the_inspector_watches(
     pair: tuple[NodeHarness, NodeHarness],
 ) -> None:
     alice, bob = pair
-    tap = TraceTap(alice.node, Woken())
+    tap = TraceTap.of_node(alice.node, Woken())
     assert tap.sessions() == ()
     bob_id, _, session_id = await connected(alice, bob)
     described = [u for u in tap.drain() if isinstance(u, SessionDescribed)]
@@ -140,7 +140,7 @@ async def test_glass_box_values_are_unwrapped_and_normal_sessions_have_none(
 ) -> None:
     alice, bob = pair
     bob_id, _, session_id = await connected(alice, bob)
-    tap = TraceTap(alice.node, Woken())
+    tap = TraceTap.of_node(alice.node, Woken())
     normal = tap.inspect(session_id)
     assert not any(isinstance(i.event, Revealed | RecordOpened) for i in normal.items)
     assert not normal.facts.exposed
@@ -169,7 +169,7 @@ async def test_a_session_no_longer_retained_is_refused(
     pair: tuple[NodeHarness, NodeHarness],
 ) -> None:
     alice, _ = pair
-    tap = TraceTap(alice.node, Woken())
+    tap = TraceTap.of_node(alice.node, Woken())
     with pytest.raises(Exception, match="no longer retained"):
         tap.inspect(12345)
     assert profile_facts("NOT-A-PROFILE") is None

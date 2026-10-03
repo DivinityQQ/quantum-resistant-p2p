@@ -13,7 +13,7 @@ from typing import Final
 
 from qrp2p.services.models import TEXT_SCALES, Appearance, Retention, TrustState
 from qrp2p.services.node import Node, NodeError, profile_by_name
-from qrp2p.ui.host import Op, TapOp, network_snap
+from qrp2p.ui.host import LabOp, Op, TapOp, network_snap
 from qrp2p.ui.snapshots import ID_HEX_LEN, ActivitySnap, SafetySnap, message_snap, settings_snap
 from qrp2p.ui.text import fingerprint
 
@@ -487,24 +487,62 @@ def change_password(old: str, new: str) -> Op:
 # -- the Inspector (the services thread's trace tap) ------------------------------------------------
 
 
-def inspect_sessions() -> Op:
-    """Every retained session; their descriptor changes follow as updates."""
-    return TapOp(lambda tap: tap.sessions())
+def inspect_sessions(source: str = "node") -> Op:
+    """Every retained session of ``source``; their descriptor changes follow as updates."""
+    return TapOp(lambda tap: tap.sessions(), source)
 
 
-def inspect(session_id: int, after: int = -1) -> Op:
+def inspect(session_id: int, after: int = -1, source: str = "node") -> Op:
     """A session's retained events after ``after``; its new events follow as updates."""
     if session_id < 0 or after < -1:
         msg = "unknown session"
         raise ValueError(msg)
-    return TapOp(lambda tap: tap.inspect(session_id, after))
+    return TapOp(lambda tap: tap.inspect(session_id, after), source)
 
 
-def inspect_pause() -> Op:
+def inspect_pause(source: str = "node") -> Op:
     """Stop forwarding the inspected session's events."""
-    return TapOp(lambda tap: tap.pause())
+    return TapOp(lambda tap: tap.pause(), source)
 
 
-def inspect_close() -> Op:
+def inspect_close(source: str = "node") -> Op:
     """The Inspector closed: forward nothing more."""
-    return TapOp(lambda tap: tap.close())
+    return TapOp(lambda tap: tap.close(), source)
+
+
+# -- the solo lab (each returns a LabSnap) -------------------------------------------------------
+
+
+def lab_state() -> Op:
+    """Where the lab is."""
+    return LabOp(lambda lab: lab.snapshot())
+
+
+def lab_new(profile: str) -> Op:
+    """A fresh lab run with new identities (also Reset)."""
+    return LabOp(lambda lab: lab.new(profile))
+
+
+def lab_step() -> Op:
+    """The default step: deliver the oldest frame in flight, admit, or start."""
+    return LabOp(lambda lab: lab.step())
+
+
+def lab_run() -> Op:
+    """Default steps until nothing is in flight or waiting for a decision."""
+    return LabOp(lambda lab: lab.run())
+
+
+def lab_take(kind: str, side: str, text: str = "") -> Op:
+    """A chosen step: a chat, a KeyUpdate, a rekey, a close, a wait, an admission decision."""
+    return LabOp(lambda lab: lab.take(kind, side, text))
+
+
+def lab_fork(upto: int) -> Op:
+    """Replace the run with a fork after step ``upto`` (replayed to there, then live)."""
+    return LabOp(lambda lab: lab.fork(upto))
+
+
+def lab_close() -> Op:
+    """Leave the lab: its run and values are dropped."""
+    return LabOp(lambda lab: lab.close())

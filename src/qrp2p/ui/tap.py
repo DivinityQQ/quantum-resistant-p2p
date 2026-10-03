@@ -1,5 +1,8 @@
 """The services-thread side of the Inspector: one inspected session's trace, as snapshots.
 
+A tap reads one trace bus: the node's (real sessions) or the solo lab's. Its updates carry the
+name of that ``source``, so the Inspector of the messenger and the lab's never mix them up.
+
 The trace bus lives on the services thread. When the Inspector opens a session, :class:`TraceTap`
 takes the session's retained events and starts forwarding its new ones *in the same loop step*,
 so no event falls between the snapshot and the subscription and none arrives twice (ordinals let
@@ -18,9 +21,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Final
 
+from qrp2p.lab.classical import lab_profile_named
 from qrp2p.services.exposure import RecordRevealed, ValueRevealed
-from qrp2p.services.node import Node, NodeError, profile_by_name
-from qrp2p.services.trace_bus import SessionInfo, TraceRecord
+from qrp2p.services.node import Node, NodeError
+from qrp2p.services.trace_bus import SessionInfo, TraceBus, TraceRecord
 from qrp2p.ui.inspect.model import (
     Item,
     ProfileFacts,
@@ -51,6 +55,7 @@ class TraceAppended:
 
     session_id: int
     items: tuple[TraceItem, ...]
+    source: str = "node"
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +63,7 @@ class TraceOverflow:
     """Events of the inspected session were dropped in transit: catch up from the last ordinal."""
 
     session_id: int
+    source: str = "node"
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,13 +71,13 @@ class SessionDescribed:
     """A retained session appeared or its descriptor changed."""
 
     facts: SessionFacts
+    source: str = "node"
 
 
 def profile_facts(name: str) -> ProfileFacts | None:
-    """A real profile's algorithms and sizes; ``None`` for an unknown name."""
-    try:
-        profile = profile_by_name(name)
-    except NodeError:
+    """A profile's algorithms and sizes (``LAB-CLASSICAL`` too); ``None`` for an unknown name."""
+    profile = lab_profile_named(name)
+    if profile is None:
         return None
     return ProfileFacts(
         name=profile.name,
@@ -134,24 +140,47 @@ def trace_item(record: TraceRecord) -> TraceItem:
 type Update = TraceAppended | TraceOverflow | SessionDescribed
 
 
+type Describe = Callable[[SessionInfo], SessionFacts]
+"""What the Inspector shows about a session besides its trace, from its descriptor."""
+
+
 class TraceTap:
     """Forwards one inspected session's events and every descriptor change (services thread).
 
     Args:
-        node: The node whose trace bus to read.
+        bus: The trace bus to read.
+        describe: A session's facts from its descriptor.
         wake: Asks the host to flush soon; called when the first update is pending.
+        source: The name its updates carry (``node`` or ``lab``).
     """
 
-    def __init__(self, node: Node, wake: Callable[[], None]) -> None:
-        self._node = node
+    def __init__(
+        self, bus: TraceBus, describe: Describe, wake: Callable[[], None], source: str = "node"
+    ) -> None:
+        self._bus = bus
+        self._describe = describe
+        self._source = source
         self._wake = wake
         self._session: int | None = None
         self._watching = False
         self._buffer: list[TraceItem] = []
         self._overflowed = False
         self._described: dict[int, SessionFacts] = {}
-        node.trace.subscribe(self._on_record)
-        node.trace.subscribe_sessions(self._on_session)
+        self._unsubscribe = (
+            bus.subscribe(self._on_record),
+            bus.subscribe_sessions(self._on_session),
+        )
+
+    @classmethod
+    def of_node(cls, node: Node, wake: Callable[[], None]) -> TraceTap:
+        """The tap of the node's own sessions."""
+        return cls(node.trace, lambda info: session_facts(node, info), wake)
+
+    def detach(self) -> None:
+        """Stop reading the bus for good (the lab replaced its bus)."""
+        self.close()
+        for unsubscribe in self._unsubscribe:
+            unsubscribe()
 
     # -- requests (services thread) --------------------------------------------------------------
 
@@ -159,7 +188,7 @@ class TraceTap:
         """Every retained session, oldest first; descriptor changes are forwarded from now on."""
         self._watching = True
         self._described.clear()
-        return tuple(session_facts(self._node, info) for info in self._node.trace.sessions())
+        return tuple(self._describe(info) for info in self._bus.sessions())
 
     def inspect(self, session_id: int, after: int = -1) -> InspectSnap:
         """The session's retained events after ``after``; its new events are forwarded from now.
@@ -167,16 +196,16 @@ class TraceTap:
         Raises:
             NodeError: The session's ring is no longer kept.
         """
-        info = self._node.trace.info(session_id)
+        info = self._bus.info(session_id)
         if info is None:
             msg = "that session is no longer retained"
             raise NodeError(msg)
-        records, missing = self._node.trace.since(session_id, after)
+        records, missing = self._bus.since(session_id, after)
         self._session = session_id
         self._buffer.clear()
         self._overflowed = False
         items = tuple(trace_item(r) for r in records)
-        return InspectSnap(session_facts(self._node, info), items, missing)
+        return InspectSnap(self._describe(info), items, missing)
 
     def pause(self) -> None:
         """Stop forwarding events (the display is paused, or shows another view)."""
@@ -195,9 +224,9 @@ class TraceTap:
         updates: list[Update] = list(self._described_updates())
         session = self._session
         if session is not None and self._overflowed:
-            updates.append(TraceOverflow(session))
+            updates.append(TraceOverflow(session, self._source))
         elif session is not None and self._buffer:
-            updates.append(TraceAppended(session, tuple(self._buffer)))
+            updates.append(TraceAppended(session, tuple(self._buffer), self._source))
         self._buffer.clear()
         self._overflowed = False
         return updates
@@ -217,10 +246,10 @@ class TraceTap:
     def _on_session(self, info: SessionInfo) -> None:
         if not self._watching:
             return
-        self._described[info.session_id] = session_facts(self._node, info)
+        self._described[info.session_id] = self._describe(info)
         self._wake()
 
     def _described_updates(self) -> list[SessionDescribed]:
-        updates = [SessionDescribed(facts) for facts in self._described.values()]
+        updates = [SessionDescribed(facts, self._source) for facts in self._described.values()]
         self._described.clear()
         return updates

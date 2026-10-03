@@ -8,9 +8,10 @@ Rectangle {
     id: banner
 
     property string text
-    // neutral | danger | exposure | success
+    // neutral | danger | exposure | success | lab
     property string kind: "neutral"
-    property string iconName: kind === "danger" ? "circle-alert" : kind === "exposure" ? "eye" : "info"
+    property string iconName: kind === "danger" ? "circle-alert" : kind === "exposure" ? "eye"
+        : kind === "lab" ? "flask-conical" : "info"
     property bool busy: false
     property bool dismissible: false
     default property alias actions: actionRow.data
@@ -19,11 +20,13 @@ Rectangle {
 
     readonly property color foreground: kind === "danger" ? Theme.dangerText
         : kind === "exposure" ? Theme.exposureText
+        : kind === "lab" ? Theme.labText
         : kind === "success" ? Theme.success : Theme.text
 
     implicitHeight: Math.max(Theme.controlHeight, layout.implicitHeight + Theme.s2 * 2)
     radius: Theme.radiusControl
-    color: kind === "danger" ? Theme.dangerFill : kind === "exposure" ? Theme.exposureFill : Theme.surfaceSubtle
+    color: kind === "danger" ? Theme.dangerFill : kind === "exposure" ? Theme.exposureFill
+        : kind === "lab" ? Theme.labFill : Theme.surfaceSubtle
     Accessible.role: Accessible.AlertMessage
     Accessible.name: text
 
