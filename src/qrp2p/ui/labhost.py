@@ -20,7 +20,7 @@ from qrp2p.services.node import Node
 from qrp2p.services.recordings import RecordingInfo, restored
 from qrp2p.services.trace_bus import SessionInfo, TraceBus
 from qrp2p.ui.inspect.model import SessionFacts
-from qrp2p.ui.tap import TraceTap, profile_facts
+from qrp2p.ui.tap import TraceTap, session_facts
 
 DEFAULT_PROFILE: Final = "HYBRID-1"
 PROFILES: Final = tuple(p.name for p in LAB_PROFILES)
@@ -286,55 +286,10 @@ class LabHost:
 
     def _describe(self, info: SessionInfo) -> SessionFacts:
         if self._viewing is not None and info.session_id == self._viewing[2]:
-            return _recorded(info)
+            # A glass-box recording: our side of it, every value revealed (EXPOSED).
+            peer = info.peer_short_id or "Peer"
+            return session_facts(
+                info, local_name="You", peer_name=peer, exposed=True, recorded=True
+            )
         local, peer = ("Alice", "Bob") if info.initiator else ("Bob", "Alice")
-        return SessionFacts(
-            session_id=info.session_id,
-            initiator=info.initiator,
-            address=info.address,
-            profile=profile_facts(info.profile) if info.profile else None,
-            local_name=local,
-            peer_name=peer,
-            peer_short_id=info.peer_short_id,
-            contact_id="",
-            trust="",
-            glass_box_requested=False,
-            glass_box=False,
-            exposed=True,
-            lab=True,
-            established=info.established,
-            ended=info.ended,
-            end_reason=info.end_reason,
-            admit_reason=info.admit_reason,
-            by_peer=info.by_peer,
-            pin_result=info.pin_result,
-            contact_saved=False,
-            recorded=False,
-        )
-
-
-def _recorded(info: SessionInfo) -> SessionFacts:
-    """A glass-box recording's session: our side of it, every value revealed (EXPOSED)."""
-    return SessionFacts(
-        session_id=info.session_id,
-        initiator=info.initiator,
-        address=info.address,
-        profile=profile_facts(info.profile) if info.profile else None,
-        local_name="You",
-        peer_name=info.peer_short_id or "Peer",
-        peer_short_id=info.peer_short_id,
-        contact_id="",
-        trust="",
-        glass_box_requested=info.glass_box_requested,
-        glass_box=True,
-        exposed=True,
-        lab=False,
-        established=info.established,
-        ended=True,
-        end_reason=info.end_reason,
-        admit_reason=info.admit_reason,
-        by_peer=info.by_peer,
-        pin_result=info.pin_result,
-        contact_saved=info.contact_saved,
-        recorded=True,
-    )
+        return session_facts(info, local_name=local, peer_name=peer, exposed=True, lab=True)
