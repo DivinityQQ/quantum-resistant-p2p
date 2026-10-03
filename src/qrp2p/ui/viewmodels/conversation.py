@@ -267,8 +267,9 @@ class Conversation(ViewModel):
             return False
         match what_to_paste(QGuiApplication.clipboard().mimeData(), datetime.now().astimezone()):
             case PastedFiles(paths=paths):
-                for path in paths:
-                    self.sendFile(path)
+                for path in paths:  # already local paths: not parsed again as URLs
+                    op = ops.send_file(self._contact.contact_id, path)
+                    self._request(op, "Could not offer the file")
             case PastedImage(name=name, png=png):
                 op = ops.send_file_data(self._contact.contact_id, name, png)
                 self._request(op, "Could not offer the image")
