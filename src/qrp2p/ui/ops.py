@@ -13,7 +13,7 @@ from typing import Final
 
 from qrp2p.services.models import TEXT_SCALES, Appearance, Retention, TrustState
 from qrp2p.services.node import Node, NodeError, profile_by_name
-from qrp2p.ui.host import Op, network_snap
+from qrp2p.ui.host import Op, TapOp, network_snap
 from qrp2p.ui.snapshots import ID_HEX_LEN, ActivitySnap, SafetySnap, message_snap, settings_snap
 from qrp2p.ui.text import fingerprint
 
@@ -482,3 +482,29 @@ def change_password(old: str, new: str) -> Op:
         await node.change_password(old, new)
 
     return op
+
+
+# -- the Inspector (the services thread's trace tap) ------------------------------------------------
+
+
+def inspect_sessions() -> Op:
+    """Every retained session; their descriptor changes follow as updates."""
+    return TapOp(lambda tap: tap.sessions())
+
+
+def inspect(session_id: int, after: int = -1) -> Op:
+    """A session's retained events after ``after``; its new events follow as updates."""
+    if session_id < 0 or after < -1:
+        msg = "unknown session"
+        raise ValueError(msg)
+    return TapOp(lambda tap: tap.inspect(session_id, after))
+
+
+def inspect_pause() -> Op:
+    """Stop forwarding the inspected session's events."""
+    return TapOp(lambda tap: tap.pause())
+
+
+def inspect_close() -> Op:
+    """The Inspector closed: forward nothing more."""
+    return TapOp(lambda tap: tap.close())

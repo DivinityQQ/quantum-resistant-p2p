@@ -23,6 +23,7 @@ import contextlib
 import logging
 import threading
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Final
 
 from qrp2p.services.discovery import local_addresses
@@ -79,6 +80,7 @@ from qrp2p.ui.snapshots import (
     settings_snap,
 )
 from qrp2p.ui.snapshots import SessionEnded as SessionEndedUpdate
+from qrp2p.ui.tap import TraceTap
 from qrp2p.ui.text import display_text
 
 BATCH_INTERVAL: Final = 1 / 30
@@ -94,8 +96,18 @@ CLOSED: Final = ErrorInfo("closed", "The app is shutting down.")
 
 _log = logging.getLogger(__name__)
 
-type Op = Callable[[Node], Awaitable[object]]
+type NodeOp = Callable[[Node], Awaitable[object]]
 """A request: runs on the services thread with the node; returns a snapshot or a primitive."""
+
+
+@dataclass(frozen=True, slots=True)
+class TapOp:
+    """A request to the Inspector's :class:`~qrp2p.ui.tap.TraceTap` (services thread)."""
+
+    run: Callable[[TraceTap], object]
+
+
+type Op = NodeOp | TapOp
 type Post = Callable[[Delivery], None]
 
 
@@ -168,6 +180,7 @@ class ServiceHost:
         self._progress_at: dict[tuple[str, str], int] = {}
         self._flush_handle: asyncio.TimerHandle | None = None
         self._requests: set[asyncio.Task[None]] = set()
+        self._tap: TraceTap | None = None
 
     # -- Qt thread -------------------------------------------------------------------------------
 
@@ -220,6 +233,7 @@ class ServiceHost:
             return
         self._node = node
         node.subscribe(self._on_event)
+        self._tap = TraceTap(node, wake=self._schedule_flush)
         try:
             await node.open()
         except VaultInUseError:
@@ -256,7 +270,11 @@ class ServiceHost:
             self._reply(Reply(gen, request_id, error=STALE))
             return
         try:
-            value = await op(node)
+            if isinstance(op, TapOp):
+                assert self._tap is not None  # noqa: S101  # created with the node
+                value = op.run(self._tap)
+            else:
+                value = await op(node)
         except Exception as error:  # noqa: BLE001  # every failure becomes a reply
             self._reply(Reply(gen, request_id, error=error_info(error)))
             return
@@ -277,6 +295,8 @@ class ServiceHost:
 
     def _lifecycle(self, state: str, *, error: str = "") -> None:
         self._flush()
+        if self._tap is not None:
+            self._tap.close()  # a lock clears the bus; a new period inspects afresh
         self._gen += 1
         workspace = self._workspace() if state == NodeState.UNLOCKED else None
         self._post(Lifecycle(self._gen, state, workspace, error))
@@ -346,6 +366,9 @@ class ServiceHost:
             else:
                 self._progress_at.pop(key, None)
         self._outbox.append(update)
+        self._schedule_flush()
+
+    def _schedule_flush(self) -> None:
         if self._flush_handle is None:
             loop = asyncio.get_running_loop()
             self._flush_handle = loop.call_later(self._interval, self._flush)
@@ -354,6 +377,8 @@ class ServiceHost:
         if self._flush_handle is not None:
             self._flush_handle.cancel()
             self._flush_handle = None
+        if self._tap is not None:
+            self._outbox.extend(self._tap.drain())
         if not self._outbox:
             return
         batch = Batch(self._gen, tuple(self._outbox))

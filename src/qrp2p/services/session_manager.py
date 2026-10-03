@@ -272,7 +272,7 @@ class SessionManager:
                 address=address,
                 started=self._clock(),
                 profile=profile.name,
-                peer_id=b"",
+                pinned=pinned is not None,
                 glass_box_requested=glass_box,
             )
         )
@@ -370,6 +370,7 @@ class SessionManager:
         self._trace.describe(
             session.id,
             peer_id=peer_id,
+            peer_short_id=request.peer.short_id,
             profile=request.profile.name,
             glass_box_requested=request.gb_request,
         )
@@ -396,7 +397,10 @@ class SessionManager:
 
     def key_mismatch(self, session: Session, event: KeyMismatch) -> None:
         """See :class:`~qrp2p.services.session.SessionHooks`."""
-        self._trace.describe(session.id, peer_id=event.actual.peer_id)  # it proved this one
+        # It proved this identity, even if not the pinned one.
+        self._trace.describe(
+            session.id, peer_id=event.actual.peer_id, peer_short_id=event.actual.short_id
+        )
         self._hooks.key_mismatch(session, event)
 
     def profile_rejected(self, session: Session, event: ProfileRejected) -> None:
@@ -427,6 +431,7 @@ class SessionManager:
         self._trace.describe(
             session.id,
             peer_id=peer.peer_id,
+            peer_short_id=peer.short_id,
             profile=session.profile.name if session.profile else "",
             glass_box=session.glass_box,
             established=True,
@@ -475,7 +480,8 @@ class SessionManager:
         self._release_slot(session)
         self._close_gate(session)
         if session.peer is not None:  # an initiator knows the responder from Reply on
-            self._trace.describe(session.id, peer_id=session.peer.peer_id)
+            peer = session.peer
+            self._trace.describe(session.id, peer_id=peer.peer_id, peer_short_id=peer.short_id)
         self._trace.describe(
             session.id,
             end_reason=end.reason.label if end.reason is not None else "",

@@ -65,8 +65,11 @@ class SessionInfo:
     address: str
     started: float
     profile: str = ""
+    pinned: bool = False
+    """We initiated to a contact: the responder had to prove its pinned identity first."""
     peer_id: bytes = b""
     """The authenticated peer; empty before authentication (and for a failed handshake)."""
+    peer_short_id: str = ""
     glass_box_requested: bool = False
     glass_box: bool = False
     """Admitted as glass-box: values are revealed into this session's ring."""
