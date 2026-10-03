@@ -14,6 +14,7 @@ from PySide6.QtQuick import QQuickItem
 from PySide6.QtTest import QTest
 
 from qrp2p.core.crypto.provider import Revealed as RevealedValue
+from qrp2p.core.trace import SecretDerived
 from qrp2p.ui.inspect.model import Revealed, TraceItem
 from qrp2p.ui.tap import InspectSnap
 from qrp2p.ui.viewmodels.inspector import Inspector
@@ -284,3 +285,28 @@ def test_the_inspector_holds_at_small_windows_and_large_text(
         item = ui.item(name)
         edge = item.mapToScene(QPointF(item.width(), 0)).x()
         assert edge <= right + 0.5, name  # the header fits: nothing is pushed out of the pane
+
+
+def test_long_key_histories_have_bounded_keyboard_accessible_pages(ui: Ui) -> None:
+
+    trace = scripted().i.items
+    start = trace[-1].ordinal + 1
+    trace += [
+        TraceItem(start + n, 1000.0 + n, SecretDerived(f"ap_I[0]+{n + 1}", 32)) for n in range(1000)
+    ]
+    inspector = inspecting(ui, trace)
+    inspector.setView("keys")
+    ui.frame()
+    assert inspector.property("keyPages") > 1
+    assert len(inspector._nodes.rows()) <= 576
+    older = ui.item("keyOlder")
+    older.forceActiveFocus()
+    ui.key(Qt.Key.Key_Space)
+    ui.frame()
+    assert inspector.property("keyPage") == 1
+    assert len(inspector._nodes.rows()) <= 576
+    assert any("page 2" in text for text in texts(ui))
+    ui.item("keyNewer").forceActiveFocus()
+    ui.key(Qt.Key.Key_Space)
+    ui.frame()
+    assert inspector.property("keyPage") == 0

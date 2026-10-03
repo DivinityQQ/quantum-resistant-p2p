@@ -20,7 +20,7 @@ from qrp2p.services.events import AdmissionPrompt, KeyMismatchDetected
 from qrp2p.services.models import ID_LEN, Contact, HistoryEntry, Settings
 from qrp2p.services.node import Node, NodeError, profile_by_id, profiles_in
 from qrp2p.services.session import SessionRole
-from qrp2p.ui.tap import SessionDescribed, TraceAppended, TraceOverflow
+from qrp2p.ui.tap import SessionDescribed, SessionRemoved, TraceAppended, TraceOverflow
 from qrp2p.ui.text import display_name, display_text, fingerprint
 
 ID_HEX_LEN: Final = 2 * ID_LEN
@@ -322,6 +322,7 @@ type Update = (
     | TraceAppended
     | TraceOverflow
     | SessionDescribed
+    | SessionRemoved
 )
 
 

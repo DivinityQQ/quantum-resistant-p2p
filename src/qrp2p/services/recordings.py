@@ -196,6 +196,9 @@ def session_recording(bus: TraceBus, session_id: int, title: str, now: float) ->
         end_reason=info.end_reason,
         admit_reason=info.admit_reason,
         by_peer=info.by_peer,
+        pinned_before=info.pinned,
+        pin_result=info.pin_result,
+        contact_saved=info.contact_saved,
     )
     events = [_event(r) for r in bus.events(session_id)]
     meta = Meta(title=title, created=now, profile=info.profile)
@@ -256,6 +259,9 @@ def restored(
         end_reason=session.end_reason,
         admit_reason=session.admit_reason,
         by_peer=session.by_peer,
+        pinned=session.pinned_before,
+        pin_result=session.pin_result,
+        contact_saved=session.contact_saved,
     )
     return info, [
         TraceRecord(session_id, e.ordinal, e.time, _bus_event(e)) for e in recording.events

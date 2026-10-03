@@ -34,7 +34,7 @@ from qrp2p.ui.snapshots import (
     Update,
     WorkspaceSnap,
 )
-from qrp2p.ui.tap import SessionDescribed, TraceAppended, TraceOverflow
+from qrp2p.ui.tap import SessionDescribed, SessionRemoved, TraceAppended, TraceOverflow
 from qrp2p.ui.text import isolate
 from qrp2p.ui.viewmodels.conversation import Conversation
 from qrp2p.ui.viewmodels.inspector import Inspector
@@ -251,7 +251,7 @@ class Workspace(ViewModel):
                     self._profile_refused(contact_id, offered, update.configured)
                 case NoticePosted(text=text):
                     self.noticePosted.emit(text)
-                case TraceAppended() | TraceOverflow() | SessionDescribed():
+                case TraceAppended() | TraceOverflow() | SessionDescribed() | SessionRemoved():
                     pass  # the Inspector's own updates
         if rebuild:
             self._rebuild()

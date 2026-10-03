@@ -151,6 +151,10 @@ async def test_admission_reject_reaches_initiator(pair: tuple[Peer, Peer]) -> No
     assert end is not None
     assert end.reason is CloseReason.POLICY
     assert end.admit_reason is AdmitReason.DECLINED
+    info = alice.trace.info(session.id)
+    assert info is not None
+    assert info.pin_result == "matched"
+    assert not info.contact_saved
 
 
 async def test_deferred_admission_accepts_later(pair: tuple[Peer, Peer]) -> None:
@@ -195,6 +199,11 @@ async def test_pin_mismatch_closes_before_confirm(pair: tuple[Peer, Peer]) -> No
         assert end is not None
         assert end.reason is CloseReason.PIN_MISMATCH
         assert not bob.record.admissions  # alice never revealed herself
+        info = alice.trace.info(session.id)
+        assert info is not None
+        assert info.pinned
+        assert info.pin_result == "mismatched"
+        assert info.peer_id == bob.identity.bundle.peer_id
     finally:
         await carol.stop()
 

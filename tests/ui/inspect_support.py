@@ -47,6 +47,8 @@ def session_facts(**changes: object) -> SessionFacts:
         "contact_id": "ab" * 16,
         "trust": "pinned",
         "pinned_before": True,
+        "pin_result": "" if changes.get("pinned_before") is False else "matched",
+        "contact_saved": True,
         "glass_box_requested": False,
         "glass_box": False,
         "exposed": False,

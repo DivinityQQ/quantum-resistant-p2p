@@ -1398,6 +1398,7 @@ class Node:
             if outgoing is not None and contact.address != outgoing.address:
                 contact = await self._save_contact(replace(contact, address=outgoing.address))
         self._session_contact[session.id] = contact.contact_id
+        self.trace.describe(session.id, contact_saved=True)
         profile = session.profile
         self._emit(
             SessionOpened(

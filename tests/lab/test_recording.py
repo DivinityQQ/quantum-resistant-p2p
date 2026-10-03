@@ -158,3 +158,105 @@ def test_a_damaged_body_decodes_or_is_refused_by_name(data: st.DataObject) -> No
     except RecordingError:
         return
     assert isinstance(decoded, GlassBoxRecording | LabRecording)
+
+
+@pytest.mark.parametrize("created", [float("nan"), float("inf"), -1.0, 1e100])
+def test_creation_times_must_be_finite_and_displayable(created: float) -> None:
+    bad = msgspec.structs.replace(META, created=created)
+    with pytest.raises(RecordingError, match="creation time"):
+        decode(msgspec.msgpack.encode(glass_box(meta=bad)))
+
+
+@pytest.mark.parametrize("location", ["payload", "frame", "field"])
+def test_unknown_fields_are_rejected_inside_trace_dataclasses(location: str) -> None:
+    body = msgspec.msgpack.decode(encode(glass_box()))
+    payload = body["events"][0]["event"]
+    target = (
+        payload
+        if location == "payload"
+        else payload["frame"]
+        if location == "frame"
+        else payload["fields"][0]
+    )
+    target["surprise"] = b"SECRET-LOOKING-VALUE"
+    with pytest.raises(RecordingError) as raised:
+        decode(msgspec.msgpack.encode(body))
+    assert "SECRET" not in str(raised.value)
+    assert "schema" in str(raised.value)
+
+
+def test_an_encapsulation_without_named_secrets_never_reaches_replay() -> None:
+    body = msgspec.msgpack.decode(encode(lab_recording()))
+    encapsulation = next(e for e in body["run"]["bob_log"] if e["type"] == "encapsulation")
+    encapsulation["secrets"] = []
+    with pytest.raises(RecordingError):
+        decode(msgspec.msgpack.encode(body))
+
+
+@pytest.mark.parametrize(
+    "damage", ["secret_size", "secret_label", "signature_size", "seed", "profile", "marks"]
+)
+def test_structured_provider_and_run_damage_is_refused_by_name(damage: str) -> None:
+    body = msgspec.msgpack.decode(encode(lab_recording()))
+    run = body["run"]
+    encapsulation = next(e for e in run["bob_log"] if e["type"] == "encapsulation")
+    if damage == "secret_size":
+        encapsulation["secrets"][0][1] = b"small"
+    elif damage == "secret_label":
+        encapsulation["secrets"][0][0] = "wrong"
+    elif damage == "signature_size":
+        next(e for e in run["alice_log"] if e["type"] == "signature")["sig"] = b"short"
+    elif damage == "seed":
+        run["alice"][0] = bytes(31)
+    elif damage == "profile":
+        run["profile"] = 127
+    else:
+        run["marks"][0][0] = -1
+    with pytest.raises(RecordingError):
+        decode(msgspec.msgpack.encode(body))
+
+
+@pytest.mark.parametrize("damage", ["outside", "parent", "cycle", "duplicate", "oversize"])
+def test_frame_ranges_and_payloads_are_validated_without_requiring_valid_wire_messages(
+    damage: str,
+) -> None:
+    body = msgspec.msgpack.decode(encode(glass_box()))
+    payload = body["events"][0]["event"]
+    field = payload["fields"][0]
+    if damage == "outside":
+        field["offset"] = 30
+    elif damage == "parent":
+        field["parent"] = "absent"
+    elif damage == "cycle":
+        field["parent"] = field["name"]
+    elif damage == "duplicate":
+        payload["fields"].append(field.copy())
+    else:
+        payload["frame"]["body"] = bytes(20_000)
+    with pytest.raises(RecordingError):
+        decode(msgspec.msgpack.encode(body))
+    valid = decode(encode(glass_box()))
+    assert isinstance(valid, GlassBoxRecording)
+    assert valid.events == glass_box().events  # malformed Hello is evidence
+
+
+def test_writes_cannot_make_a_file_larger_than_reads_allow(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(recording, "MAX_FILE", 100)
+    with pytest.raises(RecordingError, match="larger"):
+        encode(glass_box())
+
+
+def test_new_pin_facts_round_trip_and_legacy_recordings_keep_missing_evidence() -> None:
+    session = msgspec.structs.replace(
+        SESSION, pinned_before=True, pin_result="matched", contact_saved=True
+    )
+    restored = decode(encode(glass_box(session=session)))
+    assert isinstance(restored, GlassBoxRecording)
+    assert restored.session == session
+    body = msgspec.msgpack.decode(encode(glass_box(session=session)))
+    for key in ("pinned_before", "pin_result", "contact_saved"):
+        del body["session"][key]
+    legacy = decode(msgspec.msgpack.encode(body))
+    assert isinstance(legacy, GlassBoxRecording)
+    assert legacy.session.pin_result == "unavailable"
+    assert not legacy.session.contact_saved

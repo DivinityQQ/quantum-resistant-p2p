@@ -24,7 +24,7 @@ from typing import Final
 from qrp2p.lab.classical import lab_profile_named
 from qrp2p.services.exposure import RecordRevealed, ValueRevealed
 from qrp2p.services.node import Node, NodeError
-from qrp2p.services.trace_bus import SessionInfo, TraceBus, TraceRecord
+from qrp2p.services.trace_bus import RING_BYTES, SessionInfo, TraceBus, TraceRecord, event_bytes
 from qrp2p.ui.inspect.model import (
     Item,
     ProfileFacts,
@@ -37,6 +37,7 @@ from qrp2p.ui.text import display_name
 
 BUFFER_LIMIT: Final = 20_000
 """Events held between two batches at most; beyond it the Qt side catches up instead."""
+BUFFER_BYTES: Final = 2 * RING_BYTES
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +72,14 @@ class SessionDescribed:
     """A retained session appeared or its descriptor changed."""
 
     facts: SessionFacts
+    source: str = "node"
+
+
+@dataclass(frozen=True, slots=True)
+class SessionRemoved:
+    """A session's retained ring was evicted."""
+
+    session_id: int
     source: str = "node"
 
 
@@ -118,6 +127,8 @@ def session_facts(node: Node, info: SessionInfo) -> SessionFacts:
         end_reason=info.end_reason,
         admit_reason=info.admit_reason,
         by_peer=info.by_peer,
+        pin_result=info.pin_result,
+        contact_saved=info.contact_saved,
     )
 
 
@@ -137,7 +148,7 @@ def trace_item(record: TraceRecord) -> TraceItem:
     return TraceItem(record.ordinal, record.time, item)
 
 
-type Update = TraceAppended | TraceOverflow | SessionDescribed
+type Update = TraceAppended | TraceOverflow | SessionDescribed | SessionRemoved
 
 
 type Describe = Callable[[SessionInfo], SessionFacts]
@@ -164,11 +175,14 @@ class TraceTap:
         self._session: int | None = None
         self._watching = False
         self._buffer: list[TraceItem] = []
+        self._buffer_bytes = 0
         self._overflowed = False
         self._described: dict[int, SessionFacts] = {}
+        self._removed: dict[int, None] = {}
         self._unsubscribe = (
             bus.subscribe(self._on_record),
             bus.subscribe_sessions(self._on_session),
+            bus.subscribe_removals(self._on_removed),
         )
 
     @classmethod
@@ -188,6 +202,7 @@ class TraceTap:
         """Every retained session, oldest first; descriptor changes are forwarded from now on."""
         self._watching = True
         self._described.clear()
+        self._removed.clear()
         return tuple(self._describe(info) for info in self._bus.sessions())
 
     def inspect(self, session_id: int, after: int = -1) -> InspectSnap:
@@ -203,6 +218,7 @@ class TraceTap:
         records, missing = self._bus.since(session_id, after)
         self._session = session_id
         self._buffer.clear()
+        self._buffer_bytes = 0
         self._overflowed = False
         items = tuple(trace_item(r) for r in records)
         return InspectSnap(self._describe(info), items, missing)
@@ -211,6 +227,7 @@ class TraceTap:
         """Stop forwarding events (the display is paused, or shows another view)."""
         self._session = None
         self._buffer.clear()
+        self._buffer_bytes = 0
         self._overflowed = False
 
     def close(self) -> None:
@@ -218,16 +235,20 @@ class TraceTap:
         self.pause()
         self._watching = False
         self._described.clear()
+        self._removed.clear()
 
     def drain(self) -> list[Update]:
         """The updates pending since the last batch, oldest first."""
         updates: list[Update] = list(self._described_updates())
+        updates.extend(SessionRemoved(s, self._source) for s in self._removed)
+        self._removed.clear()
         session = self._session
         if session is not None and self._overflowed:
             updates.append(TraceOverflow(session, self._source))
         elif session is not None and self._buffer:
             updates.append(TraceAppended(session, tuple(self._buffer), self._source))
         self._buffer.clear()
+        self._buffer_bytes = 0
         self._overflowed = False
         return updates
 
@@ -236,11 +257,14 @@ class TraceTap:
     def _on_record(self, record: TraceRecord) -> None:
         if record.session_id != self._session or self._overflowed:
             return
-        if len(self._buffer) >= BUFFER_LIMIT:
+        cost = event_bytes(record.event)
+        if len(self._buffer) >= BUFFER_LIMIT or self._buffer_bytes + cost > BUFFER_BYTES:
             self._buffer.clear()
+            self._buffer_bytes = 0
             self._overflowed = True
         else:
             self._buffer.append(trace_item(record))
+            self._buffer_bytes += cost
         self._wake()
 
     def _on_session(self, info: SessionInfo) -> None:
@@ -248,6 +272,14 @@ class TraceTap:
             return
         self._described[info.session_id] = self._describe(info)
         self._wake()
+
+    def _on_removed(self, session_id: int) -> None:
+        self._described.pop(session_id, None)
+        if session_id == self._session:
+            self.pause()
+        if self._watching:
+            self._removed[session_id] = None
+            self._wake()
 
     def _described_updates(self) -> list[SessionDescribed]:
         updates = [SessionDescribed(facts, self._source) for facts in self._described.values()]

@@ -25,8 +25,8 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Final
 
-from qrp2p.core.trace import FrameTraced, TraceEvent
-from qrp2p.core.wire import FRAME_HEADER_LEN
+from qrp2p.core.trace import FrameTraced, RecordTraced, TraceEvent
+from qrp2p.core.wire import FRAME_HEADER_LEN, FrameType
 from qrp2p.services.exposure import Exposure, RecordRevealed, ValueRevealed
 
 RING_SIZE: Final = 10_000
@@ -80,6 +80,10 @@ class SessionInfo:
     admit_reason: str = ""
     """A refusal's admission reason (``declined``, ``busy``…); empty otherwise."""
     by_peer: bool = False
+    pin_result: str = ""
+    """Empty if not compared, otherwise ``matched`` or ``mismatched``."""
+    contact_saved: bool = False
+    """An authenticated contact was successfully persisted for this session."""
 
 
 def event_bytes(event: BusEvent) -> int:
@@ -97,28 +101,33 @@ def event_bytes(event: BusEvent) -> int:
 
 type TraceSubscriber = Callable[[TraceRecord], None]
 type SessionSubscriber = Callable[[SessionInfo], None]
+type RemovalSubscriber = Callable[[int], None]
 
 
 class _Ring:
     """One session's events: the handshake head, then a bounded tail."""
 
-    __slots__ = ("head", "head_open", "info", "next_ordinal", "tail", "tail_bytes")
+    __slots__ = ("head", "head_bytes", "head_open", "info", "next_ordinal", "tail", "tail_bytes")
 
     def __init__(self, info: SessionInfo) -> None:
         self.info = info
         self.head: list[TraceRecord] = []
+        self.head_bytes = 0
         self.head_open = True
         self.tail: deque[TraceRecord] = deque()
         self.tail_bytes = 0
         self.next_ordinal = 0
 
     def add(self, record: TraceRecord) -> None:
-        if self.head_open and len(self.head) < HEAD_LIMIT:
+        cost = event_bytes(record.event)
+        if self.head_open and len(self.head) < HEAD_LIMIT and self.head_bytes + cost <= RING_BYTES:
             self.head.append(record)
+            self.head_bytes += cost
             return
+        self.head_open = False
         self.tail.append(record)
         self.tail_bytes += event_bytes(record.event)
-        while len(self.tail) > RING_SIZE or (self.tail_bytes > RING_BYTES and len(self.tail) > 1):
+        while len(self.tail) > RING_SIZE or self.tail_bytes > RING_BYTES:
             self.tail_bytes -= event_bytes(self.tail.popleft().event)
 
     def records(self) -> tuple[TraceRecord, ...]:
@@ -128,13 +137,14 @@ class _Ring:
 class TraceBus:
     """Per-session retained trace events and descriptors, and their subscribers."""
 
-    __slots__ = ("_ended", "_rings", "_session_subscribers", "_subscribers")
+    __slots__ = ("_ended", "_removals", "_rings", "_session_subscribers", "_subscribers")
 
     def __init__(self) -> None:
         self._rings: dict[int, _Ring] = {}
         self._ended: OrderedDict[int, None] = OrderedDict()
         self._subscribers: list[TraceSubscriber] = []
         self._session_subscribers: list[SessionSubscriber] = []
+        self._removals: list[RemovalSubscriber] = []
 
     # -- sessions -----------------------------------------------------------------------------------
 
@@ -149,7 +159,15 @@ class TraceBus:
         The session is ended: nothing more is published to it.
         """
         ring = _Ring(info)
-        ring.head = list(records)
+        for record in records:
+            event = record.event
+            # Admission flushes earlier revealed values AFTER the Established trace. Keep
+            # those in the handshake head; application records mark its actual boundary.
+            if isinstance(event, RecordTraced | RecordRevealed) or (
+                isinstance(event, FrameTraced) and event.frame.type is FrameType.RECORD
+            ):
+                ring.head_open = False
+            ring.add(record)
         ring.head_open = False
         ring.next_ordinal = records[-1].ordinal + 1 if records else 0
         self._rings[info.session_id] = ring
@@ -179,6 +197,7 @@ class TraceBus:
         while len(self._ended) > ENDED_KEPT:
             oldest, _ = self._ended.popitem(last=False)
             self._rings.pop(oldest, None)
+            self._removed(oldest)
 
     def sessions(self) -> tuple[SessionInfo, ...]:
         """Every session with a ring, oldest first."""
@@ -224,8 +243,11 @@ class TraceBus:
 
     def clear(self) -> None:
         """Forget everything (on lock)."""
+        removed = tuple(self._rings)
         self._rings.clear()
         self._ended.clear()
+        for session_id in removed:
+            self._removed(session_id)
 
     # -- subscribers --------------------------------------------------------------------------------
 
@@ -236,6 +258,14 @@ class TraceBus:
     def subscribe_sessions(self, subscriber: SessionSubscriber) -> Callable[[], None]:
         """Receive every new or changed descriptor; returns a function that unsubscribes."""
         return _add(self._session_subscribers, subscriber)
+
+    def subscribe_removals(self, subscriber: RemovalSubscriber) -> Callable[[], None]:
+        """Receive IDs whose retained rings were evicted or cleared."""
+        return _add(self._removals, subscriber)
+
+    def _removed(self, session_id: int) -> None:
+        for subscriber in tuple(self._removals):
+            subscriber(session_id)
 
     def _announce(self, info: SessionInfo) -> None:
         for subscriber in tuple(self._session_subscribers):

@@ -11,20 +11,24 @@ from pathlib import Path
 
 import pytest
 
-from qrp2p.core.trace import FrameTraced
+from qrp2p.core.trace import Direction, FrameTraced
+from qrp2p.core.wire import Frame, FrameType
 from qrp2p.services import trace_bus
 from qrp2p.services.events import AdmissionPrompt, SessionOpened
+from qrp2p.services.trace_bus import ENDED_KEPT, SessionInfo, TraceBus
 from qrp2p.ui import tap as tap_module
 from qrp2p.ui.inspect.model import RecordOpened, Revealed
 from qrp2p.ui.tap import (
     InspectSnap,
     SessionDescribed,
+    SessionRemoved,
     TraceAppended,
     TraceOverflow,
     TraceTap,
     profile_facts,
 )
 from tests.services.support import NodeHarness, befriend, until
+from tests.ui.inspect_support import session_facts
 
 
 @pytest.fixture
@@ -173,3 +177,26 @@ async def test_a_session_no_longer_retained_is_refused(
     with pytest.raises(Exception, match="no longer retained"):
         tap.inspect(12345)
     assert profile_facts("NOT-A-PROFILE") is None
+
+
+def test_bursts_are_bounded_by_bytes_and_evicted_sessions_leave_the_picker() -> None:
+
+    bus = TraceBus()
+    tap = TraceTap(bus, lambda info: session_facts(session_id=info.session_id), lambda: None)
+    bus.open_session(SessionInfo(1, True, "in memory", 0.0))
+    tap.sessions()
+    tap.inspect(1)
+    frame = FrameTraced(Direction.OUT, Frame(FrameType.RECORD, bytes(16_000)), ())
+    for n in range(1000):
+        bus.publish(1, float(n), frame)
+    assert tap.drain() == [TraceOverflow(1)]
+    snap = tap.inspect(1)
+    assert snap.items[0].ordinal == 0
+    assert snap.items[-1].ordinal == 999
+    for session_id in range(2, ENDED_KEPT + 4):
+        bus.open_session(SessionInfo(session_id, True, "in memory", 0.0))
+        bus.session_ended(session_id)
+    updates = tap.drain()
+    assert SessionRemoved(2) in updates
+    assert all(u.facts.session_id != 2 for u in updates if isinstance(u, SessionDescribed))
+    tap.detach()

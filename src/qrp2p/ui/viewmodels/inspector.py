@@ -42,12 +42,19 @@ from qrp2p.ui.bridge import Scope
 from qrp2p.ui.inspect import fields, keygraph, security
 from qrp2p.ui.inspect.fields import FieldRow
 from qrp2p.ui.inspect.keygraph import KeyGraph
-from qrp2p.ui.inspect.model import RecordOpened, Revealed, SessionFacts, TraceItem
+from qrp2p.ui.inspect.model import RecordOpened, Revealed, SessionFacts, TraceItem, item_bytes
 from qrp2p.ui.inspect.security import Fact
 from qrp2p.ui.inspect.spec import SECTIONS, cite, link
 from qrp2p.ui.inspect.timeline import Timeline, TimelineRow
 from qrp2p.ui.snapshots import Reply, Update
-from qrp2p.ui.tap import InspectSnap, SessionDescribed, TraceAppended, TraceOverflow
+from qrp2p.ui.tap import (
+    BUFFER_BYTES,
+    InspectSnap,
+    SessionDescribed,
+    SessionRemoved,
+    TraceAppended,
+    TraceOverflow,
+)
 from qrp2p.ui.viewmodels.hexmodel import HexModel
 from qrp2p.ui.viewmodels.listmodel import RowModel
 from qrp2p.ui.viewmodels.qt import ViewModel, constant, items, readonly
@@ -302,6 +309,8 @@ class Inspector(ViewModel):
     frameDetail = readonly(str, "_frame_detail", frameChanged)  # noqa: N815
     keyColumns = readonly(int, "_key_columns", graphChanged)  # noqa: N815
     keyRows = readonly(int, "_key_rows", graphChanged)  # noqa: N815
+    keyPage = readonly(int, "_key_page", graphChanged)  # noqa: N815
+    keyPages = readonly(int, "_key_pages", graphChanged)  # noqa: N815
 
     def __init__(
         self,
@@ -346,6 +355,8 @@ class Inspector(ViewModel):
         self._frame_detail = ""
         self._key_columns = 0
         self._key_rows = 0
+        self._key_page = 0
+        self._key_pages = 1
         self._expanded: set[str] = set()
         self._reset_trace()
         scope.updates.connect(self.apply)
@@ -353,7 +364,10 @@ class Inspector(ViewModel):
     # -- state of the inspected trace --------------------------------------------------------------
 
     def _reset_trace(self) -> None:
+        self._key_page = 0
+        self._key_pages = 1
         self._items: list[TraceItem] = []
+        self._item_bytes = 0
         self._by_ordinal: dict[int, TraceItem] = {}
         self._schedule: list[TraceItem] = []
         self._control: list[TraceItem] = []
@@ -486,6 +500,15 @@ class Inspector(ViewModel):
             self.selectionChanged.emit()
 
     @Slot(int)
+    def setKeyPage(self, page: int) -> None:  # noqa: N802
+        """Browse a bounded page of the retained key history, newest first."""
+        if 0 <= page < self._key_pages and page != self._key_page:
+            self._key_page = page
+            self.selectNode("")
+            self._graph_dirty = True
+            self._refresh_derived()
+
+    @Slot(int)
     def showOrdinal(self, ordinal: int) -> None:  # noqa: N802
         """Go to the timeline row holding an event (a fact's evidence, a node's event)."""
         row = next((r for r in self._timeline_model.rows() if r.first <= ordinal <= r.last), None)
@@ -539,17 +562,30 @@ class Inspector(ViewModel):
     def apply(self, updates: tuple[Update, ...]) -> None:
         """Take the Inspector's updates from a batch."""
         for update in updates:
-            tapped = isinstance(update, SessionDescribed | TraceAppended | TraceOverflow)
+            tapped = isinstance(
+                update, SessionDescribed | SessionRemoved | TraceAppended | TraceOverflow
+            )
             if tapped and update.source != self._source:
                 continue  # the other Inspector's
             match update:
                 case SessionDescribed(facts=facts):
                     self._described(facts)
+                case SessionRemoved(session_id=session_id):
+                    self._known.pop(session_id, None)
+                    if session_id == self._session_id:
+                        retained = self._known.copy()
+                        self._clear_session()
+                        self._known = retained
+                        self._error = (
+                            "The selected session is no longer retained. Choose another session."
+                        )
+                        self.sessionChanged.emit()
+                    self._sync_sessions()
                 case TraceAppended(session_id=session_id, items=new):
                     if session_id == self._session_id and self._following and not self._loading:
                         self._ingest(new)
                 case TraceOverflow(session_id=session_id):
-                    if session_id == self._session_id and self._following:
+                    if session_id == self._session_id and self._following and not self._loading:
                         self._inspect(session_id, reset=False)
                 case _:
                     pass
@@ -600,6 +636,9 @@ class Inspector(ViewModel):
             if session_id != self._session_id or not self._open:
                 return
             self._loading = False
+            if reply.error is not None and reply.error.kind == "trace_overflow":
+                self._inspect(session_id, reset=True)
+                return
             if reply.error is not None or not isinstance(reply.value, InspectSnap):
                 self._error = reply.error.message if reply.error else "Not available."
                 self.sessionChanged.emit()
@@ -678,9 +717,13 @@ class Inspector(ViewModel):
         fresh = [i for i in new if i.ordinal > self._last]
         if not fresh:
             return
-        if not snapshot and len(self._items) + len(fresh) > ITEM_CAP:
+        cost = sum(item_bytes(i) for i in fresh)
+        if (
+            (not snapshot or self._items) and len(self._items) + len(fresh) > ITEM_CAP
+        ) or self._item_bytes + cost > BUFFER_BYTES:
             self._inspect(self._session_id, reset=True)  # what the bus retains, afresh
             return
+        self._item_bytes += cost
         self._timeline.extend(fresh)  # first: it fixes the clock origin the frame rows use
         frames: dict[int, FrameRow] = {}
         for item in fresh:
@@ -763,12 +806,13 @@ class Inspector(ViewModel):
             return
         if self._view == "keys" and self._graph_dirty:
             self._graph_dirty = False
-            graph = keygraph.build(self._schedule, facts)
+            graph = keygraph.build(self._schedule, facts, page=self._key_page)
             nodes, edges = _graph_rows(graph)
             old = self._node(self._selected_node)
             self._nodes.sync(nodes)
             self._edges.sync(edges)
             self._key_columns, self._key_rows = graph.columns, graph.rows
+            self._key_pages, self._key_page = graph.pages, graph.page
             self.graphChanged.emit()
             if old is not None and self._node(self._selected_node) != old:
                 self.selectionChanged.emit()

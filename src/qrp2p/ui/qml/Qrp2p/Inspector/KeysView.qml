@@ -90,6 +90,32 @@ Item {
             Layout.fillWidth: true
         }
 
+        Flow {
+            Layout.fillWidth: true
+            Layout.margins: Theme.s3
+            spacing: Theme.s3
+            visible: view.inspector.keyPages > 1
+            AppButton {
+                objectName: "keyOlder"
+                text: qsTr("Older keys")
+                compact: true
+                enabled: view.inspector.keyPage + 1 < view.inspector.keyPages
+                onClicked: view.inspector.setKeyPage(view.inspector.keyPage + 1)
+            }
+            AppText {
+                text: qsTr("Retained history: page %1 of %2 (newest first). Handshake stays visible.")
+                    .arg(view.inspector.keyPage + 1).arg(view.inspector.keyPages)
+                role: "small"
+            }
+            AppButton {
+                objectName: "keyNewer"
+                text: qsTr("Newer keys")
+                compact: true
+                enabled: view.inspector.keyPage > 0
+                onClicked: view.inspector.setKeyPage(view.inspector.keyPage - 1)
+            }
+        }
+
         GridLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true

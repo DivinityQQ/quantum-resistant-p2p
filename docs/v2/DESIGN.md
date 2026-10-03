@@ -661,6 +661,21 @@ The learning layer is built on a **trace bus** fed by the real protocol engine. 
 - **Key schedule explorer:** an interactive graph of §7.4 and §8.4. Labels and transcript hashes are always shown; values are shown only in glass-box sessions and the solo lab.
 - **"Why is this secure?" panel:** each property per session and what it rests on. Example: "Confidentiality holds if ML-KEM-768 *or* X25519 is unbroken, with SHA3-256 as the combiner."
 
+Supplying a pin and successfully comparing it are separate descriptor facts. Authentication
+of a replacement identity reports a mismatch, never a successful pin check. First-contact
+authentication does not imply a saved contact: the descriptor records successful persistence
+separately. Recordings preserve these historical facts; absent evidence in older recordings
+stays unavailable, and a recording does not establish a contact's safety-number verification.
+
+Retention is bounded throughout the delivery path. Each session keeps a handshake head of at
+most 2,000 events and 4 MiB of captured bytes, plus a tail of at most 10,000 events and 4 MiB.
+The last 16 ended sessions remain selectable; eviction explicitly removes their picker entries.
+Each tap holds at most 20,000 events and 8 MiB between flushes. Qt queues wake signals into a
+mailbox capped at 40,000 trace items and 16 MiB, including snapshot replies for both Inspectors.
+Each Inspector retains at most 30,000 events and 8 MiB, including while paused. Overflow drops
+captured payloads and requests a bounded snapshot; missing ordinals remain visible as gaps.
+Lock drops queued scoped snapshots and captured values immediately.
+
 ### 11.3 Glass-box sessions
 
 1. The initiator enables *Glass-box* when connecting to a pinned contact, which sets `gb_request`. The mode is fixed for the whole session.
@@ -681,6 +696,12 @@ The learning layer is built on a **trace bus** fed by the real protocol engine. 
 
 Every secret has a name that is unique within its session, and the Inspector joins key-graph nodes, trace events and revealed values by it: the schedule's names above, `Keys(S)` as `S.key` and `S.iv`, a KeyUpdate's as `ap_I[n]+g`, and the KEM outputs of the rekey to epoch *n* as `dk[n]`, `ss[n]`, `ssM[n]`, `ssX[n]`. A record's nonce and plaintext are identified by the key's name and the sequence number.
 
+The solo lab additionally exposes each simulated node's three private identity **seeds** as
+`identity.ed25519`, `identity.mldsa65` and `identity.mldsa87` (32 bytes each), when Start runs.
+A lab-only revealing provider emits these from the run's throwaway seed tuples. Real identity
+key pairs never enter this path. These are lab-owned identity seeds, separate from session keys;
+session-key release events do not claim the lab discarded them.
+
 ### 11.5 Recordings (`.qrlab`)
 
 ```text
@@ -699,6 +720,14 @@ events = the retained trace events in order, with their ordinals and times, and 
 - Saving is an explicit action. Each recording is one file with a random name in `lab/`, so its title never shows on disk; `k_lab` never leaves the vault, which seals and opens bodies.
 - Opening is untrusted input: the file is capped at 256 MiB before it is read, the schema is strict (unknown fields, wrong types and a missing stamp are refused), every list has a bound, and a failure names its reason without quoting recorded bytes. A file that does not open (another vault's, altered, another version) is listed as unreadable rather than hidden.
 
+The strict schema covers nested frames, field ranges and trace payloads as well as the outer
+recording. Creation times must be finite and displayable; profiles, identity seed sizes,
+provider output sizes and names, counters, field parent order and ranges, and log marks are
+validated before replay or display. Captured wire messages may themselves be malformed: their
+bytes remain evidence. Writes enforce the same schema and sealed-file size bound as reads.
+Version 1 session descriptors add optional `pinned_before`, `pin_result` and `contact_saved`;
+older descriptors default to unavailable pin evidence, without inferring success.
+
 ### 11.6 Step-through and replay
 
 The sans-I/O core executes one complete input transition at a time and returns its events.
@@ -709,6 +738,12 @@ transition. Pausing inside it requires an explicit execution mechanism and tests
 revealing the returned events one at a time.
 
 pyca's ML-KEM encapsulation and ML-DSA signing take no caller-supplied randomness, so their outputs cannot be regenerated. Replay therefore records **at the provider boundary**: every draw from the random source (handshake nonces, and the seeds ephemeral key pairs are derived from, so a key pair is recomputed on replay), `(ss, ct)` from each encapsulation together with the `ek` it used, and each signature with its role and transcript hash. On replay these are fed back and re-checked: each call must ask for what was recorded (same kind, size, `ek`, role and hash) and a recorded signature must still verify; any difference is a named *replay divergence*. Decapsulation, verification and everything downstream (hashes, HKDF, AEAD) recompute exactly. The lab clock is virtual and advances with the steps, so a replay also sees the same times. **Fork at step N** replays the first N steps against the provider logs as they stood after step N, then continues live with fresh randomness, so a learner can change one input and see what breaks.
+
+There is one pair of provider-log marks per step. Marks are nonnegative, monotonic and within
+their logs; the final pair accounts for every entry, including in an empty run. Restoring a
+prefix uses strict providers and verifies consumed log lengths after **each** step. Fresh
+randomness becomes available only after that entire prefix reproduces successfully. Unused
+suffix entries, insufficient logs and illegal restored transitions cannot silently become live.
 
 ### 11.7 Attack Lab
 

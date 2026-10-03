@@ -30,6 +30,8 @@ _INDEXED: Final = re.compile(r"^(?P<base>[A-Za-z_]+?)(?:\[(?P<epoch>\d+)\])?$")
 
 PENDING_HANDSHAKE: Final = ("derived[0]", "cs_0", "ap_I[0]", "ap_R[0]", "exporter_0", "derived[1]")
 """What a handshake still in progress derives at its end (DESIGN §7.4)."""
+PAGE_SIZE: Final = 128
+HEAD_SIZE: Final = 64
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +78,9 @@ class KeyGraph:
     edges: tuple[KeyEdge, ...]
     columns: int
     rows: int
+    pages: int = 1
+    page: int = 0
+    omitted: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,6 +145,30 @@ _HANDSHAKE: Final[dict[str, Spec]] = {
     "th_final": Spec("hash", 0, "H(the transcript through FinA)", (), "7.3"),
 }
 
+_TRANSCRIPT_PREFIX: Final = (
+    "Hello",
+    "nonce_R ‖ ct",
+    "ID_R",
+    "SigR",
+    "FinR",
+    "ID_I",
+    "SigI",
+    "FinI",
+    "AdmitBody",
+    "FinA",
+)
+for _name, _length in (
+    ("th_sig_R", 3),
+    ("th_fin_R", 4),
+    ("th_sig_I", 6),
+    ("th_fin_I", 7),
+    ("th_fin_A", 9),
+    ("th_final", 10),
+):
+    _HANDSHAKE[_name] = Spec(
+        "hash", 0, "H(TR): tagged entries " + " → ".join(_TRANSCRIPT_PREFIX[:_length]), (), "7.3"
+    )
+
 
 def _spec_kem(base: str, epoch: int, facts: SessionFacts) -> Spec:
     """A KEM output.
@@ -175,8 +204,16 @@ def _spec_kem(base: str, epoch: int, facts: SessionFacts) -> Spec:
     return Spec("kem", epoch, operation, inputs, section)
 
 
-def spec_of(name: str, facts: SessionFacts) -> Spec | None:  # noqa: PLR0911  # the grammar
+def spec_of(name: str, facts: SessionFacts) -> Spec | None:  # noqa: C901, PLR0911  # the grammar
     """What the specification says about a name; ``None`` if it is not a schedule name."""
+    if facts.lab and name in {"identity.ed25519", "identity.mldsa65", "identity.mldsa87"}:
+        return Spec(
+            "identity",
+            0,
+            "Throwaway lab identity's 32-byte private seed; retained by the lab",
+            (),
+            "11.1",
+        )
     if name.endswith((".key", ".iv")):
         return _spec_keys(name)
     if (traffic := _TRAFFIC.match(name)) is not None:
@@ -232,6 +269,7 @@ def _collect(items: Iterable[TraceItem]) -> _Seen:
                 seen.order.append(label)
             case TranscriptHashed(name=name, digest=digest):
                 seen.hashes.setdefault(name, (digest, item.ordinal))
+                seen.order.append(name)
             case SecretsReleased(labels=labels, cause=cause):
                 for label in labels:
                     seen.released[label] = cause.value
@@ -287,23 +325,34 @@ def _node(name: str, spec: Spec, seen: _Seen, facts: SessionFacts, *, pending: b
     )
 
 
-def build(items: Iterable[TraceItem], facts: SessionFacts) -> KeyGraph:
+def build(items: Iterable[TraceItem], facts: SessionFacts, *, page: int = 0) -> KeyGraph:
     """The key graph of a session's retained trace."""
     seen = _collect(items)
     pending = facts.profile is not None and not facts.established and not facts.ended
     names = list(dict.fromkeys(seen.order))
     if pending:
         names += [n for n in PENDING_HANDSHAKE if n not in seen.derived]
-    specs = {name: spec for name in names if (spec := spec_of(name, facts)) is not None}
+    names = [n for n in names if spec_of(n, facts) is not None]
+    head, history = names[:HEAD_SIZE], names[HEAD_SIZE:]
+    pages = max(1, (len(history) + PAGE_SIZE - 1) // PAGE_SIZE)
+    page = min(max(0, page), pages - 1)
+    end = max(0, len(history) - page * PAGE_SIZE)
+    shown = head + history[max(0, end - PAGE_SIZE) : end]
+    specs = {name: spec for name in shown if (spec := spec_of(name, facts)) is not None}
     # Inputs that are not themselves present (transcript hashes, evicted secrets), and theirs.
     missing = [s for spec in specs.values() for s in spec.inputs]
-    while missing:
-        source = missing.pop()
+    for source in missing:
         if source not in specs and (found := spec_of(source, facts)) is not None:
-            specs[source] = found
-            missing.extend(found.inputs)
+            # A boundary leaf names the actual immediate dependency. Its earlier ancestry
+            # is not reconstructed: it may be evicted or on another retained page.
+            specs[source] = replace(
+                found,
+                inputs=(),
+                operation=found.operation
+                + "; earlier dependencies are outside this page or no longer retained",
+            )
     nodes = {name: _node(name, spec, seen, facts, pending=pending) for name, spec in specs.items()}
-    return _layout(nodes)
+    return replace(_layout(nodes), pages=pages, page=page, omitted=len(names) - len(shown))
 
 
 # -- layout --------------------------------------------------------------------------------------
@@ -321,26 +370,31 @@ def _depths(nodes: dict[str, KeyNode]) -> dict[str, int]:
     def floating(node: KeyNode) -> bool:
         return node.kind == "hash" or (node.kind == "kem" and node.epoch > 0)
 
-    def depth_of(name: str) -> int:
-        if name not in depth:
-            depth[name] = -1  # cycle guard; the grammar has no cycles
-            sources = [s for s in nodes[name].inputs if not floating(nodes[s])]
-            depth[name] = 1 + max((depth_of(s) for s in sources), default=-1)
-        return depth[name]
-
     consumers = _consumers(nodes)
-
-    def before_consumers(name: str) -> int:
-        targets = consumers.get(name, [])
-        columns = [before_consumers(t) if floating(nodes[t]) else depth_of(t) for t in targets]
-        return max(0, min(columns, default=1) - 1)
-
-    for name, node in nodes.items():
-        if not floating(node):
-            depth_of(name)
-    for name, node in nodes.items():
-        if floating(node):
-            depth[name] = before_consumers(name)
+    remaining = {name for name, node in nodes.items() if not floating(node)}
+    while remaining:
+        ready = [
+            name
+            for name in remaining
+            if all(s in depth or floating(nodes[s]) for s in nodes[name].inputs)
+        ]
+        if not ready:
+            msg = "cyclic key schedule"
+            raise ValueError(msg)
+        for name in ready:
+            depth[name] = 1 + max(
+                (depth[s] for s in nodes[name].inputs if not floating(nodes[s])), default=-1
+            )
+        remaining.difference_update(ready)
+    remaining = {name for name, node in nodes.items() if floating(node)}
+    while remaining:
+        ready = [name for name in remaining if all(t in depth for t in consumers.get(name, []))]
+        if not ready:
+            msg = "cyclic key schedule"
+            raise ValueError(msg)
+        for name in ready:
+            depth[name] = max(0, min((depth[t] for t in consumers.get(name, [])), default=1) - 1)
+        remaining.difference_update(ready)
     return depth
 
 

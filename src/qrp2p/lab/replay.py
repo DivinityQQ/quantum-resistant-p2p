@@ -22,9 +22,9 @@ revealed anyway, and is written to disk only inside a sealed recording (DESIGN Â
 """
 
 from collections.abc import Iterable, Sequence
-from typing import override
+from typing import Annotated, override
 
-from msgspec import Struct
+from msgspec import Meta, Struct
 
 from qrp2p.core.crypto.hybrid_sig import Role
 from qrp2p.core.crypto.identity import IdentityKeyPair
@@ -33,31 +33,34 @@ from qrp2p.core.crypto.profiles import Profile
 from qrp2p.core.crypto.provider import PlainProvider, RandomSource
 from qrp2p.core.crypto.secret import Secret
 from qrp2p.core.errors import ProtocolError
+from qrp2p.lab.trace_schema import Counter, Label
 
 
 class Draw(Struct, frozen=True, tag="draw", forbid_unknown_fields=True):
     """Bytes from the random source."""
 
-    data: bytes
+    data: Annotated[bytes, Meta(min_length=1, max_length=64)]
 
 
 class Encapsulation(Struct, frozen=True, tag="encapsulation", forbid_unknown_fields=True):
     """One encapsulation: to ``ek``, giving ``ct`` and the named secrets (``ss`` last)."""
 
-    profile: int
-    epoch: int
-    ek: bytes
-    ct: bytes
-    secrets: list[tuple[str, bytes]]
+    profile: Annotated[int, Meta(ge=0, le=255)]
+    epoch: Counter
+    ek: Annotated[bytes, Meta(max_length=1568)]
+    ct: Annotated[bytes, Meta(max_length=1568)]
+    secrets: Annotated[
+        list[tuple[Label, Annotated[bytes, Meta(max_length=32)]]], Meta(min_length=1, max_length=3)
+    ]
 
 
 class Signature(Struct, frozen=True, tag="signature", forbid_unknown_fields=True):
     """One signature by ``role`` over transcript hash ``th``."""
 
-    profile: int
-    role: str
-    th: bytes
-    sig: bytes
+    profile: Annotated[int, Meta(ge=0, le=255)]
+    role: Annotated[str, Meta(max_length=32)]
+    th: Annotated[bytes, Meta(max_length=48)]
+    sig: Annotated[bytes, Meta(max_length=4627)]
 
 
 type Entry = Draw | Encapsulation | Signature
@@ -105,6 +108,12 @@ class LabProvider(PlainProvider):
         """Recorded entries remain to be replayed."""
         return self._cursor < len(self._replay)
 
+    def continue_live(self, random_source: RandomSource | None) -> None:
+        """Enable continuation only after the recorded prefix was consumed completely."""
+        if self.replaying:
+            raise ReplayDivergence(self._cursor, "unused entries at the restored boundary")
+        self._live = random_source
+
     def _next[E: Entry](self, kind: type[E]) -> E | None:
         """The next recorded entry, which must be a ``kind``; ``None`` once running live."""
         index = self._cursor
@@ -147,6 +156,8 @@ class LabProvider(PlainProvider):
             raise ReplayDivergence(index, "an encapsulation for another profile or epoch")
         if entry.ek != ek:
             raise ReplayDivergence(index, "an encapsulation to a different ek")
+        if not entry.secrets:
+            raise ReplayDivergence(index, "an encapsulation without its shared secret")
         *components, (label, ss) = entry.secrets
         self.log.append(entry)
         shared = SharedSecret(Secret(ss, label), tuple(Secret(v, n) for n, v in components))

@@ -185,6 +185,7 @@ async def test_descriptors_follow_the_session(pair: tuple[Peer, Peer]) -> None:
         started=mine.started if mine else 0.0,
         profile="HYBRID-1",
         pinned=True,
+        pin_result="matched",
         peer_id=bob.identity.bundle.peer_id,
         peer_short_id=bob.identity.bundle.short_id,
         glass_box_requested=True,

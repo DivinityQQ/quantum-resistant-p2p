@@ -453,7 +453,9 @@ Gaps can include scheduling, networking and user admission delay.
 
 Opening Inspector reads the retained ring and subscribes to updates in the services thread.
 Snapshot/subscription handoff must neither duplicate nor miss events. The current bus retains
-10,000 events per session and a bounded set of ended sessions. When older events are evicted,
+the bounded handshake head and tail defined in DESIGN §11.2, including byte budgets at the
+tap, delivery mailbox and display. The picker contains only retained sessions. When its selected
+session is evicted, clear its display and explain that another session can be chosen. When older events are evicted,
 show **Earlier events no longer retained**. Retained public traces are not durable recordings.
 
 **Pause following** freezes a bounded display snapshot, while networking continues. **Follow
@@ -497,6 +499,14 @@ secret, application keys/IVs and rekey epochs. Highlight a selected node's input
 dim unrelated edges while keeping labels readable. Show concise operation/label/context detail
 on selection, with a specification link. Support keyboard traversal and a dependency list.
 
+Long retained histories are paged: keep the first 64 schedule names visible and show 128
+history names per page, newest first, with **Older keys** and **Newer keys** controls and a
+page indicator. Graph and dependency list show the same page. Layout is iterative and bounded;
+an immediate input outside the page or retention is a boundary leaf, with an explanation,
+without recursively inventing its entire ancestry. Every observed named transcript hash,
+including signature and Finished prefixes, has a public digest node and its exact contributing
+tagged entries. The lab alone adds clearly labeled throwaway private identity seed nodes.
+
 Distinguish **Specification relationship**, **Derived (observed)**, **Hidden in normal session**,
 **Value available in this glass-box/lab trace**, and **No longer retained / unavailable**.
 A lifecycle erasure indicator needs an emitted lifecycle fact, not a guess based on elapsed
@@ -518,6 +528,11 @@ out-of-band verification state, exposure tier, authenticated completion, key cha
 observed failures. Separate signature verification from a human verifying the safety number.
 Explain first-contact limitations plainly. A successful session does not demonstrate all
 adversarial properties or replace external review.
+
+A supplied pin is not evidence of a match. Show an actual mismatch as a failure; show a
+successful comparison only when the service reports it. A first contact is saved as a pin only
+after persistence succeeds. Saved recordings describe historical authentication and contact-save
+facts, and explicitly leave absent pin or safety-number verification evidence unavailable.
 
 A useful entry reads **Profile: HYBRID-1**, names its algorithms, explains the hybrid assumption,
 and links to profile/transcript evidence. A failure reads **Authentication failed** with the

@@ -10,11 +10,21 @@ import asyncio
 from collections.abc import AsyncIterator
 from pathlib import Path
 
+import msgspec
 import pytest
 
 from qrp2p.core.crypto.profiles import HYBRID_1
-from qrp2p.lab.recording import GlassBoxRecording, LabRecording, Opened, RecordingError, Value
-from qrp2p.lab.solo import SoloLab
+from qrp2p.lab.recording import (
+    HEADER,
+    GlassBoxRecording,
+    LabRecording,
+    Meta,
+    Opened,
+    RecordingError,
+    Value,
+    pack,
+)
+from qrp2p.lab.solo import LabRun, SoloLab
 from qrp2p.services.events import AdmissionPrompt, SessionOpened
 from qrp2p.services.exposure import RecordRevealed
 from qrp2p.services.node import NodeError
@@ -34,7 +44,7 @@ async def pair(tmp_path: Path) -> AsyncIterator[tuple[NodeHarness, NodeHarness]]
     await bob.node.close()
 
 
-def lab_run() -> object:
+def lab_run() -> LabRun:
     lab = SoloLab.fresh(HYBRID_1, TraceBus(), (1, 2), DeterministicRandom("saved"))
     lab.run()
     return lab.run_record()
@@ -45,7 +55,7 @@ async def test_a_lab_run_saves_and_opens_again_exactly(
 ) -> None:
     alice, _ = pair
     run = lab_run()
-    info = await alice.node.save_lab_recording("first handshake", run)  # type: ignore[arg-type]
+    info = await alice.node.save_lab_recording("first handshake", run)
     assert (info.title, info.kind, info.profile) == ("first handshake", "lab", "HYBRID-1")
     listed = await alice.node.recordings()
     assert [r.file_id for r in listed] == [info.file_id]
@@ -111,8 +121,8 @@ async def test_files_that_do_not_open_are_listed_as_unreadable(
     pair: tuple[NodeHarness, NodeHarness],
 ) -> None:
     alice, bob = pair
-    saved = await alice.node.save_lab_recording("mine", lab_run())  # type: ignore[arg-type]
-    theirs = await bob.node.save_lab_recording("theirs", lab_run())  # type: ignore[arg-type]
+    saved = await alice.node.save_lab_recording("mine", lab_run())
+    theirs = await bob.node.save_lab_recording("theirs", lab_run())
     folder = alice.node.data_dir / DIRECTORY
     copied = folder / f"{theirs.file_id}.qrlab"
     copied.write_bytes((bob.node.data_dir / DIRECTORY / f"{theirs.file_id}.qrlab").read_bytes())
@@ -138,7 +148,26 @@ async def test_files_that_do_not_open_are_listed_as_unreadable(
 
 async def test_a_locked_node_has_no_recordings(pair: tuple[NodeHarness, NodeHarness]) -> None:
     alice, _ = pair
-    await alice.node.save_lab_recording("before the lock", lab_run())  # type: ignore[arg-type]
+    await alice.node.save_lab_recording("before the lock", lab_run())
     await alice.node.lock()
     with pytest.raises(NodeError, match="locked"):
         await alice.node.recordings()
+
+
+async def test_a_validly_sealed_malformed_recording_is_unreadable_before_ui_or_replay(
+    pair: tuple[NodeHarness, NodeHarness],
+) -> None:
+
+    alice, _ = pair
+    record = LabRecording(Meta("invalid time", float("nan"), "HYBRID-1"), lab_run())
+    body = msgspec.msgpack.encode(record)
+    sealed = await alice.node._db(alice.node._vault.seal_lab, HEADER, body)
+    folder = alice.node.data_dir / DIRECTORY
+    folder.mkdir(exist_ok=True)
+    file_id = "ef" * 16
+    (folder / f"{file_id}.qrlab").write_bytes(pack(sealed))
+    listed = await alice.node.recordings()
+    assert listed[0].kind == "unreadable"
+    assert "creation time" in listed[0].problem
+    with pytest.raises(RecordingError, match="creation time"):
+        await alice.node.open_recording(file_id)

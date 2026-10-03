@@ -6,12 +6,25 @@ from pathlib import Path
 
 import pytest
 
+from qrp2p.core.crypto.profiles import HYBRID_1
 from qrp2p.core.errors import AdmitReason, CloseReason
-from qrp2p.core.trace import Direction, FrameTraced, RecordTraced, SessionClosed, StateChanged
+from qrp2p.core.trace import (
+    Direction,
+    FrameTraced,
+    RecordTraced,
+    SecretDerived,
+    SessionClosed,
+    StateChanged,
+    TranscriptHashed,
+)
 from qrp2p.core.wire import Chat, Frame, FrameType, encode_inner
+from qrp2p.lab.solo import Kind, Phase, Side, SoloLab, Step
+from qrp2p.services.trace_bus import TraceBus
 from qrp2p.ui.inspect import fields, keygraph, security, spec
 from qrp2p.ui.inspect.model import ProfileFacts, RecordOpened, Revealed, TraceItem
 from qrp2p.ui.inspect.timeline import Timeline, TimelineRow
+from qrp2p.ui.tap import trace_item
+from tests.support import DeterministicRandom
 from tests.ui.inspect_support import profile_facts, scripted, session_facts
 
 DESIGN = (Path(__file__).parents[2] / "docs" / "v2" / "DESIGN.md").read_text(encoding="utf-8")
@@ -476,3 +489,69 @@ def test_exposure_and_failures_are_named() -> None:
     assert found["identity"].value == "Not authenticated"
     lost = facts_by_key([], established=False, ended=True)
     assert lost["closed"].title == "Connection lost"
+
+
+def test_a_pin_mismatch_cannot_become_success_from_the_presence_of_a_pin() -> None:
+    found = facts_by_key(
+        scripted().i.items, pin_result="mismatched", ended=True, end_reason="pin_mismatch"
+    )
+    assert found["identity"].status == "fail"
+    assert "differs from the pin" in found["identity"].value
+    assert "proved the pinned" not in found["identity"].value
+
+
+def test_an_authenticated_first_contact_is_only_pinned_after_persistence() -> None:
+    found = facts_by_key(scripted().i.items, pinned_before=False, contact_saved=False, trust="")
+    assert "saved as a pin" not in found["identity"].value
+    saved = facts_by_key(scripted().i.items, pinned_before=False, contact_saved=True)
+    assert "saved as a pin" in saved["identity"].value
+    legacy = facts_by_key(scripted().i.items, pinned_before=False, pin_result="unavailable")
+    assert "evidence unavailable" in legacy["identity"].value
+    assert legacy["identity"].status == "warn"
+
+
+def test_every_observed_named_public_hash_has_a_graph_node_and_its_exact_value() -> None:
+    trace = scripted().i.items
+    graph = keygraph.build(trace, session_facts())
+    nodes = {n.key: n for n in graph.nodes}
+    hashes = [i.event for i in trace if isinstance(i.event, TranscriptHashed)]
+    assert {h.name for h in hashes} >= {"th_sig_R", "th_fin_R", "th_sig_I", "th_fin_I", "th_fin_A"}
+    for hashed in hashes:
+        assert nodes[hashed.name].value == hashed.digest.hex()
+        assert nodes[hashed.name].kind == "hash"
+    assert "ID_R" in nodes["th_sig_R"].operation
+    assert "SigR" not in nodes["th_sig_R"].operation
+    assert "FinA" in nodes["th_final"].operation
+
+
+def test_a_large_generation_is_one_missing_boundary_instead_of_invented_ancestry() -> None:
+    items = (TraceItem(0, 1.0, SecretDerived("ap_I[0]+5000", 32)),)
+    graph = keygraph.build(items, session_facts())
+    nodes = {n.key: n for n in graph.nodes}
+    assert set(nodes) == {"ap_I[0]+5000", "ap_I[0]+4999"}
+    assert nodes["ap_I[0]+4999"].state == "unavailable"
+    assert not nodes["ap_I[0]+4999"].inputs
+
+
+def test_a_real_5000_update_run_replays_and_every_graph_page_stays_bounded() -> None:
+
+    lab = SoloLab.fresh(HYBRID_1, TraceBus(), (1, 2), DeterministicRandom("long-key-history"))
+    lab.run()
+    for _ in range(5000):
+        lab.take(Step(Kind.KEY_UPDATE, Side.ALICE))
+    bus = TraceBus()
+    rebuilt = SoloLab.replayed(lab.run_record(), bus, (3, 4), random_source=None)
+    assert rebuilt.phase is not Phase.DIVERGED
+    trace = tuple(trace_item(r) for r in bus.events(3))
+    facts = session_facts(lab=True, exposed=True)
+    first = keygraph.build(trace, facts)
+    assert first.pages > 1
+    found: set[str] = set()
+    for page in range(first.pages):
+        graph = keygraph.build(trace, facts, page=page)
+        assert len(graph.nodes) <= 3 * (keygraph.HEAD_SIZE + keygraph.PAGE_SIZE)
+        assert len(graph.edges) <= 2 * len(graph.nodes)
+        found |= {n.key for n in graph.nodes}
+    expected = {i.event.label for i in trace if isinstance(i.event, SecretDerived)}
+    assert expected <= found
+    assert {"identity.ed25519", "identity.mldsa65", "identity.mldsa87"} <= found

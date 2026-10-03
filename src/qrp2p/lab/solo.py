@@ -28,9 +28,9 @@ import os
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Final
+from typing import Annotated, Final
 
-from msgspec import Struct
+from msgspec import Meta, Struct
 
 from qrp2p.core.crypto.identity import IdentityKeyPair
 from qrp2p.core.crypto.profiles import Profile
@@ -102,7 +102,7 @@ class Step(Struct, frozen=True, forbid_unknown_fields=True):
 
     kind: Kind
     side: Side
-    text: str = ""
+    text: Annotated[str, Meta(max_length=CHAT_LIMIT)] = ""
 
 
 class Phase(StrEnum):
@@ -120,22 +120,50 @@ class Phase(StrEnum):
     """A replay asked for something other than what was recorded."""
 
 
+type IdentitySeed = Annotated[bytes, Meta(min_length=SEED_LEN, max_length=SEED_LEN)]
+type IdentitySeeds = tuple[IdentitySeed, IdentitySeed, IdentitySeed]
+
+
 class LabRun(Struct, frozen=True, forbid_unknown_fields=True):
     """Everything needed to replay a lab run: identities, profile, steps and provider logs."""
 
     format: int
     profile: int
-    alice: tuple[bytes, bytes, bytes]
-    bob: tuple[bytes, bytes, bytes]
-    steps: list[Step]
-    marks: list[tuple[int, int]]
+    alice: IdentitySeeds
+    bob: IdentitySeeds
+    steps: Annotated[list[Step], Meta(max_length=10_000)]
+    marks: Annotated[list[tuple[int, int]], Meta(max_length=10_000)]
     """Each node's provider-log length after each step."""
-    alice_log: list[Entry]
-    bob_log: list[Entry]
+    alice_log: Annotated[list[Entry], Meta(max_length=100_000)]
+    bob_log: Annotated[list[Entry], Meta(max_length=100_000)]
 
 
 class LabError(Exception):
     """A step the lab cannot take now; the message says why."""
+
+
+def validate_marks(run: LabRun) -> None:
+    """Every step accounts for an ordered, bounded prefix of both complete logs.
+
+    Raises:
+        LabError: Marks omit, reorder or point outside recorded provider entries.
+    """
+    previous = (0, 0)
+    lengths = (len(run.alice_log), len(run.bob_log))
+    if len(run.marks) != len(run.steps):
+        msg = "the run's provider-log marks do not match its steps"
+        raise LabError(msg)
+    for mark in run.marks:
+        if any(
+            not low <= current <= high
+            for low, current, high in zip(previous, mark, lengths, strict=True)
+        ):
+            msg = "the run's provider-log marks are out of range or order"
+            raise LabError(msg)
+        previous = mark
+    if previous != lengths:
+        msg = "the run's provider logs contain unaccounted entries"
+        raise LabError(msg)
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,6 +190,17 @@ class _Node:
     ended: bool = False
     received: list[str] = field(default_factory=list[str])
     """Chat text delivered to this node."""
+
+
+class _LabRevealingProvider(RevealingProvider):
+    """The lab alone can expose the seeds of identities it generated for this run."""
+
+    def reveal_identity(self, seeds: tuple[bytes, bytes, bytes]) -> None:
+        """Emit throwaway private seeds, never a user's identity key pair."""
+        for label, seed in zip(
+            ("identity.ed25519", "identity.mldsa65", "identity.mldsa87"), seeds, strict=True
+        ):
+            self._emit(Secret(seed, label))
 
 
 def lab_profile(profile_id: int) -> Profile:
@@ -226,8 +265,7 @@ class SoloLab:
         for side, node_seeds, log, session_id in zip(Side, seeds, logs, session_ids, strict=True):
             provider = LabProvider(LAB_PROFILES, random_source=random_source, replay=log)
             self._nodes[side] = _Node(side, node_seeds, _identity(node_seeds), provider, session_id)
-        alice, bob = self._nodes[Side.ALICE], self._nodes[Side.BOB]
-        for node, peer in ((alice, bob), (bob, alice)):
+        for node in self._nodes.values():
             bus.open_session(
                 SessionInfo(
                     session_id=node.session_id,
@@ -236,8 +274,6 @@ class SoloLab:
                     started=0.0,
                     profile=self._profile.name,
                     pinned=node.side is Side.ALICE,  # Alice knows Bob's identity in advance
-                    peer_id=peer.identity.bundle.peer_id,
-                    peer_short_id=peer.identity.bundle.short_id,
                 )
             )
 
@@ -278,22 +314,33 @@ class SoloLab:
         if run.format != RUN_FORMAT or not 0 <= count <= len(run.steps):
             msg = "this lab run cannot be replayed here"
             raise LabError(msg)
-        if len(run.marks) != len(run.steps):
-            msg = "the run's provider-log marks do not match its steps"
-            raise LabError(msg)
+        validate_marks(run)
         a_mark, b_mark = run.marks[count - 1] if count else (0, 0)
         lab = cls(
             lab_profile(run.profile),
             (run.alice, run.bob),
             bus,
             session_ids,
-            random_source=random_source,
+            random_source=None,
             logs=(run.alice_log[:a_mark], run.bob_log[:b_mark]),
         )
-        for step in run.steps[:count]:
-            lab.take(step)
+        for index, step in enumerate(run.steps[:count]):
+            try:
+                lab.take(step)
+            except LabError:
+                lab._divergence = f"replay diverged at step {index}: illegal transition"
             if lab.phase is Phase.DIVERGED:
                 break
+            if lab._marks[-1] != run.marks[index]:
+                lab._divergence = f"replay diverged at step {index}: provider-log mark differs"
+                break
+        if lab.phase is not Phase.DIVERGED:
+            for node in lab._nodes.values():
+                node.provider.continue_live(random_source)
+        else:
+            lab._note = lab._divergence
+            if lab._notes:
+                lab._notes[-1] = lab._divergence
         return lab
 
     # -- state --------------------------------------------------------------------------------
@@ -503,6 +550,8 @@ class SoloLab:
 
     def _start(self, _: Step, node: _Node) -> str:
         self._started = True
+        for lab_node in self._nodes.values():
+            self._revealing(lab_node).reveal_identity(lab_node.seeds)
         bob = self._nodes[Side.BOB]
         machine = Initiator(
             provider=self._revealing(node),
@@ -584,8 +633,8 @@ class SoloLab:
 
     # -- what the core asks for ---------------------------------------------------------------
 
-    def _revealing(self, node: _Node) -> RevealingProvider:
-        return RevealingProvider(node.provider, self._revealer(node))
+    def _revealing(self, node: _Node) -> _LabRevealingProvider:
+        return _LabRevealingProvider(node.provider, self._revealer(node))
 
     def _revealer(self, node: _Node) -> Callable[[Revealed], None]:
         def reveal(value: Revealed) -> None:
@@ -599,7 +648,18 @@ class SoloLab:
 
         return reveal
 
+    def _describe_peer(self, node: _Node) -> None:
+        if isinstance(node.machine, Initiator) and node.machine.peer is not None:
+            peer = node.machine.peer
+            self._bus.describe(
+                node.session_id,
+                peer_id=peer.peer_id,
+                peer_short_id=peer.short_id,
+                pin_result="matched",
+            )
+
     def _absorb(self, node: _Node, events: Sequence[object]) -> None:
+        self._describe_peer(node)
         for event in events:
             match event:
                 case Send(frame=frame):
@@ -614,10 +674,19 @@ class SoloLab:
                     self._ended(node, event)
                 case AdmissionRequired():
                     node.awaiting_admission = True
+                    self._bus.describe(
+                        node.session_id,
+                        peer_id=event.peer.peer_id,
+                        peer_short_id=event.peer.short_id,
+                    )
                 case Established():
                     node.channel, node.machine = event.channel, None
                     self._bus.handshake_done(node.session_id)
-                    self._bus.describe(node.session_id, established=True)
+                    self._bus.describe(
+                        node.session_id,
+                        established=True,
+                        pin_result="matched" if node.side is Side.ALICE else "",
+                    )
                 case KeyMismatch() | ProfileRejected():
                     pass  # the lab pins the true identity and serves its own profile
                 case _:

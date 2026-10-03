@@ -63,13 +63,40 @@ def test_the_tail_is_bounded_by_bytes() -> None:
     assert kept[-1].ordinal == 999
 
 
-def test_one_oversized_event_is_still_kept() -> None:
+def test_one_oversized_event_cannot_exceed_the_byte_budget() -> None:
     bus = opened(TraceBus())
     bus.handshake_done(1)
     bus.publish(1, 0.0, frame_event(16_000))
     big = ValueRevealed(Secret(bytes(RING_BYTES + 1), "x"))
     bus.publish(1, 1.0, big)
-    assert [r.event for r in bus.events(1)] == [big]
+    assert bus.events(1) == ()
+    assert bus.since(1, -1) == ((), True)
+
+
+def test_the_handshake_head_also_has_a_byte_budget() -> None:
+    bus = opened(TraceBus())
+    for n in range(1000):
+        bus.publish(1, float(n), frame_event(16_000))
+    assert sum(event_bytes(r.event) for r in bus.events(1)) <= 2 * RING_BYTES
+    assert bus.events(1)[0].ordinal == 0
+    assert bus.events(1)[-1].ordinal == 999
+    assert any(
+        b.ordinal != a.ordinal + 1 for a, b in zip(bus.events(1), bus.events(1)[1:], strict=False)
+    )
+
+
+def test_ring_evictions_are_announced_and_unsubscribe_cleanly() -> None:
+    bus = TraceBus()
+    removed: list[int] = []
+    unsubscribe = bus.subscribe_removals(removed.append)
+    for session_id in range(ENDED_KEPT + 3):
+        opened(bus, session_id)
+        bus.session_ended(session_id)
+    assert removed == [0, 1, 2]
+    assert len(bus.sessions()) == ENDED_KEPT
+    unsubscribe()
+    bus.clear()
+    assert removed == [0, 1, 2]
 
 
 def test_event_bytes_counts_frames_and_revealed_values() -> None:
@@ -108,7 +135,7 @@ def test_since_sees_a_gap_even_when_nothing_is_kept_after_it() -> None:
     bus.publish(1, 0.0, STATE)
     bus.publish(1, 0.0, ValueRevealed(Secret(bytes(RING_BYTES + 1), "big")))  # evicts ordinal 0
     later, missing = bus.since(1, -1)
-    assert ([r.ordinal for r in later], missing) == ([1], True)
+    assert (later, missing) == ((), True)
 
 
 def test_descriptors_are_announced_when_they_change() -> None:
@@ -155,3 +182,19 @@ def test_rings_of_ended_sessions_are_bounded() -> None:
     assert bus.info(100) is None
     bus.clear()
     assert bus.sessions() == ()
+
+
+def test_restoring_a_full_tail_preserves_values_flushed_after_established() -> None:
+    source = opened(TraceBus())
+    source.publish(1, 1.0, StateChanged("initiator", "established"))
+    value = ValueRevealed(Secret(bytes(32), "hs"))
+    source.publish(1, 0.5, value)  # exposure gate publishes its earlier capture after admission
+    source.handshake_done(1)
+    for n in range(RING_SIZE):
+        source.publish(1, 2.0 + n, frame_event(10))
+    info = source.info(1)
+    assert info is not None
+    restored = TraceBus()
+    restored.restore(info, source.events(1))
+    assert restored.events(1) == source.events(1)
+    assert restored.events(1)[1].event == value

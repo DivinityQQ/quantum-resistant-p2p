@@ -7,7 +7,8 @@ and, for exposed sessions only, revealed values as bytes.
 
 from dataclasses import dataclass
 
-from qrp2p.core.trace import TraceEvent
+from qrp2p.core.trace import FrameTraced, TraceEvent
+from qrp2p.core.wire import FRAME_HEADER_LEN
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +44,19 @@ class TraceItem:
     ordinal: int
     time: float
     event: Item
+
+
+def item_bytes(item: TraceItem) -> int:
+    """Captured bytes retained by a delivery or an Inspector; counts are bounded separately."""
+    match item.event:
+        case FrameTraced(frame=frame):
+            return FRAME_HEADER_LEN + len(frame.body)
+        case Revealed(value=value):
+            return len(value)
+        case RecordOpened(nonce=nonce, plaintext=plaintext):
+            return len(nonce) + len(plaintext)
+        case _:
+            return 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,7 +95,7 @@ class SessionFacts:
     trust: str
     """The contact's trust state now (``pinned``, ``verified``…); empty if not a contact."""
     pinned_before: bool
-    """We initiated to a pinned contact (its identity was checked before we revealed ours)."""
+    """An expected responder bundle was supplied; ``pin_result`` records its comparison."""
     glass_box_requested: bool
     glass_box: bool
     exposed: bool
@@ -92,3 +106,6 @@ class SessionFacts:
     end_reason: str
     admit_reason: str
     by_peer: bool
+    pin_result: str = ""
+    contact_saved: bool = False
+    recorded: bool = False

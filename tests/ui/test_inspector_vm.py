@@ -13,13 +13,13 @@ import pytest
 from PySide6.QtCore import QCoreApplication
 
 from qrp2p.core.crypto.provider import Revealed as RevealedValue
-from qrp2p.core.trace import FrameTraced
-from qrp2p.core.wire import FrameType
-from qrp2p.ui.inspect.model import Revealed, SessionFacts, TraceItem
+from qrp2p.core.trace import Direction, FrameTraced
+from qrp2p.core.wire import Frame, FrameType
+from qrp2p.ui.inspect.model import Revealed, SessionFacts, TraceItem, item_bytes
 from qrp2p.ui.inspect.spec import SPEC_URL
 from qrp2p.ui.inspect.timeline import Timeline
 from qrp2p.ui.snapshots import ContactChanged, ErrorInfo
-from qrp2p.ui.tap import InspectSnap, SessionDescribed, TraceAppended, TraceOverflow
+from qrp2p.ui.tap import InspectSnap, SessionDescribed, SessionRemoved, TraceAppended, TraceOverflow
 from qrp2p.ui.viewmodels.application import AppController
 from qrp2p.ui.viewmodels.inspector import ITEM_CAP, Inspector
 from qrp2p.ui.viewmodels.workspace import Workspace
@@ -404,3 +404,54 @@ def test_a_rebuilt_key_node_announces_itself(backend: FakeBackend, app: AppContr
     dk = next(n for n in inspector._nodes.rows() if n.key == "dk")
     assert "ssM" in dk.outputs
     assert dk.released == "used"
+
+
+def test_bytes_trigger_resnapshot_and_pause_keeps_a_bounded_frozen_view(
+    backend: FakeBackend, app: AppController, monkeypatch: pytest.MonkeyPatch
+) -> None:
+
+    monkeypatch.setattr("qrp2p.ui.viewmodels.inspector.BUFFER_BYTES", 64_000)
+    original = scripted().i.items[:1]
+    inspector = opened(backend, app, original)
+    frame = FrameTraced(Direction.OUT, Frame(FrameType.RECORD, bytes(16_000)), ())
+    for n in range(1, 6):
+        backend.updates(TraceAppended(7, (TraceItem(n, float(n), frame),)))
+    request = backend.one("inspect")
+    assert request.args["after"] == -1
+    kept = (*original, TraceItem(4, 4.0, frame), TraceItem(5, 5.0, frame))
+    backend.reply(request, InspectSnap(facts(), kept, missing=True))
+    assert sum(item_bytes(i) for i in inspector.trace_items) <= 64_000
+    assert any(row.kind == "gap" for row in inspector._timeline_model.rows())
+    inspector.pause()
+    frozen = inspector.trace_items
+    for n in range(6, 50):
+        backend.updates(TraceAppended(7, (TraceItem(n, float(n), frame),)))
+    assert inspector.trace_items == frozen
+
+
+def test_session_eviction_removes_picker_entries_and_invalidates_an_inflight_selection(
+    backend: FakeBackend, app: AppController
+) -> None:
+
+    inspector = opened(backend, app, scripted().i.items)
+    for session_id in range(8, 40):
+        backend.updates(SessionDescribed(facts(session_id=session_id)))
+    backend.updates(*(SessionRemoved(n) for n in range(7, 24)))
+    assert set(inspector._known) == set(range(24, 40))
+    assert inspector.property("sessionId") == -1
+    assert "no longer retained" in inspector.property("error")
+    assert not inspector.trace_items
+
+
+def test_a_dropped_snapshot_reply_requests_a_fresh_bounded_snapshot(
+    backend: FakeBackend, app: AppController
+) -> None:
+    inspector = opened(backend, app, scripted().i.items[:20])
+    backend.updates(TraceOverflow(7))
+    request = backend.one("inspect")
+    backend.reply(request, error=ErrorInfo("trace_overflow", "The trace display is catching up."))
+    retry = backend.one("inspect")
+    assert retry.args == {"session_id": 7, "after": -1}
+    backend.reply(retry, InspectSnap(facts(), tuple(scripted().i.items), missing=False))
+    assert not inspector.property("loading")
+    assert inspector.trace_items

@@ -362,6 +362,13 @@ class SessionManager:
 
     def trace(self, session: Session, event: TraceEvent) -> None:
         """See :class:`~qrp2p.services.session.SessionHooks`."""
+        if session.peer is not None:
+            self._trace.describe(
+                session.id,
+                pin_result="matched" if session.expected_peer is not None else "",
+                peer_id=session.peer.peer_id,
+                peer_short_id=session.peer.short_id,
+            )
         self._trace.publish(session.id, self._clock(), event)
 
     def admission(self, session: Session, request: AdmissionRequired) -> None:
@@ -399,7 +406,10 @@ class SessionManager:
         """See :class:`~qrp2p.services.session.SessionHooks`."""
         # It proved this identity, even if not the pinned one.
         self._trace.describe(
-            session.id, peer_id=event.actual.peer_id, peer_short_id=event.actual.short_id
+            session.id,
+            peer_id=event.actual.peer_id,
+            peer_short_id=event.actual.short_id,
+            pin_result="mismatched",
         )
         self._hooks.key_mismatch(session, event)
 

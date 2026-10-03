@@ -29,6 +29,7 @@ from PySide6.QtCore import QObject, Qt, Signal, SignalInstance
 from qrp2p.services.events import NodeState
 from qrp2p.ui import ops
 from qrp2p.ui.host import Op, Post
+from qrp2p.ui.mailbox import Mailbox
 from qrp2p.ui.snapshots import Batch, Delivery, Lifecycle, Reply
 
 STARTING: Final = "starting"
@@ -98,11 +99,12 @@ class Bridge(QObject):
     """A :class:`Lifecycle` was accepted."""
     updates = Signal(object)
     """A tuple of updates of the current unlocked generation."""
-    _arrived = Signal(object)
+    _arrived = Signal()
 
     def __init__(self, make_host: Callable[[Post], Host], parent: QObject | None = None) -> None:
         super().__init__(parent)
-        self._arrived.connect(self._dispatch, Qt.ConnectionType.QueuedConnection)
+        self._arrived.connect(self._drain_mailbox, Qt.ConnectionType.QueuedConnection)
+        self._mailbox = Mailbox()
         self._gen = 0
         self._state = STARTING
         self._locking = False
@@ -158,12 +160,14 @@ class Bridge(QObject):
     def lock(self, done: Done | None = None) -> None:
         """Lock: stop accepting data now, then lock the node."""
         self._locking = True
+        self._mailbox.clear_scoped({i for i, p in self._pending.items() if p.scoped}, gen=self._gen)
         self._drop_scoped()
         self.request(ops.lock(), done, scoped=False)
 
     def stop(self, timeout: float) -> bool:
         """Stop accepting anything, then close the node and end the services thread."""
         self._closed = True
+        self._mailbox.close()
         self._pending.clear()
         return self._host.stop(timeout)
 
@@ -171,8 +175,12 @@ class Bridge(QObject):
 
     def _post(self, delivery: Delivery) -> None:
         """Called on the services thread: queue the delivery for the Qt thread."""
-        if not self._closed:
-            self._arrived.emit(delivery)
+        if not self._closed and self._mailbox.put(delivery):
+            self._arrived.emit()
+
+    def _drain_mailbox(self) -> None:
+        for delivery in self._mailbox.take():
+            self._dispatch(delivery)
 
     def _dispatch(self, delivery: Delivery) -> None:
         if self._closed:
@@ -185,6 +193,10 @@ class Bridge(QObject):
                 self._gen = delivery.gen
                 self._state = delivery.state
                 self._locking = False
+                if delivery.state != NodeState.UNLOCKED:
+                    self._mailbox.clear_scoped(
+                        {i for i, p in self._pending.items() if p.scoped}, gen=delivery.gen
+                    )
                 self._drop_scoped()
                 self.lifecycle.emit(delivery)
             case Batch():

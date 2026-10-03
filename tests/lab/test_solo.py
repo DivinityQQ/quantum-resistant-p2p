@@ -232,3 +232,58 @@ def test_a_tampered_recording_diverges_with_a_named_reason() -> None:
         SoloLab.replayed(replace(run, format=99), TraceBus(), (1, 2))
     with pytest.raises(LabError, match="cannot be replayed"):
         SoloLab.replayed(run, TraceBus(), (1, 2), upto=len(run.steps) + 1)
+
+
+@pytest.mark.parametrize("damage", ["negative", "backwards", "outside", "trailing", "empty"])
+def test_replay_refuses_unaccounted_or_invalid_log_marks(damage: str) -> None:
+    lab, _ = fresh()
+    lab.run()
+    run = lab.run_record()
+    marks = list(run.marks)
+    if damage == "negative":
+        marks[0] = (-1, 0)
+    elif damage == "backwards":
+        marks[1] = (0, 0)
+    elif damage == "outside":
+        marks[-1] = (len(run.alice_log) + 1, len(run.bob_log))
+    elif damage == "trailing":
+        run = replace(run, alice_log=[*run.alice_log, run.alice_log[0]])
+    else:
+        run = replace(run, steps=[], alice_log=run.alice_log, bob_log=run.bob_log)
+        marks = []
+    with pytest.raises(LabError, match=r"marks|unaccounted"):
+        SoloLab.replayed(replace(run, marks=marks), TraceBus(), (3, 4))
+
+
+def test_a_fork_checks_each_step_before_enabling_fresh_randomness() -> None:
+    lab, _ = fresh()
+    lab.run()
+    run = lab.run_record()
+    marks = list(run.marks)
+    marks[0] = (0, 0)  # monotonic and in range, but fails to account for Start's draws
+    calls: list[int] = []
+
+    def fresh_random(n: int) -> bytes:
+        calls.append(n)
+        return bytes(n)
+
+    rebuilt = SoloLab.replayed(
+        replace(run, marks=marks), TraceBus(), (3, 4), random_source=fresh_random
+    )
+    assert rebuilt.phase is Phase.DIVERGED
+    assert "step 0" in rebuilt.divergence
+    assert not calls
+    assert len(rebuilt.steps) == 1
+
+
+def test_only_the_lab_reveals_both_throwaway_identity_seed_sets() -> None:
+    lab, bus = fresh()
+    lab.run()
+    run = lab.run_record()
+    labels = ("identity.ed25519", "identity.mldsa65", "identity.mldsa87")
+    for session_id, seeds in ((ALICE_ID, run.alice), (BOB_ID, run.bob)):
+        values = revealed(bus, session_id)
+        assert tuple(values[n] for n in labels) == seeds
+    rebuilt_bus = TraceBus()
+    SoloLab.replayed(run, rebuilt_bus, (3, 4), random_source=None)
+    assert tuple(revealed(rebuilt_bus, 3)[n] for n in labels) == run.alice
