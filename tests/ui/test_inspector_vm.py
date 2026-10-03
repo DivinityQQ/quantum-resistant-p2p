@@ -57,7 +57,11 @@ def opened(
     inspector.setOpen(True)
     backend.reply(backend.one("inspect_sessions"), (facts(**changes),))
     request = backend.one("inspect")
-    assert request.args == {"session_id": 7, "after": -1}  # the selected conversation's session
+    assert request.args == {
+        "session_id": 7,
+        "after": -1,
+        "source": "node",
+    }  # the selected conversation's session
     backend.reply(request, InspectSnap(facts(**changes), tuple(items), missing=False))
     return inspector
 
@@ -106,7 +110,7 @@ def test_pausing_freezes_the_display_and_resuming_catches_up(
     assert len(inspector.trace_items) == 50
     inspector.followLive()
     request = backend.one("inspect")
-    assert request.args == {"session_id": 7, "after": 49}
+    assert request.args == {"session_id": 7, "after": 49, "source": "node"}
     backend.reply(request, InspectSnap(facts(), tuple(items[70:]), missing=True))
     rows = inspector._timeline_model.rows()
     gap = next(r for r in rows if r.kind == "gap")
@@ -120,7 +124,7 @@ def test_an_overflow_catches_up_from_the_last_ordinal(
     items = scripted().i.items
     inspector = opened(backend, app, items[:30])
     backend.updates(TraceOverflow(7))
-    assert backend.one("inspect").args == {"session_id": 7, "after": 29}
+    assert backend.one("inspect").args == {"session_id": 7, "after": 29, "source": "node"}
     assert inspector.property("loading")
 
 
@@ -133,7 +137,7 @@ def test_too_many_events_take_a_fresh_snapshot(
     inspector = opened(backend, app, items[:50])
     backend.updates(TraceAppended(7, tuple(items[50:70])))
     request = backend.one("inspect")
-    assert request.args == {"session_id": 7, "after": -1}
+    assert request.args == {"session_id": 7, "after": -1, "source": "node"}
     backend.reply(request, InspectSnap(facts(), tuple(items[:5] + items[40:]), missing=False))
     assert [i.ordinal for i in inspector.trace_items][:6] == [0, 1, 2, 3, 4, 40]
     assert any(r.kind == "gap" for r in inspector._timeline_model.rows())

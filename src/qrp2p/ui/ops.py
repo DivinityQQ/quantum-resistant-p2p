@@ -1,6 +1,7 @@
 """Requests the desktop app makes of the node: each builds an operation for the services thread.
 
-An operation (:data:`~qrp2p.ui.host.Op`) runs on the services thread with the node and returns a
+An operation (:data:`~qrp2p.ui.host.Op`) runs on the services thread with the
+:class:`~qrp2p.ui.host.Services` (the node, its Inspector taps and the solo lab) and returns a
 snapshot or a primitive, never a live object (UI_DESIGN §11.2). View models build them here and
 submit them through the bridge; they never call the node themselves. Arguments come from QML, so
 each operation checks them when it runs: an invalid one raises ``ValueError``, which reaches the
@@ -12,10 +13,10 @@ from pathlib import Path
 from typing import Final
 
 from qrp2p.services.models import TEXT_SCALES, Appearance, Retention, TrustState
-from qrp2p.services.node import Node, NodeError, profile_by_name
+from qrp2p.services.node import NodeError, profile_by_name
 from qrp2p.services.recordings import RecordingInfo
-from qrp2p.ui.host import LabOp, Op, TapOp, network_snap
-from qrp2p.ui.labhost import LabHost
+from qrp2p.ui.host import Op, Services, network_snap
+from qrp2p.ui.labhost import LabSnap
 from qrp2p.ui.snapshots import (
     ID_HEX_LEN,
     ActivitySnap,
@@ -50,8 +51,8 @@ def _id(hex_id: str) -> bytes:
 def create_vault(password: str, display_name: str) -> Op:
     """Create the vault and identity, then go online."""
 
-    async def op(node: Node) -> None:
-        await node.create(password, display_name=display_name.strip())
+    async def op(services: Services) -> None:
+        await services.node.create(password, display_name=display_name.strip())
 
     return op
 
@@ -59,8 +60,8 @@ def create_vault(password: str, display_name: str) -> Op:
 def unlock(password: str) -> Op:
     """Unlock with the password."""
 
-    async def op(node: Node) -> None:
-        await node.unlock(password)
+    async def op(services: Services) -> None:
+        await services.node.unlock(password)
 
     return op
 
@@ -68,8 +69,8 @@ def unlock(password: str) -> Op:
 def unlock_with_device() -> Op:
     """Unlock with the device key from the OS keychain."""
 
-    async def op(node: Node) -> None:
-        await node.unlock_with_device()
+    async def op(services: Services) -> None:
+        await services.node.unlock_with_device()
 
     return op
 
@@ -77,8 +78,8 @@ def unlock_with_device() -> Op:
 def device_unlock_available() -> Op:
     """Whether "Remember on this device" is set up (answerable while locked)."""
 
-    async def op(node: Node) -> bool:
-        return await node.device_unlock_available()
+    async def op(services: Services) -> bool:
+        return await services.node.device_unlock_available()
 
     return op
 
@@ -86,8 +87,8 @@ def device_unlock_available() -> Op:
 def lock() -> Op:
     """Lock now."""
 
-    async def op(node: Node) -> None:
-        await node.lock()
+    async def op(services: Services) -> None:
+        await services.node.lock()
 
     return op
 
@@ -95,8 +96,8 @@ def lock() -> Op:
 def touch() -> Op:
     """The user is active: postpone auto-lock."""
 
-    async def op(node: Node) -> None:  # an Op is a coroutine function
-        node.touch()
+    async def op(services: Services) -> None:  # an Op is a coroutine function
+        services.node.touch()
 
     return op
 
@@ -107,8 +108,8 @@ def touch() -> Op:
 def history(contact_id: str, limit: int = HISTORY_PAGE) -> Op:
     """The newest ``limit`` entries of a conversation, oldest first."""
 
-    async def op(node: Node) -> tuple[object, ...]:
-        entries = await node.history(_id(contact_id), max(limit, 1))
+    async def op(services: Services) -> tuple[object, ...]:
+        entries = await services.node.history(_id(contact_id), max(limit, 1))
         return tuple(message_snap(e) for e in entries)
 
     return op
@@ -117,10 +118,10 @@ def history(contact_id: str, limit: int = HISTORY_PAGE) -> Op:
 def recent_activity() -> Op:
     """When each conversation last had an entry (or the contact was added, if never)."""
 
-    async def op(node: Node) -> ActivitySnap:
+    async def op(services: Services) -> ActivitySnap:
         times: list[tuple[str, float]] = []
-        for contact in node.contacts():
-            last = await node.history(contact.contact_id, 1)
+        for contact in services.node.contacts():
+            last = await services.node.history(contact.contact_id, 1)
             times.append((contact.contact_id.hex(), last[-1].time if last else contact.created))
         return ActivitySnap(tuple(times))
 
@@ -130,14 +131,14 @@ def recent_activity() -> Op:
 def send_chat(contact_id: str, text: str) -> Op:
     """Send a chat message; its entry arrives as an update."""
 
-    async def op(node: Node) -> None:
+    async def op(services: Services) -> None:
         if not text.strip():
             msg = "the message is empty"
             raise ValueError(msg)
         if len(text.encode()) > MAX_TEXT_BYTES:
             msg = "the message is longer than 16,000 bytes"
             raise ValueError(msg)
-        await node.send_chat(_id(contact_id), text)
+        await services.node.send_chat(_id(contact_id), text)
 
     return op
 
@@ -145,8 +146,8 @@ def send_chat(contact_id: str, text: str) -> Op:
 def send_file(contact_id: str, path: str) -> Op:
     """Offer a file; it is sent once the peer accepts."""
 
-    async def op(node: Node) -> None:
-        await node.send_file(_id(contact_id), Path(path))
+    async def op(services: Services) -> None:
+        await services.node.send_file(_id(contact_id), Path(path))
 
     return op
 
@@ -154,8 +155,8 @@ def send_file(contact_id: str, path: str) -> Op:
 def send_file_data(contact_id: str, name: str, data: bytes) -> Op:
     """Offer ``data`` (a pasted image) as a file called ``name``."""
 
-    async def op(node: Node) -> None:
-        await node.send_file_data(_id(contact_id), name, data)
+    async def op(services: Services) -> None:
+        await services.node.send_file_data(_id(contact_id), name, data)
 
     return op
 
@@ -163,8 +164,8 @@ def send_file_data(contact_id: str, name: str, data: bytes) -> Op:
 def accept_file(file_id: str, directory: str = "") -> Op:
     """Accept an offered file into ``directory`` (empty: the downloads folder)."""
 
-    async def op(node: Node) -> None:
-        await node.accept_file(_id(file_id), Path(directory) if directory else None)
+    async def op(services: Services) -> None:
+        await services.node.accept_file(_id(file_id), Path(directory) if directory else None)
 
     return op
 
@@ -172,8 +173,8 @@ def accept_file(file_id: str, directory: str = "") -> Op:
 def decline_file(file_id: str) -> Op:
     """Decline an offered file."""
 
-    async def op(node: Node) -> None:
-        await node.decline_file(_id(file_id))
+    async def op(services: Services) -> None:
+        await services.node.decline_file(_id(file_id))
 
     return op
 
@@ -181,8 +182,8 @@ def decline_file(file_id: str) -> Op:
 def cancel_file(file_id: str) -> Op:
     """Cancel a transfer in either direction."""
 
-    async def op(node: Node) -> None:
-        await node.cancel_file(_id(file_id))
+    async def op(services: Services) -> None:
+        await services.node.cancel_file(_id(file_id))
 
     return op
 
@@ -193,8 +194,8 @@ def cancel_file(file_id: str) -> Op:
 def connect_contact(contact_id: str, *, glass_box: bool) -> Op:
     """Connect to a contact; returns once the session is open."""
 
-    async def op(node: Node) -> None:
-        await node.connect_contact(_id(contact_id), glass_box=glass_box)
+    async def op(services: Services) -> None:
+        await services.node.connect_contact(_id(contact_id), glass_box=glass_box)
 
     return op
 
@@ -202,13 +203,13 @@ def connect_contact(contact_id: str, *, glass_box: bool) -> Op:
 def connect_address(host: str, port: int, name: str, profile: str) -> Op:
     """Connect to ``host:port`` as a first contact; returns the contact's ID."""
 
-    async def op(node: Node) -> str:
+    async def op(services: Services) -> str:
         bare = host.strip().removeprefix("[").removesuffix("]")
         if not bare:
             msg = "enter an address"
             raise ValueError(msg)
         chosen = profile_by_name(profile) if profile else None
-        contact_id = await node.connect_address(
+        contact_id = await services.node.connect_address(
             bare, _port(port), profile=chosen, name=name.strip()
         )
         return contact_id.hex()
@@ -219,12 +220,12 @@ def connect_address(host: str, port: int, name: str, profile: str) -> Op:
 def connect_nearby(key: str) -> Op:
     """Connect to an announced peer; returns the contact's ID."""
 
-    async def op(node: Node) -> str:
-        peer = next((p for p in node.nearby() if p.instance == key), None)
+    async def op(services: Services) -> str:
+        peer = next((p for p in services.node.nearby() if p.instance == key), None)
         if peer is None:
             msg = "that peer is no longer announced"
             raise NodeError(msg)
-        return (await node.connect_nearby(peer)).hex()
+        return (await services.node.connect_nearby(peer)).hex()
 
     return op
 
@@ -232,8 +233,8 @@ def connect_nearby(key: str) -> Op:
 def disconnect(contact_id: str) -> Op:
     """Close the session with a contact."""
 
-    async def op(node: Node) -> None:
-        await node.disconnect(_id(contact_id))
+    async def op(services: Services) -> None:
+        await services.node.disconnect(_id(contact_id))
 
     return op
 
@@ -241,8 +242,8 @@ def disconnect(contact_id: str) -> Op:
 def rekey(contact_id: str) -> Op:
     """Start a post-quantum rekey now."""
 
-    async def op(node: Node) -> None:
-        await node.rekey(_id(contact_id))
+    async def op(services: Services) -> None:
+        await services.node.rekey(_id(contact_id))
 
     return op
 
@@ -250,8 +251,8 @@ def rekey(contact_id: str) -> Op:
 def network() -> Op:
     """Where we listen now (addresses can change while the app runs)."""
 
-    async def op(node: Node) -> object:
-        return network_snap(node)
+    async def op(services: Services) -> object:
+        return network_snap(services.node)
 
     return op
 
@@ -262,8 +263,8 @@ def network() -> Op:
 def answer_prompt(prompt_id: int, *, accept: bool, name: str = "") -> Op:
     """Answer a contact or glass-box request; returns the actual outcome."""
 
-    async def op(node: Node) -> str:
-        outcome = await node.answer_prompt(prompt_id, accept=accept, name=name.strip())
+    async def op(services: Services) -> str:
+        outcome = await services.node.answer_prompt(prompt_id, accept=accept, name=name.strip())
         return outcome.value
 
     return op
@@ -272,8 +273,8 @@ def answer_prompt(prompt_id: int, *, accept: bool, name: str = "") -> Op:
 def resolve_mismatch(mismatch_id: int, *, repin: bool) -> Op:
     """Cancel, or re-pin the contact to the identity that answered."""
 
-    async def op(node: Node) -> None:
-        await node.resolve_mismatch(mismatch_id, repin=repin)
+    async def op(services: Services) -> None:
+        await services.node.resolve_mismatch(mismatch_id, repin=repin)
 
     return op
 
@@ -284,9 +285,9 @@ def resolve_mismatch(mismatch_id: int, *, repin: bool) -> Op:
 def safety_number(contact_id: str) -> Op:
     """The 60-digit safety number with a contact, bound to the identity it belongs to."""
 
-    async def op(node: Node) -> SafetySnap:  # an Op is a coroutine function
-        peer_id, groups = node.safety_number_of(_id(contact_id))
-        contact = node.contact(_id(contact_id))
+    async def op(services: Services) -> SafetySnap:  # an Op is a coroutine function
+        peer_id, groups = services.node.safety_number_of(_id(contact_id))
+        contact = services.node.contact(_id(contact_id))
         return SafetySnap(
             peer_id=peer_id.hex(),
             fingerprint=fingerprint(peer_id),
@@ -304,9 +305,9 @@ def set_trust(contact_id: str, trust: str, compared_peer_id: str = "") -> Op:
     contact is pinned to another identity by then.
     """
 
-    async def op(node: Node) -> None:
+    async def op(services: Services) -> None:
         compared = bytes.fromhex(compared_peer_id) if compared_peer_id else None
-        await node.set_trust(_id(contact_id), TrustState(trust), compared_peer_id=compared)
+        await services.node.set_trust(_id(contact_id), TrustState(trust), compared_peer_id=compared)
 
     return op
 
@@ -314,11 +315,11 @@ def set_trust(contact_id: str, trust: str, compared_peer_id: str = "") -> Op:
 def rename_contact(contact_id: str, name: str) -> Op:
     """Rename a contact (local only; the peer never sees it)."""
 
-    async def op(node: Node) -> None:
+    async def op(services: Services) -> None:
         if not name.strip():
             msg = "the name is empty"
             raise ValueError(msg)
-        await node.update_contact(_id(contact_id), name=name.strip())
+        await services.node.update_contact(_id(contact_id), name=name.strip())
 
     return op
 
@@ -326,8 +327,8 @@ def rename_contact(contact_id: str, name: str) -> Op:
 def set_contact_profile(contact_id: str, profile: str) -> Op:
     """The profile sessions with the contact use (both sides must agree)."""
 
-    async def op(node: Node) -> None:
-        await node.update_contact(_id(contact_id), profile_id=profile_by_name(profile).id)
+    async def op(services: Services) -> None:
+        await services.node.update_contact(_id(contact_id), profile_id=profile_by_name(profile).id)
 
     return op
 
@@ -335,8 +336,8 @@ def set_contact_profile(contact_id: str, profile: str) -> Op:
 def set_retention(contact_id: str, retention: str) -> Op:
     """How long the conversation is kept."""
 
-    async def op(node: Node) -> None:
-        await node.update_contact(_id(contact_id), retention=Retention(retention))
+    async def op(services: Services) -> None:
+        await services.node.update_contact(_id(contact_id), retention=Retention(retention))
 
     return op
 
@@ -344,11 +345,11 @@ def set_retention(contact_id: str, retention: str) -> Op:
 def set_auto_accept(contact_id: str, *, enabled: bool, limit: int) -> Op:
     """File auto-accept up to ``limit`` bytes (verified contacts only)."""
 
-    async def op(node: Node) -> None:
+    async def op(services: Services) -> None:
         if enabled and limit <= 0:
             msg = "choose a size limit"
             raise ValueError(msg)
-        await node.update_contact(
+        await services.node.update_contact(
             _id(contact_id), auto_accept_files=enabled, auto_accept_limit=max(limit, 0)
         )
 
@@ -358,8 +359,8 @@ def set_auto_accept(contact_id: str, *, enabled: bool, limit: int) -> Op:
 def delete_conversation(contact_id: str) -> Op:
     """Delete a conversation's history and key."""
 
-    async def op(node: Node) -> None:
-        await node.delete_conversation(_id(contact_id))
+    async def op(services: Services) -> None:
+        await services.node.delete_conversation(_id(contact_id))
 
     return op
 
@@ -367,8 +368,8 @@ def delete_conversation(contact_id: str) -> Op:
 def delete_contact(contact_id: str) -> Op:
     """Delete a contact and its history."""
 
-    async def op(node: Node) -> None:
-        await node.delete_contact(_id(contact_id))
+    async def op(services: Services) -> None:
+        await services.node.delete_contact(_id(contact_id))
 
     return op
 
@@ -455,13 +456,13 @@ _SETTINGS: Final[dict[str, Callable[[object], object]]] = {
 def update_setting(name: str, value: object) -> Op:
     """Change one setting (unknown or invalid: ``ValueError``); returns the settings in use."""
 
-    async def op(node: Node) -> object:
+    async def op(services: Services) -> object:
         parse = _SETTINGS.get(name)
         if parse is None:
             msg = "unknown setting"
             raise ValueError(msg)
-        settings = await node.update_settings(**{name: parse(value)})
-        return settings_snap(node, settings)
+        settings = await services.node.update_settings(**{name: parse(value)})
+        return settings_snap(services.node, settings)
 
     return op
 
@@ -469,8 +470,8 @@ def update_setting(name: str, value: object) -> Op:
 def device_unlock_enabled() -> Op:
     """Whether "Remember on this device" is on."""
 
-    async def op(node: Node) -> bool:
-        return await node.device_unlock_enabled()
+    async def op(services: Services) -> bool:
+        return await services.node.device_unlock_enabled()
 
     return op
 
@@ -478,8 +479,8 @@ def device_unlock_enabled() -> Op:
 def set_device_unlock(*, enabled: bool) -> Op:
     """Turn "Remember on this device" on or off."""
 
-    async def op(node: Node) -> None:
-        await node.set_device_unlock(enabled=enabled)
+    async def op(services: Services) -> None:
+        await services.node.set_device_unlock(enabled=enabled)
 
     return op
 
@@ -487,8 +488,8 @@ def set_device_unlock(*, enabled: bool) -> Op:
 def change_password(old: str, new: str) -> Op:
     """Re-key the vault under a new password."""
 
-    async def op(node: Node) -> None:
-        await node.change_password(old, new)
+    async def op(services: Services) -> None:
+        await services.node.change_password(old, new)
 
     return op
 
@@ -498,7 +499,11 @@ def change_password(old: str, new: str) -> Op:
 
 def inspect_sessions(source: str = "node") -> Op:
     """Every retained session of ``source``; their descriptor changes follow as updates."""
-    return TapOp(lambda tap: tap.sessions(), source)
+
+    async def op(services: Services) -> object:
+        return services.tap(source).sessions()
+
+    return op
 
 
 def inspect(session_id: int, after: int = -1, source: str = "node") -> Op:
@@ -506,17 +511,29 @@ def inspect(session_id: int, after: int = -1, source: str = "node") -> Op:
     if session_id < 0 or after < -1:
         msg = "unknown session"
         raise ValueError(msg)
-    return TapOp(lambda tap: tap.inspect(session_id, after), source)
+
+    async def op(services: Services) -> object:
+        return services.tap(source).inspect(session_id, after)
+
+    return op
 
 
 def inspect_pause(source: str = "node") -> Op:
     """Stop forwarding the inspected session's events."""
-    return TapOp(lambda tap: tap.pause(), source)
+
+    async def op(services: Services) -> None:
+        services.tap(source).pause()
+
+    return op
 
 
 def inspect_close(source: str = "node") -> Op:
     """The Inspector closed: forward nothing more."""
-    return TapOp(lambda tap: tap.close(), source)
+
+    async def op(services: Services) -> None:
+        services.tap(source).close()
+
+    return op
 
 
 # -- the solo lab (each returns a LabSnap) -------------------------------------------------------
@@ -524,51 +541,83 @@ def inspect_close(source: str = "node") -> Op:
 
 def lab_state() -> Op:
     """Where the lab is."""
-    return LabOp(lambda lab: lab.snapshot())
+
+    async def op(services: Services) -> LabSnap:
+        return services.lab.snapshot()
+
+    return op
 
 
 def lab_new(profile: str) -> Op:
     """A fresh lab run with new identities (also Reset)."""
-    return LabOp(lambda lab: lab.new(profile))
+
+    async def op(services: Services) -> LabSnap:
+        return services.lab.new(profile)
+
+    return op
 
 
 def lab_step() -> Op:
     """The default step: deliver the oldest frame in flight, admit, or start."""
-    return LabOp(lambda lab: lab.step())
+
+    async def op(services: Services) -> LabSnap:
+        return services.lab.step()
+
+    return op
 
 
 def lab_run() -> Op:
     """Default steps until nothing is in flight or waiting for a decision."""
-    return LabOp(lambda lab: lab.run())
+
+    async def op(services: Services) -> LabSnap:
+        return services.lab.run()
+
+    return op
 
 
 def lab_take(kind: str, side: str, text: str = "") -> Op:
     """A chosen step: a chat, a KeyUpdate, a rekey, a close, a wait, an admission decision."""
-    return LabOp(lambda lab: lab.take(kind, side, text))
+
+    async def op(services: Services) -> LabSnap:
+        return services.lab.take(kind, side, text)
+
+    return op
 
 
 def lab_fork(upto: int) -> Op:
     """Replace the run with a fork after step ``upto`` (replayed to there, then live)."""
-    return LabOp(lambda lab: lab.fork(upto))
+
+    async def op(services: Services) -> LabSnap:
+        return services.lab.fork(upto)
+
+    return op
 
 
 def lab_close() -> Op:
     """Leave the lab: its run and values are dropped."""
-    return LabOp(lambda lab: lab.close())
+
+    async def op(services: Services) -> None:
+        services.lab.close()
+
+    return op
 
 
 def lab_save(title: str) -> Op:
     """Save the lab's current run as a recording."""
 
-    async def save(lab: LabHost) -> RecordingSnap:
-        return recording_snap(await lab.save(_title(title)))
+    async def op(services: Services) -> RecordingSnap:
+        return recording_snap(await services.lab.save(_title(title)))
 
-    return LabOp(save)
+    return op
 
 
 def lab_open(file_id: str) -> Op:
     """Open a saved recording in the lab (a lab run replays; a glass-box one is shown)."""
-    return LabOp(lambda lab: lab.open(file_id))
+
+    async def op(services: Services) -> LabSnap:
+        return await services.lab.open(file_id)
+
+    return op
 
 
 # -- recordings ----------------------------------------------------------------------------------------
@@ -598,8 +647,8 @@ def _title(title: str) -> str:
 def recordings() -> Op:
     """The saved recordings, newest first."""
 
-    async def op(node: Node) -> tuple[RecordingSnap, ...]:
-        return tuple(recording_snap(r) for r in await node.recordings())
+    async def op(services: Services) -> tuple[RecordingSnap, ...]:
+        return tuple(recording_snap(r) for r in await services.node.recordings())
 
     return op
 
@@ -607,8 +656,8 @@ def recordings() -> Op:
 def save_session_recording(session_id: int, title: str) -> Op:
     """Save what this side retained of a glass-box session (refused for a normal one)."""
 
-    async def op(node: Node) -> RecordingSnap:
-        return recording_snap(await node.save_session_recording(session_id, _title(title)))
+    async def op(services: Services) -> RecordingSnap:
+        return recording_snap(await services.node.save_session_recording(session_id, _title(title)))
 
     return op
 
@@ -616,7 +665,7 @@ def save_session_recording(session_id: int, title: str) -> Op:
 def delete_recording(file_id: str) -> Op:
     """Delete a saved recording."""
 
-    async def op(node: Node) -> None:
-        await node.delete_recording(file_id)
+    async def op(services: Services) -> None:
+        await services.node.delete_recording(file_id)
 
     return op

@@ -11,7 +11,7 @@ from dataclasses import dataclass, field, replace
 from PySide6.QtCore import QCoreApplication
 
 from qrp2p.ui.bridge import Bridge
-from qrp2p.ui.host import LabOp, Op, Post, TapOp
+from qrp2p.ui.host import Op, Post
 from qrp2p.ui.snapshots import (
     Batch,
     ContactSnap,
@@ -32,11 +32,10 @@ _ids = itertools.count(1)
 
 def describe(op: Op) -> tuple[str, dict[str, object]]:
     """An op's name (the ops function that built it) and the values it captured."""
-    fn = op.run if isinstance(op, TapOp | LabOp) else op
-    name = fn.__qualname__.split(".<locals>")[0]
-    cells = fn.__closure__ or ()
+    name = op.__qualname__.split(".<locals>")[0]
+    cells = op.__closure__ or ()
     values = {
-        var: cell.cell_contents for var, cell in zip(fn.__code__.co_freevars, cells, strict=True)
+        var: cell.cell_contents for var, cell in zip(op.__code__.co_freevars, cells, strict=True)
     }
     return name, values
 
