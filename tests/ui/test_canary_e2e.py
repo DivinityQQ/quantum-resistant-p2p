@@ -26,7 +26,7 @@ from PySide6.QtGui import QGuiApplication
 
 from qrp2p.core.crypto.provider import PlainProvider, RevealingProvider
 from qrp2p.core.crypto.secret import Secret
-from qrp2p.services.events import HistoryChanged
+from qrp2p.services.events import HistoryChanged, NodeState
 from qrp2p.services.node import Node
 from qrp2p.ui.bridge import Bridge
 from qrp2p.ui.host import ServiceHost
@@ -97,11 +97,12 @@ async def bob(tmp_path: Path, recorder: Recorder) -> AsyncIterator[NodeHarness]:
         tmp_path, "bob", provider_factory=lambda: recording(recorder)
     ).start()
     yield harness
-    await harness.node.close()
+    if harness.node.state is not NodeState.CLOSED:
+        await harness.node.close()
 
 
 def every_file(root: Path) -> tuple[list[Path], bytes]:
-    """Every file in both data directories (vault.json, database, WAL, recordings, log)."""
+    """Every file in both data directories (vault.json, database, recordings, lock, log)."""
     files = [p for p in root.rglob("*") if p.is_file()]
     return files, b"".join(p.read_bytes() for p in files)
 
@@ -245,6 +246,10 @@ async def test_no_secret_of_a_normal_session_reaches_the_app(  # noqa: PLR0915  
     await pumped(lambda: app.controller.property("phase") == "locked")
     assert app.controller.property("workspace") is None
 
+    # Both nodes shut down first: whatever closing writes is searched too, and no file is still
+    # held under an OS lock (Windows refuses to read a locked ``qrp2p.lock``).
+    assert await asyncio.to_thread(app.bridge.stop, 20.0)
+    await bob.node.close()
     files, binary = await asyncio.to_thread(every_file, tmp_path)
     assert any(p.suffix == ".qrlab" for p in files)  # the lab run, sealed
     text = "\n".join([*seen, *shown, *(r.getMessage() for r in caplog.records)])
