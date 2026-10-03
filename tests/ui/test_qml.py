@@ -292,6 +292,31 @@ def test_a_key_mismatch_defaults_to_cancel(ui: Ui) -> None:
     assert not ui.item("startRepin").isVisible()
 
 
+def test_glass_box_is_asked_for_from_the_conversation_menu(ui: Ui) -> None:
+    ui.unlock(BOB)
+    ui.backend.reply(ui.backend.one("history"), ())
+    more = next(
+        i for i in of_type(ui, "IconButton") if str(i.property("label")).startswith("More actions")
+    )
+    ui.click_item(more)
+    (menu,) = [
+        o for o in more.findChildren(QObject) if o.metaObject().className().startswith("AppMenu_")
+    ]
+    assert menu.property("visible")
+    entry = menu_entry(menu, "connectGlassBoxItem")
+    ui.click_item(entry)
+
+    def cancel_has_focus() -> bool:
+        focused = ui.window.activeFocusItem()
+        return focused is not None and focused.objectName() == "cancelGlassBox"
+
+    ui.until(cancel_has_focus)  # the safe choice is the default
+    assert ui.backend.pending("connect_contact") == []
+    ui.click("askGlassBox")
+    assert ui.backend.one("connect_contact").args["glass_box"] is True
+    assert not entry.property("enabled")  # one request at a time
+
+
 def test_a_busy_button_does_not_submit_twice_but_lets_focus_move(ui: Ui) -> None:
     ui.unlock(BOB)
     dialog = ui.window.findChild(QObject, "connectDialog")

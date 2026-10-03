@@ -131,6 +131,10 @@ Item {
             onVerify: verifyDialog.open()
             onDetails: detailsDialog.open()
             onConfirm: action => confirmDialog.ask(action, conversationLoader.current)
+            onRequestGlassBox: {
+                glassBoxDialog.conversation = conversationLoader.current
+                glassBoxDialog.open()
+            }
             Component.onCompleted: focusComposer()
         }
     }
@@ -178,6 +182,10 @@ Item {
     ConfirmDialog {
         id: confirmDialog
         objectName: "confirmDialog"
+    }
+    GlassBoxRequestDialog {
+        id: glassBoxDialog
+        objectName: "glassBoxDialog"
     }
     SettingsDialog {
         id: settingsDialog

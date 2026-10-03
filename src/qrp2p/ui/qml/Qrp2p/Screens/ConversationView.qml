@@ -14,6 +14,7 @@ Item {
     signal verify()
     signal details()
     signal confirm(string action)
+    signal requestGlassBox()
 
     readonly property int column: Math.max(280, Math.min(Theme.readingWidth, width - Theme.s6 * 2))
 
@@ -44,6 +45,7 @@ Item {
             onVerify: view.verify()
             onDetails: view.details()
             onConfirm: action => view.confirm(action)
+            onRequestGlassBox: view.requestGlassBox()
         }
         Banner {
             Layout.preferredWidth: view.column
@@ -70,7 +72,10 @@ Item {
                     && view.conversation.trust !== "blocked"
                 compact: true
                 text: view.conversation.banner === "ended" ? qsTr("Reconnect") : qsTr("Try again")
-                onClicked: view.conversation.connectSession()
+                // Try again repeats what failed (a glass-box request stays one); Reconnect after
+                // an ended session is a normal connection.
+                onClicked: view.conversation.banner === "ended"
+                    ? view.conversation.connectSession() : view.conversation.retryConnect()
             }
             AppButton {
                 objectName: "useOfferedProfile"

@@ -12,6 +12,7 @@ ConversationView 1.0 ConversationView.qml
 DevicePopup 1.0 DevicePopup.qml
 EmptyState 1.0 EmptyState.qml
 FileCard 1.0 FileCard.qml
+GlassBoxRequestDialog 1.0 GlassBoxRequestDialog.qml
 HeaderBar 1.0 HeaderBar.qml
 MessageDelegate 1.0 MessageDelegate.qml
 MessageList 1.0 MessageList.qml

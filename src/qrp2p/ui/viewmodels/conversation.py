@@ -34,6 +34,10 @@ from qrp2p.ui.viewmodels.rows import (
 PAGE: Final = ops.HISTORY_PAGE
 
 
+GLASS_BOX_TRUST: Final = frozenset({"pinned", "verified"})
+"""Who may be asked for a glass-box session: a pinned contact (DESIGN §11.3)."""
+
+
 class Conversation(ViewModel):
     """The conversation with one contact.
 
@@ -72,6 +76,8 @@ class Conversation(ViewModel):
         self._mismatch_pending = mismatch_pending
         self._nearby = False
         self._connecting = ""
+        self._glass_box = False
+        """The connection under way, or the last one tried, asked for a glass-box session."""
         self._closing = False
         self._messages: list[MessageSnap] = []
         self._progress: dict[str, int] = {}
@@ -109,11 +115,14 @@ class Conversation(ViewModel):
     online = mapped(bool, "_view", "online", contactChanged)
     sessionProfile = mapped(str, "_view", "session_profile", contactChanged)  # noqa: N815
     glassBox = mapped(bool, "_view", "glass_box", contactChanged)  # noqa: N815
+    canRequestGlassBox = mapped(bool, "_view", "can_glass_box", contactChanged)  # noqa: N815
+    """Not connected and not connecting, and the contact is pinned (DESIGN §11.3)."""
     initiator = mapped(bool, "_view", "initiator", contactChanged)
     presence = mapped(str, "_view", "presence", contactChanged)
     presenceText = mapped(str, "_view", "presence_text", contactChanged)  # noqa: N815
     banner = readonly(str, "_banner", bannerChanged)
-    """``""``, ``connecting``, ``waiting``, ``error``, ``ended`` or ``profile`` (we refused it)."""
+    """``""``, ``connecting``, ``waiting``, ``error``, ``ended``, ``profile`` (we refused it) or
+    ``normal`` (we asked for glass-box and the peer opened a normal session)."""
     offeredProfile = readonly(str, "_offered", bannerChanged)  # noqa: N815
     """For ``profile``: what the contact asked for."""
     bannerText = readonly(str, "_banner_text", bannerChanged)  # noqa: N815
@@ -160,6 +169,14 @@ class Conversation(ViewModel):
             self._connecting = ""
             self._closing = False
             self._set_banner("", "")
+            if self._glass_box and contact.session is not None and not contact.session.glass_box:
+                self._set_banner(
+                    "normal",
+                    f"{isolate(contact.name)} opened a normal session: they declined the "
+                    "glass-box request, or were not asked (requests are limited to one a minute, "
+                    "and muted for an hour after three declines). Nothing of it is exposed.",
+                )
+            self._glass_box = False
         self._refresh()
 
     def set_nearby(self, *, nearby: bool) -> None:
@@ -172,7 +189,8 @@ class Conversation(ViewModel):
         """Our handshake reached the peer's user (ConnectProgress)."""
         if self._connecting:
             self._connecting = "waiting"
-            self._set_banner("waiting", f"Waiting for {self._contact.name} to accept…")
+            what = "the glass-box request" if self._glass_box else "the connection"
+            self._set_banner("waiting", f"Waiting for {self._contact.name} to answer {what}…")
             self._refresh()
 
     def mismatch_opened(self) -> None:
@@ -334,6 +352,20 @@ class Conversation(ViewModel):
     @Slot()
     def connectSession(self) -> None:  # noqa: N802
         """Connect to the contact with its pinned identity and profile."""
+        self._connect(glass_box=False)
+
+    @Slot()
+    def connectGlassBox(self) -> None:  # noqa: N802
+        """Connect and ask for a glass-box session (a pinned contact only, DESIGN §11.3)."""
+        if self._contact.trust in GLASS_BOX_TRUST:
+            self._connect(glass_box=True)
+
+    @Slot()
+    def retryConnect(self) -> None:  # noqa: N802
+        """Try the failed connection again, as it was asked for (glass-box or not)."""
+        self._connect(glass_box=self._glass_box and self._contact.trust in GLASS_BOX_TRUST)
+
+    def _connect(self, *, glass_box: bool) -> None:
         if self._connecting or self._contact.session is not None:
             return
 
@@ -346,10 +378,15 @@ class Conversation(ViewModel):
             self._refresh()
 
         if self._scope.request(
-            ops.connect_contact(self._contact.contact_id, glass_box=False), done
+            ops.connect_contact(self._contact.contact_id, glass_box=glass_box), done
         ):
             self._connecting = "connecting"
-            self._set_banner("connecting", f"Connecting to {self._contact.name}…")
+            self._glass_box = glass_box
+            name = self._contact.name
+            text = (
+                f"Asking {name} for a glass-box session…" if glass_box else f"Connecting to {name}…"
+            )
+            self._set_banner("connecting", text)
             self._refresh()
 
     @Slot()
@@ -500,6 +537,9 @@ class Conversation(ViewModel):
             "online": session is not None,
             "session_profile": session.profile if session is not None else "",
             "glass_box": session is not None and session.glass_box,
+            "can_glass_box": session is None
+            and not self._connecting
+            and c.trust in GLASS_BOX_TRUST,
             "initiator": session is not None and session.initiator,
             "presence": state,
             "presence_text": text,
