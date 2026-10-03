@@ -79,6 +79,7 @@ class Ui:
         self.click_item(self.item(name))
 
     def click_item(self, target: QQuickItem) -> None:
+        self.frame()  # positions are final only after a frame (a menu lays out its entries)
         assert target.isVisible(), target.objectName()
         center = target.mapToScene(QPointF(target.width() / 2, target.height() / 2)).toPoint()
         QTest.mouseClick(

@@ -1060,6 +1060,7 @@ dependencies = [
 
 [package.optional-dependencies]
 gui = [
+    { name = "jeepney", marker = "sys_platform == 'linux'" },
     { name = "pyside6-essentials" },
 ]
 lab = [
@@ -1085,6 +1086,7 @@ requires-dist = [
     { name = "cryptography", specifier = ">=50.0.1" },
     { name = "filelock", specifier = ">=4.0.4" },
     { name = "ifaddr", specifier = ">=0.2.0" },
+    { name = "jeepney", marker = "sys_platform == 'linux' and extra == 'gui'", specifier = ">=0.9.0" },
     { name = "keyring", specifier = ">=25.7.0" },
     { name = "liboqs-python", marker = "extra == 'lab'", specifier = ">=0.16.0.1" },
     { name = "msgspec", specifier = ">=0.21.1" },

@@ -17,12 +17,17 @@ build-env/bin/python packaging/build.py --prune-build-env              # Windows
 | macOS | `dist/qrp2p_app.app` | One per architecture (arm64, x86_64) |
 
 A build is about 215 MB unpacked (Python, Qt and ICU dominate; unused Qt styles and modules are
-left out). Check one with its smoke test, which renders the first screen and, in a new data
-directory, creates a throwaway vault and renders the messenger; it exits 1 on any Qt warning:
+left out, but not Qt Labs' folderlistmodel: Qt's own file and folder dialogs, used where the
+platform has no native one, are built on it). Check one with its smoke test, which renders the
+first screen and, in a new data directory, creates a throwaway vault and renders the messenger,
+then opens Qt's own file and folder dialogs; it exits 1 on any Qt warning:
 
 ```bash
 QT_QPA_PLATFORM=offscreen dist/qrp2p_app.dist/qrp2p-desktop --data-dir /tmp/smoke --smoke-test /tmp/smoke.png
 ```
+
+On Linux the app uses the XDG desktop portal's file dialogs where the portal runs (the bundled
+Qt cannot load KDE's own Qt plugin); set `QT_QPA_PLATFORMTHEME` to choose otherwise.
 
 The CI workflow [`build.yml`](../.github/workflows/build.yml) builds all three on demand
 (*Actions → Build desktop apps → Run workflow*), runs the smoke test on each, and keeps the
