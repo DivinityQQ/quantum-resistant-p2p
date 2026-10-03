@@ -103,6 +103,13 @@ def split_extension(name: str) -> tuple[str, str]:
     return name[:dot], name[dot:]
 
 
+def _trim_end(name: str) -> str:
+    """Strip trailing dots and whitespace until none is left (a dot can hide a space before it)."""
+    while (trimmed := name.rstrip().rstrip(".")) != name:
+        name = trimmed
+    return name
+
+
 def sanitize_name(name: str) -> str:
     """Turn a peer-supplied file name into a safe base name (DESIGN §9).
 
@@ -114,7 +121,7 @@ def sanitize_name(name: str) -> str:
     name = unicodedata.normalize("NFC", name)
     name = name.replace("\\", "/").rsplit("/", 1)[-1]
     name = "".join("_" if is_unsafe_char(c) or c in _WINDOWS_FORBIDDEN else c for c in name)
-    name = name.strip().rstrip(". ")
+    name = _trim_end(name.strip())
     if name.startswith("."):
         name = "_" + name[1:]
     if not name.strip("._ "):
@@ -126,7 +133,7 @@ def sanitize_name(name: str) -> str:
         base, ext = split_extension(name)
         if len(ext.encode("utf-8")) > 32:  # noqa: PLR2004  # keep only short extensions
             base, ext = name, ""
-        name = _truncate_utf8(base, NAME_BUDGET - len(ext.encode("utf-8"))).rstrip(". ") + ext
+        name = _trim_end(_truncate_utf8(base, NAME_BUDGET - len(ext.encode("utf-8")))) + ext
     return name
 
 
