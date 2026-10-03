@@ -668,6 +668,7 @@ ui/
   host.py                   # the services thread: owns the Node, generations, batching (no Qt)
   ops.py                    # the requests view models may make (each runs on the services thread)
   tap.py                    # the Inspector's trace tap: snapshot + subscription in one loop step
+  labhost.py                # the solo lab on the services thread: runs, recordings, its own tap
   snapshots.py              # immutable values that cross the bridge, built on the services thread
   bridge.py                 # Qt side: queued deliveries, generation filter, per-period Scope
   text.py, icons.py         # display-safe peer text; Lucide icons tinted per theme
@@ -679,8 +680,9 @@ ui/
     prompts.py              # contact/glass-box requests and key mismatches, with real outcomes
     settings.py, rows.py    # the Settings screen; pure row builders for every list
     inspector.py, hexmodel.py  # the Inspector's shared selection; hex rows built on demand
+    lab.py                  # the solo lab and the recordings list (Learn)
     listmodel.py            # list models updated by minimal diffs
-  qml/Main.qml, qml/Qrp2p/{Theme,Components,Screens,Inspector}/
+  qml/Main.qml, qml/Qrp2p/{Theme,Components,Screens,Inspector,Lab}/
   resources/                # Inter (OFL), Lucide (ISC), app icon
 ```
 

@@ -9,8 +9,10 @@ can **watch, pause and attack that exact channel**.
   weakened engines, Algorithm Lab and guided lessons.
 
 > **Status:** early development. M0 (crypto foundations), M1 (protocol core), M2 (services and
-> the headless `qrp2p-cli`: LAN discovery, sessions, encrypted history, file transfer) and the
-> desktop app (M3) are built; the learning layer (M4, M5) is next. `qrp2p` 2.0.0.dev0 on PyPI
+> the headless `qrp2p-cli`: LAN discovery, sessions, encrypted history, file transfer), the
+> desktop app (M3) and the first half of the learning layer (M4: the Inspector, glass-box
+> sessions, the solo lab with replay and fork, recordings) are built; M5 (Attack Lab, weakened
+> engines, Algorithm Lab, lessons) is next. `qrp2p` 2.0.0.dev0 on PyPI
 > only reserves the name. Nothing here is
 > ready for use, and the protocol must not be called secure until every item in DESIGN §15 passes.
 > v1 is preserved at the tag
@@ -49,6 +51,9 @@ the terminal one talk to each other:
 uv run qrp2p --data-dir /tmp/alice --port 47470
 uv run qrp2p-cli --data-dir /tmp/bob --port 47471      # then: /connect 127.0.0.1:47470 Alice
 ```
+
+In the app, **Ctrl+I** opens the Inspector beside the conversation, and **Learn** (in the menu)
+opens the solo lab: Alice and Bob in memory, one protocol step at a time, every key revealed.
 
 Native builds that need no Python: see [`packaging/README.md`](packaging/README.md).
 

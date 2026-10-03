@@ -4,14 +4,14 @@ This is the working plan for building [DESIGN.md](DESIGN.md). It is written for 
 work up next, human or a Claude Code session on a local machine. Start with the repository's
 `CLAUDE.md`, then this file.
 
-**Status (2026-10-02):** M0, M1 and M2 are complete and on `main`; their gates are met (see the
+**Status (2026-10-03):** M0, M1 and M2 are complete and on `main`; their gates are met (see the
 status notes under each). M2 (services and headless CLI) merged in PR #9 after two LAN rounds,
 Linux–Linux and Windows–Linux (see the M2 status notes). v1 is tagged
 `v1-final`. CI runs lint, types, layers, audit, the tests on three OSes, liboqs on three OSes, the
 ProVerif models and mutation testing, each job only when its inputs changed; the `main` ruleset
 requires the gate job "CI result". Local hooks run the fast suite (`tools/check.py`) before every
-push. **M3 (desktop app) is merged** (PR #12); its gate, daily use on three OSes, is under way: the
-first round of findings is fixed on `claude/v2-m3-usage-fixes` (see the M3 status notes). `qrp2p` 2.0.0.dev0 is on PyPI, published by
+push. **M3 (desktop app) is merged** (PRs #12, #13). **M4 (learning layer I) is built** on
+`claude/v2-m4-learning-layer` (PR #14), its gate green (see the M4 status notes). `qrp2p` 2.0.0.dev0 is on PyPI, published by
 `.github/workflows/release.yml` (trusted publishing). Steps that need the owner's accounts (the v1
 Pages site, the liboqs bug report) are in [OWNER_TODO.md](OWNER_TODO.md).
 
@@ -455,6 +455,41 @@ fuzzing.
 13. **Navigation.** The Inspector is no longer a development preview: Ctrl+I opens it beside or
     instead of the chat. *Learn* opens a hub with the solo lab and saved recordings; it lists
     nothing that has not landed.
+
+**M4 status notes (2026-10-03)** — built on `claude/v2-m4-learning-layer` (PR #14), against the
+decisions above; DESIGN 1.8 and UI_DESIGN §11.2 describe the result.
+
+- **Core:** unique secret names (KEM outputs per epoch), `SecretsReleased` lifecycle facts, a
+  finer dissector (AEAD tags, X-Wing components), and the two derivations the key graph found
+  untraced (the first epoch's salt, the rekey transcript hash). A fuzz test of the new recording
+  format found that text which is not UTF-8 closed a session with `internal` instead of
+  `schema_error`; fixed in `decode_inner`, with tests that fail without the fix.
+- **Services:** exposure gates (DESIGN §11.3) and a trace bus with ordinals, a kept handshake
+  head and a tail bounded by count and bytes; per-session descriptors, so failed and ended
+  sessions can be inspected. Recordings (`services/recordings.py`): one sealed file per
+  recording under a random name; only a glass-box session can be saved; files that do not open
+  are listed, not hidden.
+- **Inspector:** pure evidence builders (`ui/inspect/`), a services-thread trace tap per source
+  (node, lab), a view model with one shared selection, and the QML views (Timeline sequence
+  diagram, Messages with fields and a virtualised hex view, Keys as a graph or a dependency
+  list, Security facts). Ctrl+I opens it; `--dev-preview` is gone. Reviewing screenshots found
+  and fixed: shapes not clipped by the software renderer (the graph now draws through a layer),
+  frame times all reading +0.000 s, a header that overflowed at 720 px with 150 % text, and a
+  duplicated section heading from ListView sections built out of order.
+- **Glass-box from the app:** *Connect as glass-box…* for a pinned contact, with an explicit
+  request dialog; a banner says so when the peer opened a normal session instead.
+- **Solo lab** (`lab/solo.py`, `lab/replay.py`, `ui/labhost.py`, `qml/Qrp2p/Lab/`): Alice and Bob
+  in this process, linked in memory; a step is one transition plus the sealing it queued; a
+  virtual clock; one `LabProvider` records, replays and forks at the provider boundary. Learn
+  lists the solo lab and saved recordings; a lab run replays and forks, a glass-box recording is
+  shown view only with its EXPOSED stamp.
+- **Gate:** the canary leak test runs end to end through the app (`tests/ui/test_canary_e2e.py`):
+  every Inspector view-model string and clipboard copy, every message shown, every log record and
+  every file (vault, database, WAL, a sealed recording) after a normal session with a rekey holds
+  no secret in any form; the same walk over a glass-box session finds them. The suite has 1,161
+  tests; mutation testing of `core/` leaves 0 unexplained survivors.
+- **Not in M4:** resizable Inspector panes remembered as preferences (UI_DESIGN §3.3; the split
+  is fixed, with Expand/Restore), and lessons (M5).
 
 ## M5 — Learning layer II
 
