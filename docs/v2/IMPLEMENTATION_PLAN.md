@@ -377,6 +377,7 @@ design (DESIGN 1.3):
   (`uv run qrp2p`, or a `build.yml` artifact) and record the findings here. Code-signing
   identities stay an open decision (below).
 
+## M4 — Learning layer I
 
 Reuse the shell, theme and evidence components from [UI_DESIGN.md](UI_DESIGN.md). Connect
 timeline/field/byte/key selection; handle ring eviction, local clock origin and bounded pause
