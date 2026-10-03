@@ -7,8 +7,8 @@ The protocol engine performs every operation that creates or uses key material t
   secret values to anything outside the engine. Only :class:`RevealingProvider`, installed for
   glass-box and lab sessions, forwards secrets to a sink.
 - **Replay (DESIGN §11.6).** Randomised outputs (generated keys, encapsulations, signatures,
-  nonces) all pass this boundary, so a recording provider can log them and a replay provider can
-  feed them back (:mod:`qrp2p.lab.replay`).
+  nonces) all pass this boundary, so the lab's provider can log them and feed them back
+  (:mod:`qrp2p.lab.replay`).
 
 Every secret a provider returns has a label that is unique within its session: KDF outputs are
 named by the key schedule, and KEM outputs by the epoch they serve (``dk``, ``ss``, ``ssM`` and

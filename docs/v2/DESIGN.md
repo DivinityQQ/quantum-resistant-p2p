@@ -652,7 +652,7 @@ The learning layer is built on a **trace bus** fed by the real protocol engine. 
 | --- | --- | --- | --- |
 | **Inspector** (always available) | Any session | Public data: decoded handshake fields with offsets and sizes, KEM public keys and ciphertexts, signatures, named transcript hashes, record headers, counters, sizes, timings, KeyUpdate and rekey events, fingerprints. Secret values appear as `••••` with their label and size | None needed |
 | **Glass-box session** | A real session with a pinned contact | Inspector plus the values in §11.4 | Requested by the initiator, granted by the responder's user at admission; bound into the transcript |
-| **Solo lab** | Simulated nodes (Alice, Bob, Mallory) inside the app over loopback | Everything, including lab identity private keys | None needed: only throwaway lab identities |
+| **Solo lab** | Simulated nodes (Alice, Bob, Mallory) inside the app's own process, linked in memory (no sockets) | Everything, including lab identity private keys | None needed: only throwaway lab identities |
 
 ### 11.2 Inspector
 
@@ -700,7 +700,7 @@ does not suspend protocol execution. Initially a lab step advances one protocol/
 transition. Pausing inside it requires an explicit execution mechanism and tests, rather than
 revealing the returned events one at a time.
 
-pyca's ML-KEM encapsulation and ML-DSA signing take no caller-supplied randomness, so their outputs cannot be regenerated. Replay therefore records **at the provider boundary**: generated keys, `(ss, ct)` from each encapsulation, each signature and each nonce. On replay these are fed back and re-checked: decapsulation must give the same `ss` and verification must pass. Everything downstream (hashes, HKDF, AEAD) recomputes exactly. **Fork at step N** replays up to N, then continues live with fresh randomness, so a learner can change one input and see what breaks.
+pyca's ML-KEM encapsulation and ML-DSA signing take no caller-supplied randomness, so their outputs cannot be regenerated. Replay therefore records **at the provider boundary**: every draw from the random source (handshake nonces, and the seeds ephemeral key pairs are derived from, so a key pair is recomputed on replay), `(ss, ct)` from each encapsulation together with the `ek` it used, and each signature with its role and transcript hash. On replay these are fed back and re-checked: each call must ask for what was recorded (same kind, size, `ek`, role and hash) and a recorded signature must still verify; any difference is a named *replay divergence*. Decapsulation, verification and everything downstream (hashes, HKDF, AEAD) recompute exactly. The lab clock is virtual and advances with the steps, so a replay also sees the same times. **Fork at step N** replays the first N steps against the provider logs as they stood after step N, then continues live with fresh randomness, so a learner can change one input and see what breaks.
 
 ### 11.7 Attack Lab
 
@@ -766,7 +766,7 @@ Lessons are Markdown files with step metadata: a goal, steps performed in the ap
 
 ### 11.11 Guardrails
 
-- Lab identities are separate from the real identity, and lab traffic stays on loopback.
+- Lab identities are separate from the real identity, and lab traffic never leaves the process: the lab's nodes are linked in memory, with no sockets.
 - `LAB-CLASSICAL` and weakened engines exist only in the solo lab.
 - Imported recordings are untrusted input.
 - Each tier has its own visual language (§14.2).

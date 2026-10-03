@@ -384,7 +384,7 @@ timeline/field/byte/key selection; handle ring eviction, local clock origin and 
 following explicitly. Live display pause must not pause networking.
 
 Inspector (timeline, dissector, key-schedule explorer, security panel); solo lab nodes;
-step-through; `RecordingProvider`, `ReplayProvider` and fork; `RevealingProvider` with the
+step-through; recording, replay and fork (`LabProvider`); `RevealingProvider` with the
 pre-admission buffer; glass-box prompts, visuals and rate limits; `.qrlab` save, load and
 fuzzing.
 
@@ -439,11 +439,13 @@ fuzzing.
     frame, an admission decision, a chat, a KeyUpdate, a rekey, a close, a timer tick) plus the
     sealing of what that transition queued. Browsing events never executes anything. Fork is
     allowed at any step boundary.
-11. **Recording and replay.** `RecordingProvider` logs each randomised output at the provider
-    boundary (random bytes, generated key pairs, encapsulations with the key they used,
-    signatures with the hash they sign). `ReplayProvider` returns them in order and checks each
-    input (same size, same `ek`, same hash, signature valid); any difference is a named replay
-    divergence. Fork at step *N* replays *N* steps, then continues with live randomness.
+11. **Recording and replay.** One `LabProvider` logs each randomised output at the provider
+    boundary (random draws, from which key pairs are recomputed; encapsulations with the key they
+    used; signatures with the hash they sign). Given a recorded prefix it returns those in order
+    and checks each input (same size, same `ek`, same hash, signature valid); any difference is a
+    named replay divergence. Once the prefix is used up it continues live, or, for a strict
+    replay, fails. One class, because recording, replay and fork (replay *N* steps, then live)
+    are the same log with a cursor. The lab clock is virtual, so times replay too.
 12. **Recordings.** `.qrlab` as DESIGN §11.5, sealed with the vault's `k_lab` (the key never
     leaves the vault), saved only by an explicit action, into `lab/`. A lab recording holds the
     steps, both provider logs and the lab identities, so it replays and forks. A glass-box
