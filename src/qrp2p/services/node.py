@@ -74,7 +74,9 @@ from qrp2p.services.files import (
     PeerMisbehavedError,
     Transfer,
     TransferDirection,
+    clear_outgoing,
     remove_partial,
+    stage_outgoing,
 )
 from qrp2p.services.keychain import KeychainUnavailableError, OsKeychain
 from qrp2p.services.models import (
@@ -104,6 +106,8 @@ RETENTION_CHECK: Final = 3600.0
 CONNECT_WAIT: Final = 90.0
 """Upper bound for :meth:`Node.connect_contact` and friends to report an outcome: the handshake
 deadline plus the initiator's wait for Admit (DESIGN §6.4)."""
+OUTGOING_DIR: Final = "outgoing"
+"""In the data directory: pasted images until their transfer ends (DESIGN §10.1)."""
 
 _log = logging.getLogger(__name__)
 
@@ -404,6 +408,7 @@ class Node:
         await self._db(self._vault.purge_expired, self._wall())
         for final in await self._db(self._vault.fail_interrupted):
             await asyncio.to_thread(remove_partial, Path(final))
+        await asyncio.to_thread(clear_outgoing, self._outgoing_dir)  # left by a crash
         self._contacts = {c.contact_id: c for c in await self._db(self._vault.contacts)}
         self._manager = SessionManager(
             identity=identity,
@@ -491,6 +496,7 @@ class Node:
             await self._manager.stop(CloseReason.LOCKED)
         if self._transfers is not None:
             await self._transfers.close()
+        await asyncio.to_thread(clear_outgoing, self._outgoing_dir)
         others = self._background - {asyncio.current_task()}
         if others:  # let history updates of the closing sessions reach the vault
             _, pending = await asyncio.wait(others, timeout=2.0)
@@ -1081,6 +1087,45 @@ class Node:
         await self._add_entry(contact_id, entry)
         return entry
 
+    async def send_file_data(self, contact_id: bytes, name: str, data: bytes) -> HistoryEntry:
+        """Offer ``data`` (a pasted image) as a file called ``name``.
+
+        It is saved in ``outgoing/`` (owner-only) for the transfer to read and deleted when the
+        transfer ends, at lock, or at the next unlock after a crash.
+
+        Raises:
+            NotConnectedError: No open session (nothing is saved then).
+            ValueError: ``data`` is empty.
+            OSError: It cannot be saved.
+        """
+        self.touch()
+        self._require_session(contact_id)
+        if not data:
+            msg = "there is nothing to send"
+            raise ValueError(msg)
+        staged = await asyncio.to_thread(stage_outgoing, self._outgoing_dir, name, data)
+        try:
+            return await self.send_file(contact_id, staged)
+        except BaseException:
+            await asyncio.to_thread(staged.unlink, missing_ok=True)
+            raise
+
+    @property
+    def _outgoing_dir(self) -> Path:
+        return self.data_dir / OUTGOING_DIR
+
+    async def _release_staged(self, transfer: Transfer) -> None:
+        """An outgoing transfer of a pasted image ended: its saved copy goes."""
+        path = transfer.path
+        if (
+            transfer.direction is TransferDirection.OUT
+            and path is not None
+            and path.parent == self._outgoing_dir.resolve()
+        ):
+            # Windows refuses while the sender still has it open: then lock or unlock clears it.
+            with contextlib.suppress(OSError):
+                await asyncio.to_thread(path.unlink, missing_ok=True)
+
     def transfers(self) -> list[Transfer]:
         """Transfers in progress or waiting."""
         return self._transfers.active() if self._transfers is not None else []
@@ -1151,6 +1196,8 @@ class Node:
         return contact.contact_id if contact is not None else None
 
     async def _transfer_changed(self, transfer: Transfer) -> None:
+        if transfer.finished:
+            await self._release_staged(transfer)
         contact_id = self._transfer_contact(transfer)
         if contact_id is None:
             return

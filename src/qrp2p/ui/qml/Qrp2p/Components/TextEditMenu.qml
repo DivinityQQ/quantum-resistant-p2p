@@ -5,12 +5,15 @@ import Qrp2p.Theme
 // attach it with `T.ContextMenu.menu: TextEditMenu { editor: ... }`. Read-only text offers only
 // Copy, which copies the whole text when nothing is selected, and Select all. A masked password
 // can be pasted into but never copied out. `paste` can be replaced (the composer sends copied
-// files and images as files).
+// files and images as files, and says so through `canPasteOther`).
 AppMenu {
     id: menu
 
     required property Item editor
     property var paste: () => editor.paste()
+    // Whether `paste` can use what the clipboard holds beyond text (asked as the menu opens).
+    property var canPasteOther: () => false
+    property bool _pasteOther: false
 
     readonly property bool editable: !editor.readOnly
     readonly property bool masked: editor.echoMode !== undefined && editor.echoMode !== TextInput.Normal
@@ -25,6 +28,8 @@ AppMenu {
         editor.copy()
         editor.deselect()
     }
+
+    onAboutToShow: _pasteOther = canPasteOther()
 
     // Focus goes back to the text, with its selection, when the menu closes.
     onClosed: if (editor.visible) editor.forceActiveFocus(Qt.PopupFocusReason)
@@ -74,7 +79,7 @@ AppMenu {
         visible: menu.editable
         text: qsTr("Paste")
         shortcutText: menu.keys("V", false)
-        enabled: menu.editor.canPaste
+        enabled: menu.editor.canPaste || menu._pasteOther
         onTriggered: menu.paste()
     }
     AppMenuSeparator {}

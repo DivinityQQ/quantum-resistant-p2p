@@ -42,6 +42,7 @@ from qrp2p.services.files import (
     unique_path,
 )
 from qrp2p.services.models import FileStatus, MessageKind, TrustState
+from qrp2p.services.node import OUTGOING_DIR, NotConnectedError
 from qrp2p.services.session import Session, SessionNotOpenError
 from tests.services.support import LOOPBACK, NodeHarness, befriend, until
 from tests.support import identity_from_label
@@ -426,6 +427,73 @@ async def test_declined_file(
     assert offer.entry.file is not None
     await bob.node.decline_file(offer.entry.file.file_id)
     await until(lambda: file_event(alice, FileStatus.DECLINED) is not None)
+
+
+def staged(harness: NodeHarness) -> list[Path]:
+    folder = harness.node.data_dir / OUTGOING_DIR
+    return sorted(folder.iterdir()) if folder.is_dir() else []
+
+
+@pytest.mark.parametrize("answer", ["accept", "decline"])
+async def test_a_pasted_image_is_kept_only_until_its_transfer_ends(
+    friends: tuple[NodeHarness, NodeHarness, bytes, bytes], answer: str
+) -> None:
+    alice, bob, bob_id, _ = friends
+    png = b"\x89PNG\r\n\x1a\n" + os.urandom(3000)
+    await alice.node.send_file_data(bob_id, "Pasted image 2026-10-03 10-41-05.png", png)
+    (copy,) = staged(alice)
+    assert copy.read_bytes() == png
+    if sys.platform != "win32":
+        assert copy.stat().st_mode & 0o777 == 0o600
+    await until(lambda: file_event(bob, FileStatus.OFFERED) is not None)
+    offer = file_event(bob, FileStatus.OFFERED)
+    assert offer is not None
+    assert offer.entry.file is not None
+    assert offer.entry.file.name == "Pasted image 2026-10-03 10-41-05.png"
+    if answer == "accept":
+        await bob.node.accept_file(offer.entry.file.file_id)
+        await until(lambda: file_event(alice, FileStatus.COMPLETE) is not None)
+        done = file_event(bob, FileStatus.COMPLETE)
+        assert done is not None
+        assert done.entry.file is not None
+        assert Path(done.entry.file.path).read_bytes() == png  # noqa: ASYNC240
+    else:
+        await bob.node.decline_file(offer.entry.file.file_id)
+        await until(lambda: file_event(alice, FileStatus.DECLINED) is not None)
+    await until(lambda: not staged(alice))
+
+
+async def test_pasted_images_waiting_at_lock_are_deleted(
+    friends: tuple[NodeHarness, NodeHarness, bytes, bytes],
+) -> None:
+    alice, _, bob_id, _ = friends
+    await alice.node.send_file_data(bob_id, "Pasted image.png", b"\x89PNG waiting")
+    assert staged(alice)
+    await alice.node.lock()
+    assert not staged(alice)
+
+
+async def test_a_crash_leaves_no_pasted_image_after_unlock(
+    friends: tuple[NodeHarness, NodeHarness, bytes, bytes],
+) -> None:
+    alice, _, _, _ = friends
+    folder = alice.node.data_dir / OUTGOING_DIR
+    await alice.node.lock()
+    folder.mkdir(exist_ok=True)
+    (folder / "Pasted image.png").write_bytes(b"left by a crash")
+    await alice.node.unlock("pw")
+    assert not staged(alice)
+
+
+async def test_nothing_is_saved_without_a_session(
+    friends: tuple[NodeHarness, NodeHarness, bytes, bytes],
+) -> None:
+    alice, _, bob_id, _ = friends
+    await alice.node.disconnect(bob_id)
+    await until(lambda: not alice.node.is_online(bob_id))
+    with pytest.raises(NotConnectedError):
+        await alice.node.send_file_data(bob_id, "Pasted image.png", b"\x89PNG")
+    assert not staged(alice)
 
 
 async def test_auto_accept_from_a_verified_contact(

@@ -13,6 +13,7 @@ import pytest
 from PySide6.QtCore import (
     QCoreApplication,
     QEvent,
+    QMimeData,
     QObject,
     QPoint,
     QPointF,
@@ -21,7 +22,7 @@ from PySide6.QtCore import (
     Qt,
     QUrl,
 )
-from PySide6.QtGui import QColor, QContextMenuEvent, QGuiApplication, QKeyEvent
+from PySide6.QtGui import QColor, QContextMenuEvent, QGuiApplication, QImage, QKeyEvent
 from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent, QQmlEngine, QQmlExpression
 from PySide6.QtQuick import QQuickItem, QQuickWindow
 from PySide6.QtTest import QTest
@@ -598,3 +599,35 @@ def test_a_masked_password_cannot_be_copied_out(ui: Ui) -> None:
     menu = context_menu(ui, field)
     assert not menu_entry(menu, "menuCopy").isEnabled()
     assert menu_entry(menu, "menuPaste").isVisible()
+
+
+def test_pasting_files_or_an_image_offers_them(ui: Ui) -> None:
+    ui.unlock(online(BOB))
+    ui.backend.reply(ui.backend.one("history"), ())
+    area = ui.item("composerInput")
+    area.forceActiveFocus()
+    clipboard = QGuiApplication.clipboard()
+
+    picture = QImage(8, 8, QImage.Format.Format_RGB32)
+    picture.fill(QColor("teal"))
+    clipboard.setImage(picture)
+    ui.key(Qt.Key.Key_V, Qt.KeyboardModifier.ControlModifier)
+    offer = ui.backend.one("send_file_data")
+    assert str(offer.args["name"]).startswith("Pasted image ")
+    assert bytes(offer.args["data"]).startswith(b"\x89PNG")  # type: ignore[arg-type]
+    assert area.property("text") == ""
+
+    files = QMimeData()
+    files.setUrls([QUrl.fromLocalFile("/data/report.pdf")])
+    clipboard.setMimeData(files)
+    menu = context_menu(ui, area)
+    paste = menu_entry(menu, "menuPaste")
+    assert paste.isEnabled()  # no text on the clipboard, but files to offer
+    ui.click_item(paste)
+    assert ui.backend.one("send_file").args["path"] == "/data/report.pdf"
+
+    clipboard.setText("just text")
+    ui.key(Qt.Key.Key_V, Qt.KeyboardModifier.ControlModifier)
+    assert area.property("text") == "just text"
+    assert len(ui.backend.pending("send_file_data")) == 1
+    assert len(ui.backend.pending("send_file")) == 1

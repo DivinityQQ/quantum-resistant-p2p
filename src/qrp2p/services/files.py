@@ -53,6 +53,7 @@ from qrp2p.core.wire import (
 )
 from qrp2p.services.limits import MAX_PENDING_OFFERS
 from qrp2p.services.models import ID_LEN, FileStatus
+from qrp2p.services.paths import ensure_private_dir
 from qrp2p.services.session import Session, SessionNotOpenError
 from qrp2p.services.text import is_unsafe_char
 
@@ -141,6 +142,26 @@ def unique_path(directory: Path, name: str) -> Path:
         candidate = f"{base} ({n}){ext}"
         n += 1
     return directory / candidate
+
+
+def stage_outgoing(directory: Path, name: str, data: bytes) -> Path:
+    """Save ``data`` (a pasted image) to offer it as ``name``; owner-only, never over a file.
+
+    The node deletes it when its transfer ends, and empties ``directory`` at lock and unlock.
+    """
+    ensure_private_dir(directory)
+    path = unique_path(directory, sanitize_name(name))
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+    with os.fdopen(os.open(path, flags, 0o600), "wb") as stream:
+        stream.write(data)
+    return path
+
+
+def clear_outgoing(directory: Path) -> None:
+    """Delete everything staged in ``directory`` (only files are ever put there)."""
+    if directory.is_dir():
+        for entry in directory.iterdir():
+            entry.unlink(missing_ok=True)
 
 
 def mark_downloaded(path: Path) -> bool:

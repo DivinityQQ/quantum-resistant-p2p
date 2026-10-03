@@ -7,14 +7,16 @@ read, and nothing is lost or shown twice.
 """
 
 from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 from typing import Final
 
 from PySide6.QtCore import Property, QObject, QUrl, Signal, Slot
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QDesktopServices, QGuiApplication
 
 from qrp2p.ui import ops
 from qrp2p.ui.bridge import Scope
+from qrp2p.ui.clipboard import PastedFiles, PastedImage, has_files, what_to_paste
 from qrp2p.ui.snapshots import ContactSnap, MessageChanged, MessageSnap, Reply, SafetySnap
 from qrp2p.ui.text import isolate
 from qrp2p.ui.viewmodels.listmodel import RowModel
@@ -250,6 +252,29 @@ class Conversation(ViewModel):
         if not path:
             return
         self._request(ops.send_file(self._contact.contact_id, path), "Could not offer the file")
+
+    @Slot(result=bool)
+    def clipboardHasFiles(self) -> bool:  # noqa: N802
+        """Whether pasting now would offer files or an image rather than insert text."""
+        return self._contact.session is not None and has_files(
+            QGuiApplication.clipboard().mimeData()
+        )
+
+    @Slot(result=bool)
+    def pasteFiles(self) -> bool:  # noqa: N802
+        """Offer the copied files or image; ``False`` when the paste is text for the composer."""
+        if self._contact.session is None:
+            return False
+        match what_to_paste(QGuiApplication.clipboard().mimeData(), datetime.now().astimezone()):
+            case PastedFiles(paths=paths):
+                for path in paths:
+                    self.sendFile(path)
+            case PastedImage(name=name, png=png):
+                op = ops.send_file_data(self._contact.contact_id, name, png)
+                self._request(op, "Could not offer the image")
+            case None:
+                return False
+        return True
 
     @Slot(str)
     def acceptFile(self, file_id: str) -> None:  # noqa: N802

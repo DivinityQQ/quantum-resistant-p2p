@@ -36,6 +36,11 @@ Rectangle {
             area.clear()
     }
 
+    function paste() {
+        if (!conversation.pasteFiles())
+            area.paste()
+    }
+
     function focusInput() {
         area.forceActiveFocus()
     }
@@ -125,8 +130,15 @@ Rectangle {
                 onTextChanged: composer.conversation.setDraft(text)
                 Component.onCompleted: text = composer.conversation.draft
 
+                // Copied files and images are offered as files; text is pasted as usual.
                 T.ContextMenu.menu: TextEditMenu {
                     editor: area
+                    paste: () => composer.paste()
+                    canPasteOther: () => composer.conversation.clipboardHasFiles()
+                }
+                Keys.onPressed: event => {
+                    if (event.matches(StandardKey.Paste) && composer.conversation.pasteFiles())
+                        event.accepted = true
                 }
 
                 Keys.onReturnPressed: event => composer.handleReturn(event)

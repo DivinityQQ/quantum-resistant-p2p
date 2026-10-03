@@ -380,7 +380,9 @@ or in Help and respect IME composition. The composer grows with its lines up to 
 scrolls with the cursor. Do not retain drafts across lock through plaintext
 settings.
 
-File offers show sender, sanitized name and actual size, with Accept and Decline. Transfers
+Pasting into the composer offers copied files, or a copied image as a PNG; text is pasted as
+text, also when an office suite puts a picture beside it (only a lone address beside an image,
+as browsers copy it, yields the image). File offers show sender, sanitized name and actual size, with Accept and Decline. Transfers
 show measured progress; the sender reaches complete only after the final receiver confirmation.
 Keep Cancel accessible. An ended session makes the transfer failed; v2 does not offer Resume.
 Open is explicit after completion; received files never open themselves. Native file/folder

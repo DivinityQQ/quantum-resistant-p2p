@@ -553,6 +553,8 @@ Offers, answers and cancels travel at chat priority; chunks and `file_done` at f
 - **Limits:** default 4 GiB per file (configurable); at most 3 pending offers per contact; an accept needs the file's size plus 16 MiB free. Anything over a limit is cancelled with `limit` or `disk_full`. A size mismatch or extra data aborts the transfer.
 - The SHA-256 is cryptographically redundant with AEAD records. It is kept so a learner can verify a file independently, and the Inspector says so.
 
+**Pasting.** Files copied in a file manager are offered as they are. A copied image (a screenshot, a browser's Copy Image) has no file, so it is saved as a PNG in `outgoing/` (§10.1), owner-only, and offered from there; that copy is deleted when its transfer ends, at lock, and at the next unlock after a crash. Until then it is the only plaintext the app keeps outside the vault and Downloads.
+
 Resuming interrupted transfers is out of scope for v2.0.
 
 ---
@@ -566,6 +568,7 @@ Resuming interrupted transfers is out of scope for v2.0.
 | `vault.json` | `format_version`, KDF parameters, salt, wrapped DEK, optional device-wrapped KEK |
 | `data.sqlite3` (+ WAL) | Identity seeds, settings, contacts, conversation keys, messages, file metadata |
 | `lab/*.qrlab` | Saved glass-box and lab recordings (§11.5) |
+| `outgoing/` | Pasted images waiting to be sent, until their transfer ends (§9) |
 | `app.log` | Diagnostics only; never secrets or message text |
 | `qrp2p.lock` | The single-instance lock |
 
