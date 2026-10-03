@@ -22,6 +22,7 @@ from qrp2p.services.events import (
     ConnectProgress,
     HistoryChanged,
     KeyMismatchDetected,
+    NearbyChanged,
     NodeState,
     PromptClosed,
     PromptOutcome,
@@ -565,6 +566,25 @@ async def test_first_contact_through_mdns(nodes: tuple[NodeHarness, NodeHarness]
     bob_id = await connecting
     assert alice.node.contact(bob_id).name == "Bob"  # the label without its short ID
     assert alice.node.contact_for_nearby(announced(bob)) == alice.node.contact(bob_id)
+
+
+async def test_nearby_is_matched_again_when_contacts_change(
+    nodes: tuple[NodeHarness, NodeHarness], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A peer announced before it became a contact must not stay "not a contact" in Nearby."""
+    alice, bob = nodes
+    seen = announced(bob, LOOPBACK)
+    monkeypatch.setattr(alice.node, "nearby", lambda: [seen])
+    alice.events.clear()
+    bob_id, _ = await befriend(alice, bob)
+    (changed,) = alice.of(NearbyChanged)
+    assert alice.node.contact_for_nearby(changed.peers[0]) == alice.node.contact(bob_id)
+    alice.events.clear()
+    await alice.node.update_contact(bob_id, name="Robert")  # same identity: no new match
+    assert not alice.of(NearbyChanged)
+    await alice.node.delete_contact(bob_id)
+    (changed,) = alice.of(NearbyChanged)
+    assert alice.node.contact_for_nearby(changed.peers[0]) is None
 
 
 async def test_a_contact_is_dialled_at_its_last_address_first(

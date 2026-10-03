@@ -463,6 +463,11 @@ class Node:
     def _nearby_changed(self) -> None:
         self._emit(NearbyChanged(tuple(self.nearby())))
 
+    def _contacts_rematched(self) -> None:
+        """Contacts were added, removed or re-pinned: Nearby's matches to them are stale."""
+        if self.nearby():
+            self._nearby_changed()
+
     async def lock(self) -> None:
         """Lock (DESIGN §10.4).
 
@@ -645,8 +650,11 @@ class Node:
 
     async def _save_contact(self, contact: Contact) -> Contact:
         await self._db(self._vault.save_contact, contact)
+        previous = self._contacts.get(contact.contact_id)
         self._contacts[contact.contact_id] = contact
         self._emit(ContactsChanged(contact.contact_id))
+        if previous is None or previous.peer_id != contact.peer_id:
+            self._contacts_rematched()
         return contact
 
     async def _new_contact(self, bundle: IdentityBundle, name: str, profile: Profile) -> Contact:
@@ -722,6 +730,7 @@ class Node:
             await self._db(self._vault.delete_contact, contact)
             del self._contacts[contact_id]
             self._emit(ContactsChanged(contact_id))
+            self._contacts_rematched()
 
     async def delete_conversation(self, contact_id: bytes) -> None:
         """Delete a conversation's history and key (DESIGN §10.4)."""
