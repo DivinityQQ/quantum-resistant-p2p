@@ -42,6 +42,7 @@ from qrp2p.core.trace import (
     SecretDerived,
     SecretsReleased,
     SessionClosed,
+    TranscriptHashed,
     dissect,
 )
 from qrp2p.core.wire import (
@@ -503,6 +504,7 @@ class Channel:
         self._queue(RekeySwitch())
 
     def _derive_next(self, rekey: _Rekey, ss: Secret, th: bytes) -> None:
+        self._emit(Trace(TranscriptHashed(f"th_rekey[{self._epoch.epoch + 1}]", th)))
         new = next_epoch(self._provider, self._profile, self._epoch, ss, th)
         rekey.next = new.retained()
         rekey.send, rekey.recv = (

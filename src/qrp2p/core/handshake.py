@@ -250,8 +250,8 @@ class _Machine:
     ) -> None:
         profile, secrets = self._profile, self._secrets
         assert profile is not None and secrets is not None  # noqa: S101, PT018
-        epoch = first_epoch(self._provider, profile, secrets.hs, th_final)
-        self._trace_secrets(*epoch.all())
+        salt, epoch = first_epoch(self._provider, profile, secrets.hs, th_final)
+        self._trace_secrets(salt, *epoch.all())
         channel = Channel(
             provider=self._provider,
             profile=profile,
@@ -263,7 +263,8 @@ class _Machine:
             now=now,
         )
         self._events.extend(channel.take_traces())  # its traffic keys, derived just now
-        self._release(ReleaseCause.USED, epoch.cs)  # cs_0 is a root, not state (DESIGN §7.4)
+        # The salt and cs_0 are a derivation root, not state (DESIGN §7.4).
+        self._release(ReleaseCause.USED, salt, epoch.cs)
         self._drop_secrets(ReleaseCause.HANDSHAKE_DONE)
         self._enter(State.ESTABLISHED)
         self._emit(Established(channel, peer, profile, glass_box))

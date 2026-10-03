@@ -254,7 +254,7 @@ def test_the_handshake_reports_what_it_releases() -> None:
     hs = ("hs", "hs_R", "hs_I", "fk_R", "fk_I", "hs_R.key", "hs_R.iv", "hs_I.key", "hs_I.iv")
     for events in (run.on_admit, run.on_decision):
         assert released(events) == [
-            (("cs_0",), ReleaseCause.USED),
+            (("derived[0]", "cs_0"), ReleaseCause.USED),
             (hs, ReleaseCause.HANDSHAKE_DONE),
         ]
     assert released(run.on_hello) == [(("ssM", "ssX", "ss"), ReleaseCause.USED)]
@@ -354,3 +354,13 @@ def test_the_responder_traces_every_hello_it_receives() -> None:
     events = responder(profiles=[PQ_CNSA_1]).receive(hello, 1.0)
     assert of(events, FrameTraced)[0].fields == dissect(hello, None)
     assert of(events, FrameTraced)[1].frame.type is FrameType.PROFILE_UNSUPPORTED
+
+
+def test_a_rekey_traces_its_transcript_hash_on_both_sides() -> None:
+    net = Link(*session())
+    net.absorb("i", net["i"].channel.start_rekey(20.0))
+    net.run()
+    hashes = [of(net[side].events, TranscriptHashed) for side in ("i", "r")]
+    assert [[h.name for h in side] for side in hashes] == [["th_rekey[1]"], ["th_rekey[1]"]]
+    assert hashes[0][0].digest == hashes[1][0].digest
+    assert len(hashes[0][0].digest) == HYBRID_1.hash_len

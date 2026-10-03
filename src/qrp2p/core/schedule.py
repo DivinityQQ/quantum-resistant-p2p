@@ -121,11 +121,15 @@ def _derived(provider: CryptoProvider, profile: Profile, secret: Secret, epoch: 
 
 def first_epoch(
     provider: CryptoProvider, profile: Profile, hs: Secret, th_final: bytes
-) -> EpochSecrets:
-    """Derive epoch 0 from the handshake secret and ``th_final``."""
+) -> tuple[Secret, EpochSecrets]:
+    """Derive epoch 0 from the handshake secret and ``th_final``.
+
+    Returns the salt ``cs_0`` was extracted with (``derived[0]``) as well, so the handshake can
+    report it; like ``cs_0`` it is a derivation input, never retained.
+    """
     salt = _derived(provider, profile, hs, 0)
     cs = provider.extract(profile, salt, bytes(profile.hash_len), name="cs_0")
-    return _epoch(provider, profile, 0, cs, th_final)
+    return salt, _epoch(provider, profile, 0, cs, th_final)
 
 
 def next_epoch(
