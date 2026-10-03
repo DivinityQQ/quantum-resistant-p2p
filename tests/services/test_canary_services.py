@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from qrp2p.core.crypto.provider import PlainProvider, RevealingProvider
+from qrp2p.core.crypto.provider import AeadRevealed, PlainProvider, Revealed, RevealingProvider
 from qrp2p.core.crypto.secret import Secret
 from qrp2p.core.wire import Frame
 from qrp2p.services.events import HistoryChanged
@@ -28,11 +28,16 @@ CHATS = ("canary chat one", "canary chat two")
 
 
 class Recorder:
+    """Every value the providers revealed, records' nonces and plaintexts included."""
+
     def __init__(self) -> None:
         self.secrets: list[Secret] = []
 
-    def __call__(self, secret: Secret) -> None:
-        self.secrets.append(secret)
+    def __call__(self, value: Revealed) -> None:
+        if isinstance(value, AeadRevealed):
+            self.secrets += [value.nonce, value.plaintext]
+        else:
+            self.secrets.append(value)
 
 
 def public_bytes(obj: object) -> list[bytes]:

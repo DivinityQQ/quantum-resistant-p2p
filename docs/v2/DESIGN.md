@@ -2,7 +2,7 @@
 
 | | |
 | --- | --- |
-| Version | 1.7 |
+| Version | 1.8 |
 | Date | 2026-10-03 |
 | Status | Approved for implementation |
 | Scope | Complete rewrite of `quantum-resistant-p2p` (v1) |
@@ -669,11 +669,17 @@ The learning layer is built on a **trace bus** fed by the real protocol engine. 
 4. The chat gets an amber frame and a GLASS-BOX tag on every message; saved recordings carry an EXPOSED stamp.
 5. A normal session can never become glass-box retroactively; that would expose secrets promised to stay secret.
 
-**Containment** is structural. Normal sessions use a crypto provider with **no** path from secret values to the trace bus; its events carry only labels, sizes and public bytes. Glass-box and lab sessions use a `RevealingProvider` wrapper, enabled only when Admit says `glass_box = 1`. Secrets produced before admission wait in a bounded per-session buffer that is emitted on glass-box admission and discarded otherwise. As a second line of defence, secret values are wrapped in a `Secret` type whose `repr` is redacted.
+**Containment** is structural. Normal sessions use a crypto provider with **no** path from secret values to the trace bus; its events carry only labels, sizes and public bytes. A session's provider is chosen when its connection opens, before anyone knows whether it will be glass-box:
+
+- An initiator that did not set `gb_request` gets the plain provider: it can never become glass-box.
+- Every other session gets a `RevealingProvider` whose sink is an **exposure gate**. Until admission the gate only buffers, at most 128 values; if it overflows, the handshake fails with `internal`. When Admit says `glass_box = 1` the gate publishes the buffer and every later value into the session's trace ring. Otherwise (no request in the Hello, a decline, a reject, a failure) the gate drops the buffer and its publisher for good.
+- Revealed values travel on the trace bus as their own record type, never as public trace events, and stay wrapped in a `Secret` type whose `repr` is redacted (the second line of defence).
 
 ### 11.4 Values exposed in glass-box sessions
 
-`ssM`, `ssX` and the combined `ss`; `hs`, `hs_R`, `hs_I`, `fk_R`, `fk_I`; `cs_n`; every `ap_*` secret with its key and IV; per-record nonces and plaintexts; `exporter_n`. **Identity private keys are never exposed**, not even in glass-box sessions.
+`ssM`, `ssX` and the combined `ss`; `hs`, `hs_R`, `hs_I`, `fk_R`, `fk_I`; `cs_n`; every `ap_*` secret with its key and IV; per-record nonces and plaintexts; `exporter_n`. Also the ephemeral KEM decapsulation keys and the derived rekey salts (`derived[n]`): both belong to this session alone and expose nothing the values above do not (a decapsulation key opens only this session's KEM ciphertext, whose `ss` is shown; a salt is derived from the shown `cs_n`). **Identity private keys are never exposed**, not even in glass-box sessions.
+
+Every secret has a name that is unique within its session, and the Inspector joins key-graph nodes, trace events and revealed values by it: the schedule's names above, `Keys(S)` as `S.key` and `S.iv`, a KeyUpdate's as `ap_I[n]+g`, and the KEM outputs of the rekey to epoch *n* as `dk[n]`, `ss[n]`, `ssM[n]`, `ssX[n]`. A record's nonce and plaintext are identified by the key's name and the sequence number.
 
 ### 11.5 Recordings (`.qrlab`)
 
@@ -799,7 +805,7 @@ flowchart TB
 - **Sans-I/O core.** Bytes and events in, bytes and events out: no sockets, threads, clocks or Qt. Time and randomness are injected, which makes it deterministic to test, easy to fuzz, and trivially steppable.
 - **Separate asyncio thread.** Networking and storage run on their own event loop; the Qt UI talks to them only through the bridge, so neither can stall the other.
 - **The desktop bridge (M3).** Only the services thread holds the node and its objects. It hands the Qt side immutable snapshots of primitives (IDs as hex, display-safe text, numbers) and never a session, contact, bundle or exception object; a failed request crosses as a kind and a message. Every delivery carries a **lifecycle generation** that increases at each node state change, at the moment the services thread reports it; the unlocked snapshot is taken in that same step, so no event falls between snapshot and subscription. The Qt side accepts data only of the current unlocked generation and stops accepting the moment the user locks, so already queued deliveries cannot refill cleared views. View models of one unlocked period request through a scope pinned to its generation: a request from an earlier period is refused, because the node numbers prompts and mismatches afresh at every unlock and an old ID could name a new request. Updates are batched (at most 30 times a second) and flushed before any lifecycle change or reply, so a reply never overtakes the events before it. Front ends issue requests concurrently, so the node makes every read-modify-write of a stored record atomic and ordered per resource: contact changes (trust, profile, name, retention, re-pin, deletion, the address learned when a session opens) run one at a time in request order, each on the latest record, and so do settings changes; a request that waited across a lock finds the node locked. A file offer is reserved before any disk work, so it is answered exactly once.
-- **Trace bus.** Typed events with `session_id`, a monotonic timestamp, layer, kind and public fields. Each session has a ring buffer of 10,000 events; the UI receives batches at most 30 times a second.
+- **Trace bus.** Typed events with `session_id`, a session-scoped ordinal, a monotonic timestamp, layer, kind and public fields, plus the values a glass-box session's exposure gate lets through (§11.3). A session's handshake events are kept as long as its ring; later events go to a ring bounded by 10,000 events **and** 4 MiB of frame and revealed bytes, so a file transfer cannot make one session hold more than a few megabytes. Ordinals show exactly which events were evicted. The rings of the last 16 ended sessions are kept, each with a descriptor (role, address, profile, the authenticated peer, exposure, how it ended), so a failed handshake can be inspected too. The core also reports when it drops its references to secrets (`SecretsReleased`: used, replaced, handshake done, epoch done, closed); it is no claim of a memory wipe (§3.5). The UI receives batches at most 30 times a second.
 
 ### 12.1 Package layout
 

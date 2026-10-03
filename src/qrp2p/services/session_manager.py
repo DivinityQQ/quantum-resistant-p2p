@@ -12,6 +12,9 @@ connection and enforces what spans sessions:
 - **Replacement** (DESIGN §7.8): one live session per peer; a newly established one closes the
   previous one with ``replaced``.
 - **Timers**: every session is ticked twice a second (deadlines, pings, KeyUpdate, rekey).
+- **Exposure** (DESIGN §11.3): every session that may become glass-box gets a revealing provider
+  behind an :class:`~qrp2p.services.exposure.ExposureGate`, opened only by glass-box admission.
+- **Trace descriptors**: each session's role, address, profile, peer and end go to the trace bus.
 
 Whether to admit a peer, and everything about contacts and messages, is the owner's business
 (:class:`ManagerHooks`, implemented by the node).
@@ -25,7 +28,7 @@ from typing import Protocol, override
 
 from qrp2p.core.crypto.identity import IdentityBundle, IdentityKeyPair
 from qrp2p.core.crypto.profiles import REAL_PROFILES, Profile
-from qrp2p.core.crypto.provider import CryptoProvider
+from qrp2p.core.crypto.provider import CryptoProvider, RevealingProvider
 from qrp2p.core.errors import AdmitReason, CloseReason
 from qrp2p.core.handshake import (
     AdmissionRequired,
@@ -36,6 +39,7 @@ from qrp2p.core.handshake import (
 )
 from qrp2p.core.trace import TraceEvent
 from qrp2p.core.wire import Inner
+from qrp2p.services.exposure import Exposure, ExposureGate
 from qrp2p.services.limits import (
     FLUSH_TIMEOUT,
     HELLO_BURST,
@@ -46,13 +50,13 @@ from qrp2p.services.limits import (
     TokenBucket,
 )
 from qrp2p.services.session import Clock, Phase, Session, SessionEnd, SessionRole
-from qrp2p.services.trace_bus import TraceBus
+from qrp2p.services.trace_bus import SessionInfo, TraceBus
 from qrp2p.services.transport import FrameStream, open_stream
 
 _log = logging.getLogger(__name__)
 
 type ProviderFactory = Callable[[], CryptoProvider]
-"""Creates the crypto provider of one session."""
+"""Creates the crypto provider that does one session's work (a plain one in real nodes)."""
 
 
 class ManagerHooks(Protocol):
@@ -110,8 +114,9 @@ class SessionManager:
     Args:
         identity: Our identity.
         hooks: The owner (the node).
-        provider_factory: Creates each session's provider; real nodes build a
-            :class:`~qrp2p.core.crypto.provider.PlainProvider` over the real profiles.
+        provider_factory: Creates the provider that does each session's work; real nodes build a
+            :class:`~qrp2p.core.crypto.provider.PlainProvider` over the real profiles. Sessions
+            that may become glass-box wrap it in a revealing provider behind an exposure gate.
         clock: The monotonic clock.
         trace: Where trace events go.
         profiles: The profiles this node serves as a responder.
@@ -144,6 +149,7 @@ class SessionManager:
         self._accepting = False
         self._superseded: set[int] = set()
         """Sessions closed because another session with the same peer won a simultaneous open."""
+        self._gates: dict[int, ExposureGate] = {}
 
     # -- lifecycle ------------------------------------------------------------------------------
 
@@ -205,15 +211,20 @@ class SessionManager:
             _log.info("refused a connection: %s", CloseReason.RATE_LIMITED.label)
             stream.abort()
             return
+        gate = ExposureGate(self._clock)  # whether the Hello asks is not known yet
         responder = Responder(
-            provider=self._provider_factory(),
+            provider=RevealingProvider(self._provider_factory(), gate),
             profiles=self._profiles,
             identity=self._identity,
             own_ephemeral_keys=self._own_eks,
             now=self._clock(),
         )
         session = Session(machine=responder, stream=stream, hooks=self, clock=self._clock)
+        self._gates[session.id] = gate
         self._slot_of[session.id] = stream.source
+        self._trace.open_session(
+            SessionInfo(session.id, initiator=False, address=stream.source, started=self._clock())
+        )
         await self._run(session)
 
     async def connect(
@@ -235,8 +246,13 @@ class SessionManager:
             ConnectFailed: No TCP connection could be opened.
         """
         stream = await open_stream(host, port)
+        provider = self._provider_factory()
+        gate = None
+        if glass_box:  # only a session that asks can become glass-box
+            gate = ExposureGate(self._clock)
+            provider = RevealingProvider(provider, gate)
         initiator = Initiator(
-            provider=self._provider_factory(),
+            provider=provider,
             profile=profile,
             identity=self._identity,
             pinned=pinned,
@@ -245,6 +261,20 @@ class SessionManager:
         )
         session = Session(
             machine=initiator, stream=stream, hooks=self, clock=self._clock, expected_peer=pinned
+        )
+        if gate is not None:
+            self._gates[session.id] = gate
+        address = f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
+        self._trace.open_session(
+            SessionInfo(
+                session.id,
+                initiator=True,
+                address=address,
+                started=self._clock(),
+                profile=profile.name,
+                peer_id=b"",
+                glass_box_requested=glass_box,
+            )
         )
         self._sessions[session.id] = session
         if on_created is not None:
@@ -265,6 +295,7 @@ class SessionManager:
         finally:
             self._sessions.pop(session.id, None)
             self._release_slot(session)
+            self._close_gate(session)
             self._trace.session_ended(session.id)
             if current is not None:
                 self._tasks.discard(current)
@@ -273,6 +304,22 @@ class SessionManager:
         source = self._slot_of.pop(session.id, None)
         if source is not None:
             self._slots.release(source)
+
+    def _close_gate(self, session: Session) -> None:
+        gate = self._gates.pop(session.id, None)
+        if gate is not None:
+            gate.close()
+
+    def _open_gate(self, session: Session) -> None:
+        """Glass-box admission: the session's revealed values go to its trace ring."""
+        gate = self._gates.pop(session.id, None)
+        if gate is None:
+            return
+
+        def publish(time: float, exposure: Exposure) -> None:
+            self._trace.publish(session.id, time, exposure)
+
+        gate.open(publish)
 
     # -- simultaneous open ----------------------------------------------------------------------
 
@@ -320,6 +367,14 @@ class SessionManager:
     def admission(self, session: Session, request: AdmissionRequired) -> None:
         """Busy checks first (simultaneous open, live-session cap), then the node's policy."""
         peer_id = request.peer.peer_id
+        self._trace.describe(
+            session.id,
+            peer_id=peer_id,
+            profile=request.profile.name,
+            glass_box_requested=request.gb_request,
+        )
+        if not request.gb_request:
+            self._close_gate(session)  # admission cannot grant what the Hello did not ask
         if self._overlapping_outgoing(session, peer_id) and self._identity.bundle.peer_id < peer_id:
             _log.info("simultaneous open with %s: ours survives", request.peer.short_id)
             self._superseded.add(session.id)
@@ -341,6 +396,7 @@ class SessionManager:
 
     def key_mismatch(self, session: Session, event: KeyMismatch) -> None:
         """See :class:`~qrp2p.services.session.SessionHooks`."""
+        self._trace.describe(session.id, peer_id=event.actual.peer_id)  # it proved this one
         self._hooks.key_mismatch(session, event)
 
     def profile_rejected(self, session: Session, event: ProfileRejected) -> None:
@@ -364,6 +420,18 @@ class SessionManager:
         self._release_slot(session)
         peer = session.peer
         assert peer is not None  # noqa: S101  # an open session has an authenticated peer
+        if session.glass_box:
+            self._open_gate(session)
+        else:
+            self._close_gate(session)
+        self._trace.describe(
+            session.id,
+            peer_id=peer.peer_id,
+            profile=session.profile.name if session.profile else "",
+            glass_box=session.glass_box,
+            established=True,
+        )
+        self._trace.handshake_done(session.id)
         if not self._capacity_available(peer.peer_id):
             # An outgoing handshake can finish after another session consumed the last slot.
             # Do not register or report it as connected; send an authenticated close instead.
@@ -405,6 +473,15 @@ class SessionManager:
     def ended(self, session: Session, end: SessionEnd) -> None:
         """Forget the session; tell the node whether it merely lost a simultaneous open."""
         self._release_slot(session)
+        self._close_gate(session)
+        if session.peer is not None:  # an initiator knows the responder from Reply on
+            self._trace.describe(session.id, peer_id=session.peer.peer_id)
+        self._trace.describe(
+            session.id,
+            end_reason=end.reason.label if end.reason is not None else "",
+            admit_reason=end.admit_reason.label if end.admit_reason is not None else "",
+            by_peer=end.by_peer,
+        )
         peer = session.peer or session.expected_peer
         if session.peer is not None and self._live.get(session.peer.peer_id) is session:
             del self._live[session.peer.peer_id]
